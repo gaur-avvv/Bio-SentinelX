@@ -768,6 +768,78 @@ export async function fetchHotspots(
 }
 
 // ============================================================
+// Nominatim reverse geocoding (OpenStreetMap)
+// ============================================================
+
+interface NominatimResult {
+  display_name: string;
+  address?: {
+    neighbourhood?: string;
+    suburb?: string;
+    district?: string;
+    county?: string;
+    city_district?: string;
+    quarter?: string;
+    town?: string;
+    village?: string;
+  };
+}
+
+/**
+ * Reverse-geocode a lat/lon using OSM Nominatim to get a human-readable area name.
+ * Falls back gracefully if the API is unavailable.
+ */
+export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=14&addressdetails=1`;
+    const res = await fetch(url, {
+      headers: { 'Accept-Language': 'en', 'User-Agent': 'Bio-SentinelX/1.0 (flood-prediction)' },
+    });
+    if (!res.ok) return null;
+    const json: NominatimResult = await res.json();
+    const a = json.address;
+    // Best-preference chain: neighbourhood → suburb → city_district → quarter → district → village/town
+    return (
+      a?.neighbourhood ||
+      a?.suburb ||
+      a?.city_district ||
+      a?.quarter ||
+      a?.district ||
+      a?.county ||
+      a?.village ||
+      a?.town ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Enrich a list of WardReadinessItems with real area names from Nominatim.
+ * Batches requests with a small delay to respect OSM rate limits (1 req/sec).
+ */
+export async function enrichWardsWithGeoNames(
+  wards: WardReadinessItem[]
+): Promise<WardReadinessItem[]> {
+  const enriched: WardReadinessItem[] = [];
+  for (let i = 0; i < wards.length; i++) {
+    const w = wards[i];
+    if (w.ward_name && !w.ward_name.startsWith('ward_') && !w.ward_name.match(/^[0-9a-f-]+$/i)) {
+      // Already has a human-readable name from the API
+      enriched.push(w);
+    } else {
+      // Fetch from Nominatim
+      const geoName = await reverseGeocode(w.lat, w.lon);
+      enriched.push({ ...w, ward_name: geoName ?? w.ward_name ?? w.ward_id });
+      // Rate-limit: 1 request per 1.1 seconds (Nominatim policy)
+      if (i < wards.length - 1) await new Promise(r => setTimeout(r, 1100));
+    }
+  }
+  return enriched;
+}
+
+// ============================================================
 // Historical statistics (used by component and AI prompt)
 // ============================================================
 

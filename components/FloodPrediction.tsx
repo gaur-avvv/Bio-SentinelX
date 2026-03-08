@@ -31,6 +31,7 @@ import {
   triggerMLRetrain,
   fetchWardReadiness,
   fetchHotspots,
+  enrichWardsWithGeoNames,
   FloodDataPoint,
   FloodRiskScore,
   TrendResult,
@@ -143,6 +144,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const wardMapContainerRef = useRef<HTMLDivElement | null>(null);
   const leafletMapRef       = useRef<any>(null);
   const leafletMarkersRef   = useRef<any[]>([]);
+  const leafletCirclesRef   = useRef<any[]>([]);
+
+  // ── Geocoding loading state ─────────────────────────────────────────────
+  const [geocoding, setGeocoding] = useState(false);
+  const [geocodingProgress, setGeocodingProgress] = useState(0);
 
   // ── ML training status polling (keeps UI in sync after /train) ─────────────
   const statusPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -157,93 +163,173 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   useEffect(() => stopStatusPolling, [stopStatusPolling]);
 
-  // ── Leaflet ward map: init / refresh whenever wardReadiness changes ──────────
+  // ── Leaflet unified map: ward pins + hotspot circles ──────────────────────
   useEffect(() => {
     if (!wardReadiness || wardReadiness.length === 0) return;
     if (!wardMapContainerRef.current) return;
-    if (typeof L === 'undefined') return; // Leaflet not loaded yet
+    if (typeof L === 'undefined') return;
 
-    // Colour scale per readiness grade
+    // Grade colours
     const gradeColor: Record<string, string> = {
       A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
     };
+    // Hotspot risk level colours (probability-based)
+    const hotspotColor = (prob: number) =>
+      prob >= 0.85 ? '#dc2626' : prob >= 0.65 ? '#f97316' : prob >= 0.40 ? '#eab308' : '#3b82f6';
 
-    const makeIcon = (grade: string) =>
+    const makeWardIcon = (grade: string) =>
       L.divIcon({
         className: '',
         html: `<div style="
-          width:28px;height:28px;border-radius:50%;display:flex;
+          width:32px;height:32px;border-radius:50%;display:flex;
           align-items:center;justify-content:center;
           background:${gradeColor[grade] ?? '#94a3b8'};
-          color:#fff;font-weight:900;font-size:11px;
-          border:2.5px solid rgba(0,0,0,0.18);
-          box-shadow:0 2px 8px rgba(0,0,0,0.25);
-          font-family:Inter,sans-serif;
+          color:#fff;font-weight:900;font-size:12px;
+          border:3px solid rgba(255,255,255,0.9);
+          box-shadow:0 3px 12px rgba(0,0,0,0.3);
+          font-family:Inter,sans-serif;letter-spacing:-0.5px;
         ">${grade}</div>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
-        popupAnchor: [0, -16],
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        popupAnchor: [0, -20],
       });
 
-    // Initialise map once
+    // Init map once
     if (!leafletMapRef.current) {
       leafletMapRef.current = L.map(wardMapContainerRef.current, {
         attributionControl: true,
         zoomControl: true,
       });
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        maxZoom: 18,
+      // OpenStreetMap tiles (Carto light for cleaner look)
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 19,
       }).addTo(leafletMapRef.current);
     }
 
-    // Clear existing markers
+    // Clear existing markers and circles
     leafletMarkersRef.current.forEach(m => m.remove());
     leafletMarkersRef.current = [];
+    leafletCirclesRef.current.forEach(c => c.remove());
+    leafletCirclesRef.current = [];
 
     const bounds: [number, number][] = [];
 
+    // ─ Ward pins ─────────────────────────────────────────────────────────────
     wardReadiness.forEach(w => {
       if (!w.lat || !w.lon) return;
+      const col = gradeColor[w.readiness_grade] ?? '#94a3b8';
+      const riskLabel =
+        w.flood_probability >= 0.80 ? 'CRITICAL' :
+        w.flood_probability >= 0.60 ? 'HIGH' :
+        w.flood_probability >= 0.35 ? 'MEDIUM' :
+        w.flood_probability >= 0.15 ? 'LOW' : 'SAFE';
+      const riskBg =
+        w.flood_probability >= 0.80 ? '#fef2f2' :
+        w.flood_probability >= 0.60 ? '#fff7ed' :
+        w.flood_probability >= 0.35 ? '#fefce8' : '#f0fdf4';
+
       const popupHtml = `
-        <div style="font-family:Inter,sans-serif;min-width:180px">
-          <div style="font-size:12px;font-weight:900;color:#1e293b;margin-bottom:4px">
+        <div style="font-family:Inter,system-ui,sans-serif;min-width:220px;max-width:280px">
+          <div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:6px;line-height:1.3">
             ${w.ward_name ?? w.ward_id}
           </div>
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-            <span style="background:${gradeColor[w.readiness_grade] ?? '#94a3b8'};color:#fff;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:800">
-              Grade ${w.readiness_grade}
-            </span>
-            <span style="font-size:10px;color:#64748b;font-weight:700">${w.readiness_description}</span>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="background:${col};color:#fff;padding:3px 10px;border-radius:9999px;font-size:10px;font-weight:800;letter-spacing:0.5px">Grade ${w.readiness_grade}</span>
+            <span style="background:${riskBg};color:${col};border:1px solid ${col}30;padding:3px 8px;border-radius:9999px;font-size:10px;font-weight:800">${riskLabel}</span>
           </div>
-          <table style="font-size:10px;width:100%;border-collapse:collapse">
-            <tr><td style="color:#64748b;padding:2px 0">Risk Score</td><td style="font-weight:800;text-align:right">${w.risk_score?.toFixed(1) ?? '—'}/100</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Flood Probability</td><td style="font-weight:800;text-align:right">${(w.flood_probability * 100).toFixed(1)}%</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Inundation Risk</td><td style="font-weight:800;text-align:right">${w.inundation_risk_score?.toFixed(1) ?? '—'}</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Drainage Health</td><td style="font-weight:800;text-align:right">${w.drainage_health_score?.toFixed(1) ?? '—'}</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Hotspots in Ward</td><td style="font-weight:800;text-align:right">${w.hotspot_count_in_ward}</td></tr>
-          </table>
+          <div style="background:#f8fafc;border-radius:10px;padding:8px;margin-bottom:8px">
+            <table style="font-size:11px;width:100%;border-collapse:collapse">
+              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Flood Risk</td><td style="font-weight:900;text-align:right;color:${col}">${(w.flood_probability * 100).toFixed(1)}%</td></tr>
+              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Risk Score</td><td style="font-weight:900;text-align:right">${w.risk_score?.toFixed(1) ?? '—'}<span style="font-weight:500;color:#94a3b8">/100</span></td></tr>
+              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Inundation Risk</td><td style="font-weight:900;text-align:right">${w.inundation_risk_score?.toFixed(1) ?? '—'}</td></tr>
+              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Drainage Health</td><td style="font-weight:900;text-align:right">${w.drainage_health_score?.toFixed(1) ?? '—'}</td></tr>
+              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Infra Exposure</td><td style="font-weight:900;text-align:right">${w.infrastructure_exposure_score?.toFixed(1) ?? '—'}</td></tr>
+              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Hotspots</td><td style="font-weight:900;text-align:right">${w.hotspot_count_in_ward}</td></tr>
+            </table>
+          </div>
           ${w.recommended_actions?.length ? `
-            <div style="margin-top:8px;font-size:10px;font-weight:800;color:#374151">Recommended Actions:</div>
-            <ul style="margin:4px 0 0 12px;padding:0;font-size:10px;color:#64748b">
-              ${w.recommended_actions.slice(0, 3).map(a => `<li style="margin-bottom:2px">${a}</li>`).join('')}
+            <div style="font-size:10px;font-weight:800;color:#374151;margin-bottom:4px">Recommended Actions:</div>
+            <ul style="margin:0 0 0 14px;padding:0;font-size:10px;color:#475569;line-height:1.6">
+              ${w.recommended_actions.slice(0, 4).map(a => `<li>${a}</li>`).join('')}
             </ul>` : ''}
+          ${w.pre_position_resources?.length ? `
+            <div style="font-size:10px;font-weight:800;color:#374151;margin-top:6px;margin-bottom:3px">Pre-position Resources:</div>
+            <ul style="margin:0 0 0 14px;padding:0;font-size:10px;color:#64748b;line-height:1.6">
+              ${w.pre_position_resources.slice(0, 3).map(r => `<li>${r}</li>`).join('')}
+            </ul>` : ''}
+          <div style="font-size:9px;color:#94a3b8;margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0">
+            ${w.readiness_description}
+          </div>
         </div>`;
 
-      const marker = L.marker([w.lat, w.lon], { icon: makeIcon(w.readiness_grade) })
-        .bindPopup(popupHtml, { maxWidth: 260, className: 'ward-popup' })
+      const marker = L.marker([w.lat, w.lon], { icon: makeWardIcon(w.readiness_grade) })
+        .bindPopup(popupHtml, { maxWidth: 300, className: 'ward-popup' })
         .addTo(leafletMapRef.current);
       leafletMarkersRef.current.push(marker);
       bounds.push([w.lat, w.lon]);
     });
 
-    if (bounds.length > 0) {
-      leafletMapRef.current.fitBounds(bounds, { padding: [32, 32], maxZoom: 13 });
-    }
+    // ─ Hotspot circles (if loaded) ─────────────────────────────────────────
+    // hotspots is in outer scope via closure
 
-    // Force map to use its container size after React render
+    if (bounds.length > 0) {
+      leafletMapRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+    }
+    setTimeout(() => leafletMapRef.current?.invalidateSize(), 150);
+  }, [wardReadiness]);  // re-run when wardReadiness changes
+
+  // Re-draw hotspot circles whenever hotspots load (layered over existing ward map)
+  useEffect(() => {
+    if (!leafletMapRef.current) return;
+    if (typeof L === 'undefined') return;
+
+    // Clear old circles
+    leafletCirclesRef.current.forEach(c => c.remove());
+    leafletCirclesRef.current = [];
+
+    if (!hotspots?.hotspots?.length) return;
+
+    const hotspotColor = (prob: number) =>
+      prob >= 0.85 ? '#dc2626' : prob >= 0.65 ? '#f97316' : prob >= 0.40 ? '#eab308' : '#3b82f6';
+    const hotspotRiskLabel = (prob: number) =>
+      prob >= 0.85 ? 'CRITICAL' : prob >= 0.65 ? 'HIGH' : prob >= 0.40 ? 'MEDIUM' : 'LOW';
+
+    hotspots.hotspots.forEach(h => {
+      const col = hotspotColor(h.flood_probability);
+      const radiusM = Math.sqrt(h.area_km2 * 1_000_000 / Math.PI);
+
+      const popupHtml = `
+        <div style="font-family:Inter,system-ui,sans-serif;min-width:180px">
+          <div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:6px">
+            Flood Hotspot
+            <span style="background:${col};color:#fff;padding:2px 8px;border-radius:9999px;font-size:9px;font-weight:800;margin-left:6px">${hotspotRiskLabel(h.flood_probability)}</span>
+          </div>
+          <table style="font-size:10px;width:100%;border-collapse:collapse">
+            <tr><td style="color:#64748b;padding:2px 0">Flood Probability</td><td style="font-weight:900;color:${col};text-align:right">${(h.flood_probability*100).toFixed(1)}%</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Inundation Depth</td><td style="font-weight:800;text-align:right">${h.inundation_depth_m.toFixed(2)} m</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Area</td><td style="font-weight:800;text-align:right">${h.area_km2.toFixed(2)} km²</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Dominant Factor</td><td style="font-weight:800;text-align:right">${h.dominant_factor.replace(/_/g,' ')}</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Co-ordinates</td><td style="font-weight:700;text-align:right">${h.lat.toFixed(4)}, ${h.lon.toFixed(4)}</td></tr>
+          </table>
+        </div>`;
+
+      const circle = L.circle([h.lat, h.lon], {
+        radius: Math.max(radiusM, 400),
+        color: col,
+        fillColor: col,
+        fillOpacity: 0.25,
+        weight: 2,
+        opacity: 0.7,
+      })
+        .bindPopup(popupHtml, { maxWidth: 260 })
+        .addTo(leafletMapRef.current);
+      leafletCirclesRef.current.push(circle);
+    });
+
     setTimeout(() => leafletMapRef.current?.invalidateSize(), 100);
-  }, [wardReadiness]);
+  }, [hotspots]);
 
   // Cleanup Leaflet map when component unmounts
   useEffect(() => {
@@ -465,11 +551,47 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     setWardsError('');
     try {
       const wards = await fetchWardReadiness(mlApiUrl, weather.lat, weather.lon, 15);
+      // Show raw wards immediately, then enrich with Nominatim geo-names
       setWardReadiness(wards);
+      setWardsLoading(false);
+
+      // Async geocoding enrichment — updates wards in-place with real area names
+      if (wards.length > 0 && wards.length <= 20) {
+        setGeocoding(true);
+        setGeocodingProgress(0);
+        const enriched: WardReadinessItem[] = [];
+        for (let i = 0; i < wards.length; i++) {
+          const w = wards[i];
+          const needsGeocode = !w.ward_name ||
+            w.ward_name.startsWith('ward_') ||
+            /^[0-9a-f-]{8,}$/i.test(w.ward_name);
+          if (needsGeocode) {
+            try {
+              const res = await fetch(
+                `https://nominatim.openstreetmap.org/reverse?lat=${w.lat}&lon=${w.lon}&format=json&zoom=14&addressdetails=1`,
+                { headers: { 'Accept-Language': 'en', 'User-Agent': 'Bio-SentinelX/1.0' } }
+              );
+              if (res.ok) {
+                const json = await res.json();
+                const a = json.address ?? {};
+                const name = a.neighbourhood || a.suburb || a.city_district || a.quarter ||
+                             a.district || a.county || a.village || a.town || null;
+                enriched.push({ ...w, ward_name: name ?? w.ward_name ?? w.ward_id });
+              } else { enriched.push(w); }
+            } catch { enriched.push(w); }
+            if (i < wards.length - 1) await new Promise(r => setTimeout(r, 1100));
+          } else {
+            enriched.push(w);
+          }
+          setGeocodingProgress(Math.round(((i + 1) / wards.length) * 100));
+          setWardReadiness([...enriched, ...wards.slice(i + 1).map(x => enriched.find(e => e.ward_id === x.ward_id) ?? x)]);
+        }
+        setWardReadiness(enriched);
+        setGeocoding(false);
+      }
     } catch (err) {
       setWardReadiness(null);
       setWardsError(err instanceof Error ? err.message : 'Failed to load ward readiness.');
-    } finally {
       setWardsLoading(false);
     }
   };
@@ -1234,34 +1356,70 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
           {wardReadiness && wardReadiness.length > 0 && (
             <div className="space-y-3">
+              {geocoding && (
+                <div className="flex items-center gap-2 text-[10px] font-bold text-blue-600 dark:text-blue-400">
+                  <Activity className="w-3 h-3 animate-spin" />
+                  Fetching area names via OpenStreetMap Nominatim… {geocodingProgress}%
+                  <div className="flex-1 h-1 bg-blue-100 dark:bg-blue-900 rounded-full overflow-hidden">
+                    <div className="h-1 bg-blue-500 rounded-full transition-all" style={{ width: `${geocodingProgress}%` }} />
+                  </div>
+                </div>
+              )}
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 Top wards by risk score
               </p>
               <div className="space-y-2">
                 {[...wardReadiness]
                   .sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0))
-                  .slice(0, 8)
+                  .slice(0, 10)
                   .map(w => {
+                    const prob = w.flood_probability;
+                    const riskLabel =
+                      prob >= 0.80 ? 'CRITICAL' : prob >= 0.60 ? 'HIGH' :
+                      prob >= 0.35 ? 'MEDIUM'   : prob >= 0.15 ? 'LOW' : 'SAFE';
                     const gradeColor =
                       w.readiness_grade === 'A' ? 'bg-green-100 text-green-800 border-green-200' :
                       w.readiness_grade === 'B' ? 'bg-lime-100 text-lime-800 border-lime-200' :
                       w.readiness_grade === 'C' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
                       w.readiness_grade === 'D' ? 'bg-orange-100 text-orange-800 border-orange-200' :
                                                   'bg-red-100 text-red-800 border-red-200';
+                    const riskBadge =
+                      riskLabel === 'CRITICAL' ? 'bg-red-600 text-white'     :
+                      riskLabel === 'HIGH'     ? 'bg-orange-500 text-white'  :
+                      riskLabel === 'MEDIUM'   ? 'bg-yellow-400 text-black'  :
+                      riskLabel === 'LOW'      ? 'bg-blue-400 text-white'    :
+                                                  'bg-green-500 text-white';
+                    const barW = Math.round(w.risk_score ?? 0);
                     return (
-                      <div key={w.ward_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
+                      <div key={w.ward_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <p className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
                               {w.ward_name ? w.ward_name : w.ward_id}
                             </p>
-                            <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">
-                              Risk {fmt(w.risk_score, 1)} / 100 · Flood {(w.flood_probability * 100).toFixed(1)}%
+                            <div className="flex items-center gap-2 mt-1">
+                              <div className="flex-1 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-1.5 rounded-full ${
+                                    barW >= 75 ? 'bg-red-500' : barW >= 55 ? 'bg-orange-500' : barW >= 35 ? 'bg-yellow-400' : 'bg-green-500'
+                                  }`}
+                                  style={{ width: `${barW}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">{barW}/100</span>
+                            </div>
+                            <p className="text-[10px] font-bold text-slate-400 mt-0.5">
+                              Flood {(prob * 100).toFixed(1)}% · {w.hotspot_count_in_ward} hotspots in ward
                             </p>
                           </div>
-                          <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border flex-shrink-0 ${gradeColor}`}>
-                            {w.readiness_grade}
-                          </span>
+                          <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${gradeColor}`}>
+                              {w.readiness_grade}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${riskBadge}`}>
+                              {riskLabel}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -1342,43 +1500,78 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
           {hotspots && (
             <div className="space-y-3">
+              {/* KPI row */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-2xl border bg-slate-50 dark:bg-slate-700/30 border-slate-100 dark:border-slate-700">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Hotspots</p>
-                  <p className="text-lg font-black text-slate-900 dark:text-white mt-1">{hotspots.hotspots_identified}</p>
+                <div className="p-3 rounded-2xl border bg-orange-50 dark:bg-orange-900/20 border-orange-100 dark:border-orange-700">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-orange-600 dark:text-orange-400">Active Hotspots</p>
+                  <p className="text-2xl font-black text-orange-700 dark:text-orange-300 mt-1">{hotspots.hotspots_identified}</p>
+                  <p className="text-[9px] text-orange-400 font-bold mt-0.5">Min risk ≥ 50%</p>
                 </div>
                 <div className="p-3 rounded-2xl border bg-slate-50 dark:bg-slate-700/30 border-slate-100 dark:border-slate-700">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cells scanned</p>
-                  <p className="text-lg font-black text-slate-900 dark:text-white mt-1">{hotspots.total_cells_scanned}</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cells Scanned</p>
+                  <p className="text-2xl font-black text-slate-900 dark:text-white mt-1">{hotspots.total_cells_scanned}</p>
+                  <p className="text-[9px] text-slate-400 font-bold mt-0.5">
+                    {hotspots.grid_size_km}km² grid · {hotspots.radius_km}km radius
+                  </p>
                 </div>
               </div>
 
               {hotspots.hotspots?.length > 0 && (
                 <div>
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
-                    Highest-risk cells
+                    Highest-risk cells — click map circles for details
                   </p>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {[...hotspots.hotspots]
                       .sort((a, b) => (b.flood_probability ?? 0) - (a.flood_probability ?? 0))
-                      .slice(0, 8)
-                      .map(h => (
-                        <div key={h.cell_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
-                                {h.cell_id}
-                              </p>
-                              <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">
-                                {(h.flood_probability * 100).toFixed(1)}% · {fmt(h.inundation_depth_m, 2)} m · {h.lat.toFixed(4)}, {h.lon.toFixed(4)}
-                              </p>
+                      .slice(0, 10)
+                      .map(h => {
+                        const prob = h.flood_probability;
+                        const riskLabel =
+                          prob >= 0.85 ? 'CRITICAL' : prob >= 0.65 ? 'HIGH' :
+                          prob >= 0.40 ? 'MEDIUM'   : 'LOW';
+                        const riskStyle =
+                          prob >= 0.85 ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700' :
+                          prob >= 0.65 ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-700' :
+                          prob >= 0.40 ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-700' :
+                                        'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700';
+                        const riskBadge =
+                          prob >= 0.85 ? 'bg-red-600 text-white'    :
+                          prob >= 0.65 ? 'bg-orange-500 text-white' :
+                          prob >= 0.40 ? 'bg-yellow-400 text-black' :
+                                        'bg-blue-500 text-white';
+                        const barColor =
+                          prob >= 0.85 ? 'bg-red-500'    :
+                          prob >= 0.65 ? 'bg-orange-500' :
+                          prob >= 0.40 ? 'bg-yellow-400' : 'bg-blue-400';
+                        return (
+                          <div key={h.cell_id} className={`p-3 rounded-xl border ${riskStyle}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest flex-shrink-0 ${riskBadge}`}>
+                                    {riskLabel}
+                                  </span>
+                                  <span className="text-[10px] font-black text-slate-700 dark:text-slate-200">
+                                    {(prob * 100).toFixed(1)}% flood risk
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-1.5">
+                                  <div className="flex-1 h-1 bg-slate-200 dark:bg-slate-600 rounded-full overflow-hidden">
+                                    <div className={`h-1 rounded-full ${barColor}`} style={{ width: `${Math.round(prob * 100)}%` }} />
+                                  </div>
+                                </div>
+                                <p className="text-[9px] font-bold text-slate-400 mt-1">
+                                  💧 {h.inundation_depth_m.toFixed(2)} m depth · {h.area_km2.toFixed(2)} km² · {h.dominant_factor.replace(/_/g, ' ')}
+                                </p>
+                                <p className="text-[9px] font-mono text-slate-400">
+                                  {h.lat.toFixed(4)}°N, {h.lon.toFixed(4)}°E
+                                </p>
+                              </div>
                             </div>
-                            <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 flex-shrink-0">
-                              {h.risk_level}
-                            </span>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                   </div>
                 </div>
               )}
