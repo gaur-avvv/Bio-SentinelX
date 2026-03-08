@@ -155,12 +155,12 @@ function computeGiStar(
   if (S === 0) return []; // No variation — Gi* undefined
 
   const GI_Z_THRESHOLDS = [
-    { z: 2.576, bin: 3  as const, color: '#7f0000', label: '99% Hot Spot'  },
-    { z: 1.960, bin: 2  as const, color: '#d7191c', label: '95% Hot Spot'  },
-    { z: 1.645, bin: 1  as const, color: '#fdae61', label: '90% Hot Spot'  },
-    { z: -1.645, bin: -1 as const, color: '#abd9e9', label: '90% Cold Spot' },
-    { z: -1.960, bin: -2 as const, color: '#2c7bb6', label: '95% Cold Spot' },
-    { z: -2.576, bin: -3 as const, color: '#00008b', label: '99% Cold Spot' },
+    { z: 2.576, bin: 3  as const, color: '#ff0066', label: '99% Hot Spot'  },
+    { z: 1.960, bin: 2  as const, color: '#ff3399', label: '95% Hot Spot'  },
+    { z: 1.645, bin: 1  as const, color: '#ff99cc', label: '90% Hot Spot'  },
+    { z: -1.645, bin: -1 as const, color: '#00e5ff', label: '90% Cold Spot' },
+    { z: -1.960, bin: -2 as const, color: '#00aaff', label: '95% Cold Spot' },
+    { z: -2.576, bin: -3 as const, color: '#8800ff', label: '99% Cold Spot' },
   ];
 
   return features.map(fi => {
@@ -179,17 +179,17 @@ function computeGiStar(
     const denominator = S * Math.sqrt((n * sumW2 - sumW * sumW) / (n - 1));
     const zScore = denominator === 0 ? 0 : numerator / denominator;
 
-    // Map z-score to confidence bin
+    // Map z-score to confidence bin — neon dark-mode palette
     let confidenceBin: GiStarFeature['confidenceBin'] = 0;
-    let color = '#d4c5a9'; // beige — not significant
+    let color = 'rgba(255,255,255,0.08)'; // near-transparent — not significant
     let label = 'Not Significant';
 
-    if (zScore >= 2.576)       { confidenceBin = 3;  color = '#7f0000'; label = '99% Hot Spot';  }
-    else if (zScore >= 1.960)  { confidenceBin = 2;  color = '#d7191c'; label = '95% Hot Spot';  }
-    else if (zScore >= 1.645)  { confidenceBin = 1;  color = '#fdae61'; label = '90% Hot Spot';  }
-    else if (zScore <= -2.576) { confidenceBin = -3; color = '#00008b'; label = '99% Cold Spot'; }
-    else if (zScore <= -1.960) { confidenceBin = -2; color = '#2c7bb6'; label = '95% Cold Spot'; }
-    else if (zScore <= -1.645) { confidenceBin = -1; color = '#abd9e9'; label = '90% Cold Spot'; }
+    if (zScore >= 2.576)       { confidenceBin = 3;  color = '#ff0066'; label = '99% Hot Spot';  }
+    else if (zScore >= 1.960)  { confidenceBin = 2;  color = '#ff3399'; label = '95% Hot Spot';  }
+    else if (zScore >= 1.645)  { confidenceBin = 1;  color = '#ff80c0'; label = '90% Hot Spot';  }
+    else if (zScore <= -2.576) { confidenceBin = -3; color = '#8800ff'; label = '99% Cold Spot'; }
+    else if (zScore <= -1.960) { confidenceBin = -2; color = '#00aaff'; label = '95% Cold Spot'; }
+    else if (zScore <= -1.645) { confidenceBin = -1; color = '#00e5ff'; label = '90% Cold Spot'; }
 
     return { ...fi, zScore, confidenceBin, color, label };
   });
@@ -693,7 +693,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     // ── Clean up previous Gi* layers ──
     mapplsCirclesRef.current.forEach(c => { try { c.remove(); } catch { try { c.setMap(null); } catch {} } });
     mapplsCirclesRef.current = [];
-    ['gi-star-layer', 'gi-star-nonsig-layer'].forEach(id => {
+    ['gi-star-glow-layer', 'gi-star-layer', 'gi-star-nonsig-layer'].forEach(id => {
       try { if (map.getLayer?.(id)) map.removeLayer(id); } catch {}
     });
     ['gi-star-source'].forEach(id => {
@@ -754,19 +754,20 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         } catch {}
       });
     } else {
-      // ── MapTiler/Mapbox: GeoJSON circle layers ──
-      const sigFeatures   = giStarResults.filter(f => f.confidenceBin !== 0);
-      const nonsigFeatures = giStarResults.filter(f => f.confidenceBin === 0);
-
+      // ── MapTiler/Mapbox: GeoJSON neon glow circle layers ──
+      // Each significant feature gets: a large blurred glow ring + a sharp core circle
       const toGeoFeature = (f: GiStarFeature) => ({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [f.lon, f.lat] },
         properties: {
           color: f.color,
-          // Significant features: scale radius by confidence bin strength (14–28px)
-          radius: f.confidenceBin !== 0 ? 14 + Math.abs(f.confidenceBin) * 5 : 8,
-          opacity: f.confidenceBin !== 0 ? 0.55 + Math.abs(f.confidenceBin) * 0.1 : 0.12,
-          strokeOpacity: f.confidenceBin !== 0 ? 0.9 : 0.2,
+          // Core radius: 16px (bin±1) → 28px (bin±3)
+          radius:      f.confidenceBin !== 0 ? 16 + Math.abs(f.confidenceBin) * 6 : 5,
+          // Glow radius: 2× core
+          glowRadius:  f.confidenceBin !== 0 ? (16 + Math.abs(f.confidenceBin) * 6) * 2.5 : 8,
+          coreOpacity: f.confidenceBin !== 0 ? 0.75 : 0.04,
+          glowOpacity: f.confidenceBin !== 0 ? 0.18 + Math.abs(f.confidenceBin) * 0.05 : 0.01,
+          strokeOpacity: f.confidenceBin !== 0 ? 1.0 : 0.0,
           popup: makeGiPopup(f),
         }
       });
@@ -778,35 +779,33 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         data: { type: 'FeatureCollection', features: allFeatures }
       });
 
-      // Non-significant (beige) layer rendered below significant layer
+      // ── Bloom glow layer (large, very transparent soft ring) ──
       map.addLayer({
-        id: 'gi-star-nonsig-layer',
+        id: 'gi-star-glow-layer',
         type: 'circle',
         source: 'gi-star-source',
-        filter: ['==', ['get', 'opacity'], 0.12],
         paint: {
-          'circle-radius': 8,
-          'circle-color': '#d4c5a9',
-          'circle-opacity': 0.18,
-          'circle-stroke-width': 0.5,
-          'circle-stroke-color': '#a09070',
-          'circle-stroke-opacity': 0.2,
+          'circle-radius': ['get', 'glowRadius'],
+          'circle-color': ['get', 'color'],
+          'circle-opacity': ['get', 'glowOpacity'],
+          'circle-stroke-width': 0,
+          'circle-blur': 0.6,   // soft blur for bloom look
         }
       });
 
-      // Significant features (hot=red, cold=blue)
+      // ── Core neon circle (sharp, bright) ──
       map.addLayer({
         id: 'gi-star-layer',
         type: 'circle',
         source: 'gi-star-source',
-        filter: ['!=', ['get', 'opacity'], 0.12],
         paint: {
           'circle-radius': ['get', 'radius'],
           'circle-color': ['get', 'color'],
-          'circle-opacity': ['get', 'opacity'],
-          'circle-stroke-width': 2,
+          'circle-opacity': ['get', 'coreOpacity'],
+          'circle-stroke-width': 1.5,
           'circle-stroke-color': ['get', 'color'],
           'circle-stroke-opacity': ['get', 'strokeOpacity'],
+          'circle-blur': 0,
         }
       });
 
@@ -843,7 +842,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     if (isMappls) {
       const pts = hotFeatures.map(f => ({ lat: f.lat, lng: f.lon, weight: Math.abs(f.zScore) / 3 }));
       try {
-        heatmapRef.current = new mappls.HeatmapLayer({
+        mapplsHeatmapRef.current = new mappls.HeatmapLayer({
           map,
           data: pts,
           gradient: ['rgba(59,130,246,0)', 'rgba(59,130,246,0.6)', 'rgba(234,179,8,0.8)', 'rgba(249,115,22,1)', 'rgba(215,25,28,1)', 'rgba(127,0,0,1)'],
