@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 OPEN_METEO_URL = "https://archive-api.open-meteo.com/v1/archive"
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+OPEN_METEO_FLOOD_URL = "https://flood-api.open-meteo.com/v1/flood"
 OPEN_TOPO_URL = "https://api.opentopodata.org/v1/srtm30m"
 SOILGRIDS_URL = "https://rest.isric.org/soilgrids/v2.0/properties/query"
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
@@ -59,17 +60,20 @@ class DataCollector:
         rainfall_task = asyncio.create_task(
             self._fetch_rainfall_history(lat, lon, start_date, end_date)
         )
+        flood_task = asyncio.create_task(
+            self._fetch_flood_history(lat, lon, start_date, end_date)
+        )
         dem_task = asyncio.create_task(self._fetch_dem(lat, lon, radius_km))
         soil_task = asyncio.create_task(self._fetch_soil_properties(lat, lon))
         drain_task = asyncio.create_task(self._fetch_drainage_infra(lat, lon, radius_km))
 
-        rainfall_df, dem_data, soil_data, drain_data = await asyncio.gather(
-            rainfall_task, dem_task, soil_task, drain_task
+        rainfall_df, flood_df, dem_data, soil_data, drain_data = await asyncio.gather(
+            rainfall_task, flood_task, dem_task, soil_task, drain_task
         )
 
         # Merge into training rows
         df = self._build_training_dataframe(
-            rainfall_df, dem_data, soil_data, drain_data, lat, lon
+            rainfall_df, flood_df, dem_data, soil_data, drain_data, lat, lon
         )
 
         # Persist to DB
@@ -193,6 +197,52 @@ class DataCollector:
         except Exception as e:
             logger.error("Rainfall fetch failed: %s – using synthetic fallback", e)
             return self._synthetic_rainfall_df(lat, lon, start, end)
+
+    async def _fetch_flood_history(
+        self,
+        lat: float,
+        lon: float,
+        start: datetime.date,
+        end: datetime.date,
+    ) -> pd.DataFrame:
+        """
+        Fetch historical daily river discharge from Open-Meteo.
+        """
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "daily": "river_discharge",
+            "timezone": "UTC",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._client_timeout) as client:
+                resp = await client.get(OPEN_METEO_FLOOD_URL, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+
+            daily = data.get("daily", {})
+            df = pd.DataFrame({
+                "date": pd.to_datetime(daily.get("time", [])).dt.date,
+                "river_discharge_m3s": daily.get("river_discharge", []),
+            })
+            df["river_discharge_m3s"] = df["river_discharge_m3s"].fillna(0.0)
+
+            # Compute historical P50 for anomaly ratio
+            if len(df) > 0 and df["river_discharge_m3s"].max() > 0:
+                p50 = df["river_discharge_m3s"].replace(0, np.nan).median()
+                if pd.isna(p50) or p50 <= 0:
+                    p50 = 1.0
+                df["discharge_anomaly_ratio"] = df["river_discharge_m3s"] / p50
+            else:
+                df["discharge_anomaly_ratio"] = 0.0
+
+            logger.info("Fetched %d daily flood records", len(df))
+            return df
+        except Exception as e:
+            logger.warning("Flood history fetch failed: %s", e)
+            return pd.DataFrame(columns=["date", "river_discharge_m3s", "discharge_anomaly_ratio"])
 
     async def _fetch_dem(self, lat: float, lon: float, radius_km: float) -> Dict:
         """Fetch elevation from OpenTopoData SRTM 30m."""
@@ -350,6 +400,7 @@ class DataCollector:
     def _build_training_dataframe(
         self,
         rainfall_df: pd.DataFrame,
+        flood_df: pd.DataFrame,
         dem: Dict,
         soil: Dict,
         drain: Dict,
@@ -358,6 +409,17 @@ class DataCollector:
     ) -> pd.DataFrame:
         """Merge all sources into ML-ready training rows."""
         df = rainfall_df.copy()
+
+        # Merge daily flood data
+        if not flood_df.empty:
+            df["date"] = df["date_time"].dt.date
+            df = df.merge(flood_df, on="date", how="left")
+            df["river_discharge_m3s"] = df["river_discharge_m3s"].fillna(0.0)
+            df["discharge_anomaly_ratio"] = df["discharge_anomaly_ratio"].fillna(0.0)
+            df.drop(columns=["date"], inplace=True)
+        else:
+            df["river_discharge_m3s"] = 0.0
+            df["discharge_anomaly_ratio"] = 0.0
 
         # Broadcast static geo/infra fields
         for k, v in {**dem, **soil, **drain}.items():
@@ -515,6 +577,8 @@ class DataCollector:
                     date_time=row["date_time"].to_pydatetime(),
                     rainfall_1h_mm=float(row.get("rainfall_1h_mm", 0) or 0),
                     rainfall_24h_mm=float(row.get("rainfall_24h_mm", 0) or 0),
+                    river_discharge_m3s=float(row.get("river_discharge_m3s", 0) or 0),
+                    discharge_anomaly_ratio=float(row.get("discharge_anomaly_ratio", 0) or 0),
                     flood_occurred=int(row.get("flood_occurred", 0)),
                     inundation_depth_m=float(row.get("inundation_depth_m", 0) or 0),
                 )

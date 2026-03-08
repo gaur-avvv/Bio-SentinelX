@@ -24,6 +24,8 @@ class ObservationRecord(Base):
     # Core fields
     rainfall_1h_mm: Mapped[float] = mapped_column(Float, default=0.0)
     rainfall_24h_mm: Mapped[float] = mapped_column(Float, default=0.0)
+    river_discharge_m3s: Mapped[float] = mapped_column(Float, default=0.0)
+    discharge_anomaly_ratio: Mapped[float] = mapped_column(Float, default=0.0)
     flood_occurred: Mapped[int] = mapped_column(Integer, default=0)
     inundation_depth_m: Mapped[float] = mapped_column(Float, default=0.0)
 
