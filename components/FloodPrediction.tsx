@@ -107,6 +107,93 @@ function max(nums: number[]): number | null {
   return Math.max(...nums);
 }
 
+// ─── Getis-Ord Gi* Hot Spot Analysis ─────────────────────────────────────────
+// Computes the Gi* z-score for each feature and assigns a confidence bin.
+// Reference: Getis & Ord 1992; Ord & Getis 1995.
+//
+// Confidence bins:
+//   +3 = 99% hot spot  (dark red)
+//   +2 = 95% hot spot  (medium red)
+//   +1 = 90% hot spot  (light red/pink)
+//    0 = not significant (beige)
+//   -1 = 90% cold spot  (light blue)
+//   -2 = 95% cold spot  (medium blue)
+//   -3 = 99% cold spot  (dark blue)
+interface GiStarFeature {
+  lat: number;
+  lon: number;
+  value: number;
+  zScore: number;
+  confidenceBin: -3 | -2 | -1 | 0 | 1 | 2 | 3;
+  color: string;
+  label: string;
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function computeGiStar(
+  features: Array<{ lat: number; lon: number; value: number }>,
+  distanceBandKm: number
+): GiStarFeature[] {
+  const n = features.length;
+  if (n < 3) return [];
+
+  // Global mean (X̄) and standard deviation (S)
+  const vals = features.map(f => f.value);
+  const X̄ = vals.reduce((s, v) => s + v, 0) / n;
+  const S = Math.sqrt(vals.reduce((s, v) => s + v * v, 0) / n - X̄ * X̄);
+  if (S === 0) return []; // No variation — Gi* undefined
+
+  const GI_Z_THRESHOLDS = [
+    { z: 2.576, bin: 3  as const, color: '#7f0000', label: '99% Hot Spot'  },
+    { z: 1.960, bin: 2  as const, color: '#d7191c', label: '95% Hot Spot'  },
+    { z: 1.645, bin: 1  as const, color: '#fdae61', label: '90% Hot Spot'  },
+    { z: -1.645, bin: -1 as const, color: '#abd9e9', label: '90% Cold Spot' },
+    { z: -1.960, bin: -2 as const, color: '#2c7bb6', label: '95% Cold Spot' },
+    { z: -2.576, bin: -3 as const, color: '#00008b', label: '99% Cold Spot' },
+  ];
+
+  return features.map(fi => {
+    // Binary spatial weights: 1 if within distance band, 0 otherwise (includes self)
+    let sumW = 0, sumWx = 0, sumW2 = 0;
+    for (let j = 0; j < n; j++) {
+      const fj = features[j];
+      const wij = fi === fj ? 1 : (haversineKm(fi.lat, fi.lon, fj.lat, fj.lon) <= distanceBandKm ? 1 : 0);
+      sumW  += wij;
+      sumWx += wij * fj.value;
+      sumW2 += wij * wij;
+    }
+
+    // Gi* z-score formula
+    const numerator   = sumWx - X̄ * sumW;
+    const denominator = S * Math.sqrt((n * sumW2 - sumW * sumW) / (n - 1));
+    const zScore = denominator === 0 ? 0 : numerator / denominator;
+
+    // Map z-score to confidence bin
+    let confidenceBin: GiStarFeature['confidenceBin'] = 0;
+    let color = '#d4c5a9'; // beige — not significant
+    let label = 'Not Significant';
+
+    if (zScore >= 2.576)       { confidenceBin = 3;  color = '#7f0000'; label = '99% Hot Spot';  }
+    else if (zScore >= 1.960)  { confidenceBin = 2;  color = '#d7191c'; label = '95% Hot Spot';  }
+    else if (zScore >= 1.645)  { confidenceBin = 1;  color = '#fdae61'; label = '90% Hot Spot';  }
+    else if (zScore <= -2.576) { confidenceBin = -3; color = '#00008b'; label = '99% Cold Spot'; }
+    else if (zScore <= -1.960) { confidenceBin = -2; color = '#2c7bb6'; label = '95% Cold Spot'; }
+    else if (zScore <= -1.645) { confidenceBin = -1; color = '#abd9e9'; label = '90% Cold Spot'; }
+
+    return { ...fi, zScore, confidenceBin, color, label };
+  });
+}
+
+
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
   mapProvider = 'mappls', mapplsToken, mapTilerKey, mapboxToken,
@@ -147,6 +234,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [hotspots,      setHotspots]      = useState<MicroHotspotResponse | null>(null);
   const [hotspotsLoading, setHotspotsLoading] = useState(false);
   const [hotspotsError,   setHotspotsError]   = useState('');
+
+  // Getis-Ord Gi* results — computed from ward data when available
+  const [giStarResults, setGiStarResults] = useState<GiStarFeature[]>([]);
 
   // ── Mappls map refs & Layer State ───────────────────────────────────────────
   const [showHeatmap, setShowHeatmap] = useState(true);
@@ -428,184 +518,223 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     }
   }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers, mapProvider, mapTilerKey, mapboxToken]);
 
-  // ── Hotspot circles + heatmap whenever hotspots data changes ───────────────
+  // ── Getis-Ord Gi* computation whenever ward data changes ───────────────────
   useEffect(() => {
-    const isMappls = mapProvider === 'mappls';
-    const isMapbox = mapProvider === 'mapbox';
-    if (isMappls && typeof mappls === 'undefined') return;
-    if (!isMappls && mapProvider === 'maptiler' && typeof maptilersdk === 'undefined') return;
-    if (isMapbox && typeof mapboxgl === 'undefined') return;
-    if (!mapRef.current) return;
+    if (!wardReadiness?.length) { setGiStarResults([]); return; }
+    const features = wardReadiness
+      .filter(w => w.lat && w.lon)
+      .map(w => ({ lat: w.lat, lon: w.lon, value: w.flood_probability }));
+    // Use ~3 km distance band (optimal for urban ward density ≈ 1–5 km²)
+    const results = computeGiStar(features, 3.0);
+    setGiStarResults(results);
+  }, [wardReadiness]);
 
+  // ── Gi* Hot Spot Overlay on Map ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!giStarResults.length || !mapRef.current) return;
+    const isMappls = mapProvider === 'mappls';
     const map = mapRef.current;
+
+    // ── Clean up previous Gi* layers ──
     mapplsCirclesRef.current.forEach(c => { try { c.remove(); } catch { try { c.setMap(null); } catch {} } });
     mapplsCirclesRef.current = [];
+    ['gi-star-layer', 'gi-star-nonsig-layer'].forEach(id => {
+      try { if (map.getLayer?.(id)) map.removeLayer(id); } catch {}
+    });
+    ['gi-star-source'].forEach(id => {
+      try { if (map.getSource?.(id)) map.removeSource(id); } catch {}
+    });
 
-    // Clear old heatmap
-    if (mapplsHeatmapRef.current) {
-      try { mapplsHeatmapRef.current.remove(); } catch {}
-      mapplsHeatmapRef.current = null;
-    }
+    if (!showHotspotZones) return;
 
-    if (!hotspots?.hotspots?.length) return;
+    const makeGiPopup = (f: GiStarFeature) => `
+      <div style="font-family:Inter,system-ui,sans-serif;min-width:200px;padding:2px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <div style="width:14px;height:14px;border-radius:50%;background:${f.color};flex-shrink:0"></div>
+          <span style="font-size:11px;font-weight:900;color:#0f172a">${f.label}</span>
+        </div>
+        <table style="font-size:10px;width:100%;border-collapse:collapse">
+          <tr><td style="color:#64748b;padding:2px 0">Flood Probability</td><td style="font-weight:900;text-align:right;color:${f.color}">${(f.value * 100).toFixed(1)}%</td></tr>
+          <tr><td style="color:#64748b;padding:2px 0">Gi* Z-Score</td><td style="font-weight:900;text-align:right">${f.zScore.toFixed(3)}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 0">Confidence Bin</td><td style="font-weight:900;text-align:right">${f.confidenceBin > 0 ? '+' : ''}${f.confidenceBin}</td></tr>
+          <tr><td style="color:#64748b;padding:2px 0">Spatial Cluster</td><td style="font-weight:900;text-align:right">${f.confidenceBin > 0 ? '🔴 Hot Spot' : f.confidenceBin < 0 ? '🔵 Cold Spot' : '⬜ Not Significant'}</td></tr>
+        </table>
+        <div style="margin-top:6px;font-size:9px;color:#94a3b8">Getis-Ord Gi* · 3km distance band</div>
+      </div>`;
 
-    const hotspotColor = (p: number) =>
-      p >= 0.85 ? '#dc2626' : p >= 0.65 ? '#f97316' : p >= 0.40 ? '#eab308' : '#3b82f6';
-    const riskLabel    = (p: number) =>
-      p >= 0.85 ? 'CRITICAL' : p >= 0.65 ? 'HIGH' : p >= 0.40 ? 'MEDIUM' : 'LOW';
-
-    const makeHotspotPopup = (h: any, col: string) => `
-        <div style="font-family:Inter,system-ui,sans-serif;min-width:180px">
-          <div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:6px">
-            Flood Hotspot
-            <span style="background:${col};color:#fff;padding:2px 8px;border-radius:9999px;font-size:9px;font-weight:800;margin-left:6px">${riskLabel(h.flood_probability)}</span>
-          </div>
-          <table style="font-size:10px;width:100%;border-collapse:collapse">
-            <tr><td style="color:#64748b;padding:2px 0">Flood Probability</td><td style="font-weight:900;color:${col};text-align:right">${(h.flood_probability*100).toFixed(1)}%</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Inundation Depth</td><td style="font-weight:800;text-align:right">${h.inundation_depth_m.toFixed(2)} m</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Area</td><td style="font-weight:800;text-align:right">${h.area_km2.toFixed(2)} km²</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Dominant Factor</td><td style="font-weight:800;text-align:right">${h.dominant_factor.replace(/_/g,' ')}</td></tr>
-          </table>
-        </div>`;
-
-    // ─ Transparent flood-risk circles (one per hotspot cell) ───────────────────
-    if (showHotspotZones) {
-      if (isMappls) {
-        hotspots.hotspots.forEach(h => {
-          const col      = hotspotColor(h.flood_probability);
-          const radiusM  = Math.max(Math.sqrt(h.area_km2 * 1_000_000 / Math.PI), 400);
-          try {
-            const circle = new mappls.Circle({
-              map: map,
-              center: { lat: h.lat, lng: h.lon },
-              radius: radiusM,
-              fillColor: col,
-              fillOpacity: 0.22,
-              strokeColor: col,
-              strokeOpacity: 0.8,
-              strokeWidth: 2,
-              htmlPopup: makeHotspotPopup(h, col),
-            });
-            circlesRef.current.push(circle);
-          } catch (e) { console.warn('[Mappls] Circle error', e); }
-        });
-      } else {
-        // MapTiler/Mapbox circles via GeoJSON — risk-proportional size
-        // Clean up previous layers first
-        try { if (map.getLayer('hotspot-circles-layer')) map.removeLayer('hotspot-circles-layer'); } catch {}
-        try { if (map.getSource('hotspot-circles-source')) map.removeSource('hotspot-circles-source'); } catch {}
-
-        const features = hotspots.hotspots.map(h => {
-          const col = hotspotColor(h.flood_probability);
-          // Scale radius between 12 (medium) and 30 (critical) based on probability
-          const pixelRadius = Math.round(12 + (h.flood_probability - 0.4) * 30);
-          return {
-            type: 'Feature' as const,
-            geometry: { type: 'Point' as const, coordinates: [h.lon, h.lat] },
-            properties: {
-              color: col,
-              radius: Math.max(12, Math.min(30, pixelRadius)),
-              popup: makeHotspotPopup(h, col),
-            }
-          };
-        });
-
-        map.addSource('hotspot-circles-source', {
-          type: 'geojson',
-          data: { type: 'FeatureCollection', features }
-        });
-        map.addLayer({
-          id: 'hotspot-circles-layer',
-          type: 'circle',
-          source: 'hotspot-circles-source',
-          paint: {
-            'circle-radius': ['get', 'radius'],
-            'circle-color': ['get', 'color'],
-            'circle-opacity': 0.35,
-            'circle-stroke-width': 2.5,
-            'circle-stroke-color': ['get', 'color'],
-            'circle-stroke-opacity': 0.9,
-          }
-        });
-
-        // Click listener for popups
-        map.on('click', 'hotspot-circles-layer', (e: any) => {
-          const PopupClass = mapProvider === 'maptiler' ? maptilersdk.Popup : mapboxgl.Popup;
-          new PopupClass({ maxWidth: '260px' })
-            .setLngLat(e.lngLat)
-            .setHTML(e.features[0].properties.popup)
-            .addTo(map);
-        });
-        map.on('mouseenter', 'hotspot-circles-layer', () => { map.getCanvas().style.cursor = 'pointer'; });
-        map.on('mouseleave', 'hotspot-circles-layer', () => { map.getCanvas().style.cursor = ''; });
-      }
-    }
-
-    // ─ Heatmap layer (flood probability intensity) ─────────────────────────
-    const floodGradient = [
-      'rgba(59,130,246,0)',    // transparent (low risk)
-      'rgba(59,130,246,0.8)',  // blue
-      'rgba(234,179,8,1)',     // yellow
-      'rgba(249,115,22,1)',    // orange
-      'rgba(239,68,68,1)',     // red
-      'rgba(127,29,29,1)',     // dark-red (extreme)
-    ];
-
-    if (showHeatmap) {
-      if (isMappls) {
-        const pts = hotspots.hotspots.map(h => ({
-          lat: h.lat, lng: h.lon,
-          weight: h.flood_probability,
-        }));
+    if (isMappls) {
+      // ── Mappls: draw circles per Gi* feature ──
+      giStarResults.forEach(f => {
+        if (f.confidenceBin === 0) return; // skip beige / not significant
         try {
-          heatmapRef.current = new mappls.HeatmapLayer({
-            map: map,
-            data: pts,
-            gradient: floodGradient,
-            radius: 30,
-            opacity: 0.7,
-            fitbounds: false,
+          const circle = new mappls.Circle({
+            map,
+            center: { lat: f.lat, lng: f.lon },
+            radius: 600 + Math.abs(f.confidenceBin) * 150,
+            fillColor: f.color,
+            fillOpacity: 0.35 + Math.abs(f.confidenceBin) * 0.1,
+            strokeColor: f.color,
+            strokeOpacity: 0.9,
+            strokeWidth: 2,
+            htmlPopup: makeGiPopup(f),
           });
-        } catch (e) { console.warn('[Mappls] HeatmapLayer error', e); }
-      } else {
-        // MapTiler/Mapbox Heatmap — clean up previous first
-        try { if (map.getLayer('flood-heatmap-layer')) map.removeLayer('flood-heatmap-layer'); } catch {}
-        try { if (map.getSource('flood-heatmap-source')) map.removeSource('flood-heatmap-source'); } catch {}
+          mapplsCirclesRef.current.push(circle);
+        } catch (e) { console.warn('[Mappls][Gi*] Circle error', e); }
+      });
 
-        map.addSource('flood-heatmap-source', {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: hotspots.hotspots.map(h => ({
-              type: 'Feature',
-              geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
-              properties: { weight: h.flood_probability }
-            }))
-          }
-        });
-        map.addLayer({
-          id: 'flood-heatmap-layer',
-          type: 'heatmap',
-          source: 'flood-heatmap-source',
-          paint: {
-            'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0.4, 0, 1, 1],
-            'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 3],
-            'heatmap-color': [
-              'interpolate', ['linear'], ['heatmap-density'],
-              0,   'rgba(59,130,246,0)',
-              0.2, 'rgba(59,130,246,0.6)',
-              0.4, 'rgba(234,179,8,0.8)',
-              0.6, 'rgba(249,115,22,1)',
-              0.8, 'rgba(239,68,68,1)',
-              1,   'rgba(127,29,29,1)'
-            ],
-            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 10, 25, 14, 60],
-            'heatmap-opacity': 0.75,
-          }
-        });
-      }
+      // Draw not-significant features as faint beige circles
+      giStarResults.filter(f => f.confidenceBin === 0).forEach(f => {
+        try {
+          const circle = new mappls.Circle({
+            map,
+            center: { lat: f.lat, lng: f.lon },
+            radius: 400,
+            fillColor: '#d4c5a9',
+            fillOpacity: 0.15,
+            strokeColor: '#d4c5a9',
+            strokeOpacity: 0.3,
+            strokeWidth: 1,
+          });
+          mapplsCirclesRef.current.push(circle);
+        } catch {}
+      });
+    } else {
+      // ── MapTiler/Mapbox: GeoJSON circle layers ──
+      const sigFeatures   = giStarResults.filter(f => f.confidenceBin !== 0);
+      const nonsigFeatures = giStarResults.filter(f => f.confidenceBin === 0);
+
+      const toGeoFeature = (f: GiStarFeature) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [f.lon, f.lat] },
+        properties: {
+          color: f.color,
+          // Significant features: scale radius by confidence bin strength (14–28px)
+          radius: f.confidenceBin !== 0 ? 14 + Math.abs(f.confidenceBin) * 5 : 8,
+          opacity: f.confidenceBin !== 0 ? 0.55 + Math.abs(f.confidenceBin) * 0.1 : 0.12,
+          strokeOpacity: f.confidenceBin !== 0 ? 0.9 : 0.2,
+          popup: makeGiPopup(f),
+        }
+      });
+
+      const allFeatures = giStarResults.map(toGeoFeature);
+
+      map.addSource('gi-star-source', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: allFeatures }
+      });
+
+      // Non-significant (beige) layer rendered below significant layer
+      map.addLayer({
+        id: 'gi-star-nonsig-layer',
+        type: 'circle',
+        source: 'gi-star-source',
+        filter: ['==', ['get', 'opacity'], 0.12],
+        paint: {
+          'circle-radius': 8,
+          'circle-color': '#d4c5a9',
+          'circle-opacity': 0.18,
+          'circle-stroke-width': 0.5,
+          'circle-stroke-color': '#a09070',
+          'circle-stroke-opacity': 0.2,
+        }
+      });
+
+      // Significant features (hot=red, cold=blue)
+      map.addLayer({
+        id: 'gi-star-layer',
+        type: 'circle',
+        source: 'gi-star-source',
+        filter: ['!=', ['get', 'opacity'], 0.12],
+        paint: {
+          'circle-radius': ['get', 'radius'],
+          'circle-color': ['get', 'color'],
+          'circle-opacity': ['get', 'opacity'],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': ['get', 'color'],
+          'circle-stroke-opacity': ['get', 'strokeOpacity'],
+        }
+      });
+
+      // Interactive popup on click
+      map.on('click', 'gi-star-layer', (e: any) => {
+        const PopupClass = mapProvider === 'maptiler' ? maptilersdk.Popup : mapboxgl.Popup;
+        new PopupClass({ maxWidth: '280px' })
+          .setLngLat(e.lngLat)
+          .setHTML(e.features[0].properties.popup)
+          .addTo(map);
+      });
+      map.on('mouseenter', 'gi-star-layer', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'gi-star-layer', () => { map.getCanvas().style.cursor = ''; });
     }
-  }, [hotspots, showHeatmap, showHotspotZones, mapProvider]);
+  }, [giStarResults, showHotspotZones, mapProvider]);
+
+  // ── Heatmap layer based on Gi* significant hot spots ───────────────────────
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const isMappls = mapProvider === 'mappls';
+    const map = mapRef.current;
+
+    // Cleanup
+    if (mapplsHeatmapRef.current) { try { mapplsHeatmapRef.current.remove(); } catch {} mapplsHeatmapRef.current = null; }
+    try { if (map.getLayer?.('flood-heatmap-layer')) map.removeLayer('flood-heatmap-layer'); } catch {}
+    try { if (map.getSource?.('flood-heatmap-source')) map.removeSource('flood-heatmap-source'); } catch {}
+
+    if (!showHeatmap || !giStarResults.length) return;
+
+    // Only include features in the heatmap that are statistically significant hot spots (bin > 0)
+    const hotFeatures = giStarResults.filter(f => f.confidenceBin > 0);
+    if (!hotFeatures.length) return;
+
+    if (isMappls) {
+      const pts = hotFeatures.map(f => ({ lat: f.lat, lng: f.lon, weight: Math.abs(f.zScore) / 3 }));
+      try {
+        heatmapRef.current = new mappls.HeatmapLayer({
+          map,
+          data: pts,
+          gradient: ['rgba(59,130,246,0)', 'rgba(59,130,246,0.6)', 'rgba(234,179,8,0.8)', 'rgba(249,115,22,1)', 'rgba(215,25,28,1)', 'rgba(127,0,0,1)'],
+          radius: 35,
+          opacity: 0.75,
+          fitbounds: false,
+        });
+      } catch (e) { console.warn('[Mappls][Gi*] HeatmapLayer error', e); }
+    } else {
+      map.addSource('flood-heatmap-source', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: hotFeatures.map(f => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [f.lon, f.lat] },
+            properties: { weight: Math.min(Math.abs(f.zScore) / 3, 1) }  // normalise z to 0–1
+          }))
+        }
+      });
+      map.addLayer({
+        id: 'flood-heatmap-layer',
+        type: 'heatmap',
+        source: 'flood-heatmap-source',
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1, 1],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 4],
+          'heatmap-color': [
+            'interpolate', ['linear'], ['heatmap-density'],
+            0,   'rgba(59,130,246,0)',
+            0.2, 'rgba(59,130,246,0.6)',
+            0.4, 'rgba(234,179,8,0.8)',
+            0.6, 'rgba(249,115,22,1)',
+            0.8, 'rgba(215,25,28,1)',
+            1,   'rgba(127,0,0,1)',
+          ],
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 10, 30, 14, 70],
+          'heatmap-opacity': 0.72,
+        }
+      });
+    }
+  }, [giStarResults, showHeatmap, mapProvider]);
+
+
+
+
 
   // ── Map type toggle (Satellite vs Standard) ─────────────────────────────
   useEffect(() => {
