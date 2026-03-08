@@ -1,0 +1,16 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+buildCommand = ""
+
+[deploy]
+startCommand = "sh -c 'uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --loop asyncio'"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[environments.production]
+[environments.production.variables]
+PYTHONPATH = "/app"
+LOG_LEVEL = "INFO"

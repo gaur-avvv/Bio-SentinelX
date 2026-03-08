@@ -1,0 +1,1777 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useDataCache, isCacheValid } from '../contexts/DataCacheContext';
+import {
+  AreaChart, Area, LineChart, Line, BarChart, Bar, Cell,
+  XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend, ReferenceLine,
+} from 'recharts';
+import {
+  Waves, Activity, AlertTriangle, BookOpen, ArrowLeft,
+  RefreshCw, TrendingUp, TrendingDown, Minus, Zap, Info,
+  Settings, Brain, Server, CheckCircle2, XCircle, RotateCcw,
+  Cpu, ChevronDown, ChevronUp,
+} from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { WeatherData } from '../types';
+import {
+  fetchFloodData,
+  computeFloodRisk,
+  computeTrend,
+  computeHistoricalStats,
+  getSeasonalContext,
+  findTodayIndex,
+  toMonthlyFloodSeries,
+  MonthlyFloodPoint,
+  fetchMLPrediction,
+  fetchMLStatus,
+  triggerMLRetrain,
+  fetchWardReadiness,
+  fetchHotspots,
+  FloodDataPoint,
+  FloodRiskScore,
+  TrendResult,
+  SeasonalContext,
+  HistoricalStats,
+  MLPredictionResult,
+  MLTrainingStatus,
+  WardReadinessItem,
+  MicroHotspotResponse,
+} from '../services/floodService';
+import { analyzeFloodRisk, FloodAnalysisInput } from '../services/geminiService';
+
+interface FloodPredictionProps {
+  weather: WeatherData | null;
+  onBack: () => void;
+  aiProvider?: string;
+  aiModel?: string;
+  aiKey?: string;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fmt = (n: number | null | undefined, d = 1) =>
+  n == null || isNaN(n as number) ? 'N/A' : Number(n).toFixed(d);
+
+const windDir16 = (deg: number | null | undefined): string => {
+  if (deg == null || Number.isNaN(deg)) return '';
+  const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'] as const;
+  const normalized = ((deg % 360) + 360) % 360;
+  const idx = Math.round(normalized / 22.5) % 16;
+  return dirs[idx];
+};
+
+const tooltipStyle = {
+  borderRadius: '1rem', border: 'none',
+  boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold',
+};
+
+const labelFmt = (l: string) =>
+  new Date(l + 'T00:00:00').toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+  });
+
+type FuturePredictionWindow = {
+  label: string;
+  mostLikelyMean: number | null;
+  bestCaseLow: number | null;
+  worstCaseHigh: number | null;
+  days: number;
+  daysMedianExceedsHistP75: number;
+  daysEnsembleP75ExceedsHistP75: number;
+  precipTotalMm: number | null;
+};
+
+function mean(nums: number[]): number | null {
+  if (!nums.length) return null;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+function min(nums: number[]): number | null {
+  if (!nums.length) return null;
+  return Math.min(...nums);
+}
+
+function max(nums: number[]): number | null {
+  if (!nums.length) return null;
+  return Math.max(...nums);
+}
+
+export const FloodPrediction: React.FC<FloodPredictionProps> = ({
+  weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
+}) => {
+  // ── Cache ───────────────────────────────────────────────────────────────────
+  const { flood: floodCache, setFlood } = useDataCache();
+  const cacheValid = isCacheValid(floodCache.lastFetched, floodCache.lastLocation, weather?.city ?? '');
+
+  // ── Data state ──────────────────────────────────────────────────────────────
+  const [rawData,   setRawData]   = useState<FloodDataPoint[]>(() => cacheValid ? floodCache.rawData : []);
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState('');
+
+  // ── Analysis state ──────────────────────────────────────────────────────────
+  const [analysis,      setAnalysis]      = useState(() => cacheValid ? floodCache.analysis : '');
+  const [analyzing,     setAnalyzing]     = useState(false);
+  const [analysisPhase, setAnalysisPhase] = useState('');
+
+  // ── ML API config ───────────────────────────────────────────────────────────
+  const [mlApiUrl,       setMlApiUrl]       = useState(() =>
+    localStorage.getItem('floodMlApiUrl') || (process.env.FLOOD_ML_API as string | undefined) || 'http://localhost:8000');
+  const [showApiConfig,  setShowApiConfig]  = useState(false);
+  const [mlApiUrlInput,  setMlApiUrlInput]  = useState(mlApiUrl);
+
+  // ── ML prediction state ─────────────────────────────────────────────────────
+  const [mlPrediction,   setMlPrediction]   = useState<MLPredictionResult | null>(() => cacheValid ? floodCache.mlPrediction : null);
+  const [mlStatus,       setMlStatus]       = useState<MLTrainingStatus | null>(() => cacheValid ? floodCache.mlStatus : null);
+  const [mlLoading,      setMlLoading]      = useState(false);
+  const [mlError,        setMlError]        = useState('');
+  const [retraining,     setRetraining]     = useState(false);
+  const [retrainMsg,     setRetrainMsg]     = useState('');
+
+  // ── Ward readiness + hotspots (API) ───────────────────────────────────────
+  const [wardReadiness, setWardReadiness] = useState<WardReadinessItem[] | null>(null);
+  const [wardsLoading,  setWardsLoading]  = useState(false);
+  const [wardsError,    setWardsError]    = useState('');
+
+  const [hotspots,      setHotspots]      = useState<MicroHotspotResponse | null>(null);
+  const [hotspotsLoading, setHotspotsLoading] = useState(false);
+  const [hotspotsError,   setHotspotsError]   = useState('');
+
+  // ── ML training status polling (keeps UI in sync after /train) ─────────────
+  const statusPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRetrainStartRef = useRef<number | null>(null);
+
+  const stopStatusPolling = useCallback(() => {
+    if (statusPollTimeoutRef.current) {
+      clearTimeout(statusPollTimeoutRef.current);
+      statusPollTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => stopStatusPolling, [stopStatusPolling]);
+
+  const refreshMlStatus = useCallback(async (): Promise<MLTrainingStatus | null> => {
+    if (!mlApiUrl) return null;
+    try {
+      const status = await fetchMLStatus(mlApiUrl);
+      setMlStatus(status);
+      setFlood({ mlStatus: status });
+      return status;
+    } catch {
+      return null;
+    }
+  }, [mlApiUrl, setFlood]);
+
+  const startStatusPolling = useCallback((opts?: { maxMs?: number; baseIntervalMs?: number }) => {
+    const maxMs = opts?.maxMs ?? 10 * 60 * 1000;
+    const baseIntervalMs = opts?.baseIntervalMs ?? 5000;
+
+    stopStatusPolling();
+    const startTs = Date.now();
+
+    const tick = async () => {
+      const status = await refreshMlStatus();
+      const st = status?.status;
+
+      // Update the existing retrain message when a run finishes.
+      if (lastRetrainStartRef.current != null && (st === 'completed' || st === 'failed')) {
+        setRetrainMsg(`${st === 'completed' ? '✅' : '❌'} ${status?.message ?? (st === 'completed' ? 'Training complete' : 'Training failed')}`);
+        lastRetrainStartRef.current = null;
+      }
+
+      const stillInProgress = st === 'queued' || st === 'running';
+      if (stillInProgress && Date.now() - startTs < maxMs) {
+        statusPollTimeoutRef.current = setTimeout(tick, baseIntervalMs);
+      } else {
+        stopStatusPolling();
+      }
+    };
+
+    // Fast first refresh, then normal cadence.
+    statusPollTimeoutRef.current = setTimeout(tick, 350);
+  }, [refreshMlStatus, stopStatusPolling]);
+
+  // ── Derived metrics ─────────────────────────────────────────────────────────
+  const [riskScore,      setRiskScore]      = useState<FloodRiskScore | null>(null);
+  const [seasonCtx,      setSeasonCtx]      = useState<SeasonalContext | null>(null);
+  const [histStats,      setHistStats]      = useState<HistoricalStats | null>(null);
+  const [trend,          setTrend]          = useState<TrendResult | null>(null);
+  const [todayIdx,       setTodayIdx]       = useState(0);
+  const [chartData,      setChartData]      = useState<FloodDataPoint[]>([]);
+  const [todayChartIdx,  setTodayChartIdx]  = useState(0);
+
+  // ── Forecast view mode (daily vs derived monthly) ─────────────────────────
+  const [forecastView, setForecastView] = useState<'daily' | 'monthly'>('daily');
+
+  // Prevent duplicate auto-fetch in React strict mode
+  const didAutoFetchRef = useRef(false);
+
+  // Save ML API URL to localStorage whenever it changes
+  const saveMlApiUrl = useCallback(() => {
+    let trimmed = mlApiUrlInput.trim().replace(/\/$/, '');
+    // Auto-add protocol so the saved value is canonical
+    if (trimmed && !/^https?:\/\//i.test(trimmed)) {
+      const isLocal = /^(localhost|127\.|0\.0\.0\.)/.test(trimmed);
+      trimmed = `${isLocal ? 'http' : 'https'}://${trimmed}`;
+    }
+    setMlApiUrl(trimmed);
+    setMlApiUrlInput(trimmed);
+    localStorage.setItem('floodMlApiUrl', trimmed);
+    setShowApiConfig(false);
+  }, [mlApiUrlInput]);
+
+  // ── Compute derived metrics when rawData changes ────────────────────────────
+  useEffect(() => {
+    if (rawData.length === 0 || !weather?.lat) return;
+
+    const idx = findTodayIndex(rawData);
+    setTodayIdx(idx);
+
+    const month = new Date().getMonth() + 1; // 1-based
+    const sc    = getSeasonalContext(month, weather.lat);
+    setSeasonCtx(sc);
+
+    const historical = rawData.slice(0, idx + 1);
+    const stats      = computeHistoricalStats(historical);
+    setHistStats(stats);
+
+    setRiskScore(computeFloodRisk(rawData, idx, sc));
+    setTrend(computeTrend(historical, stats.p50));
+
+    // Chart window: 60 past days + 60 forecast days for readability
+    const pastStart    = Math.max(0, idx - 59);
+    const chartPast    = rawData.slice(pastStart, idx + 1);
+    const chartFuture  = rawData.slice(idx + 1, idx + 61);
+    setChartData([...chartPast, ...chartFuture]);
+    setTodayChartIdx(chartPast.length - 1);
+  }, [rawData, weather?.lat]);
+
+  // ── Fetch GloFAS data ────────────────────────────────────────────────────────
+  const handleFetch = useCallback(async () => {
+    if (!weather?.lat || !weather?.lon) return;
+    setLoading(true);
+    setError('');
+    setAnalysis('');
+    setMlPrediction(null);
+
+    try {
+      const result = await fetchFloodData(weather.lat, weather.lon, 92, 183);
+      setRawData(result.data);
+      setFlood({ rawData: result.data, lastLocation: weather.city ?? '', lastFetched: Date.now() });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch flood data.');
+    } finally {
+      setLoading(false);
+    }
+  }, [setFlood, weather?.city, weather?.lat, weather?.lon]);
+
+  // Auto-fetch on entry so the discharge chart is visible by default
+  useEffect(() => {
+    if (didAutoFetchRef.current) return;
+    if (!weather?.lat || !weather?.lon) return;
+    if (rawData.length > 0) {
+      didAutoFetchRef.current = true;
+      return;
+    }
+    didAutoFetchRef.current = true;
+    handleFetch();
+  }, [handleFetch, rawData.length, weather?.lat, weather?.lon]);
+
+  // Fetch model status once on entry / when ML API URL changes.
+  useEffect(() => {
+    if (!mlApiUrl) return;
+    refreshMlStatus().then((status) => {
+      const st = status?.status;
+      if (st === 'queued' || st === 'running') startStatusPolling();
+    });
+  }, [mlApiUrl, refreshMlStatus, startStatusPolling]);
+
+  // ── ML real-time prediction ──────────────────────────────────────────────────
+  const handleMLPredict = async () => {
+    if (!weather?.lat || !weather?.lon || !mlApiUrl) return;
+    setMlLoading(true);
+    setMlError('');
+    setMlPrediction(null);
+
+    try {
+      // Also fetch ML model status (accuracy, feature importances, etc.)
+      const [pred, status] = await Promise.all([
+        fetchMLPrediction(
+          mlApiUrl,
+          weather.lat,
+          weather.lon,
+          {
+            temp: weather.temp,
+            precipitation: weather.precipitationSum,
+            humidity: weather.humidity,
+            pressure: weather.pressure,
+          },
+          rawData.length > 0 && todayIdx >= 0
+            ? (rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean ?? null)
+            : null,
+          histStats?.p50 ?? 0,
+        ),
+        fetchMLStatus(mlApiUrl).catch(() => null),
+      ]);
+      setMlPrediction(pred);
+      if (status) setMlStatus(status);
+      setFlood({ mlPrediction: pred, mlStatus: status ?? floodCache.mlStatus });
+    } catch (err) {
+      setMlError(err instanceof Error ? err.message : 'ML API unreachable. Check the API URL in settings.');
+    } finally {
+      setMlLoading(false);
+    }
+  };
+
+  // ── Retrain ML model ─────────────────────────────────────────────────────────
+  const handleRetrain = async () => {
+    if (!weather?.lat || !weather?.lon || !mlApiUrl) return;
+    setRetraining(true);
+    setRetrainMsg('');
+    try {
+      const res = await triggerMLRetrain(mlApiUrl, weather.lat, weather.lon, 20, 10);
+      setRetrainMsg(`✅ ${res.message ?? 'Retrain queued. Check status in ~5 min.'}`);
+
+      // Immediately reflect queued state and keep polling until completion.
+      lastRetrainStartRef.current = Date.now();
+      setMlStatus(prev => ({
+        status: 'queued',
+        message: res.message ?? 'Training queued',
+        trained: prev?.trained ?? false,
+        accuracy: prev?.accuracy,
+        f1_score: prev?.f1_score,
+        roc_auc: prev?.roc_auc,
+        last_trained: prev?.last_trained,
+        training_samples: prev?.training_samples,
+        hotspots_mapped: prev?.hotspots_mapped,
+        feature_importances: prev?.feature_importances,
+      } as MLTrainingStatus));
+      startStatusPolling();
+    } catch (err) {
+      setRetrainMsg(`❌ ${err instanceof Error ? err.message : 'Retrain failed'}`);
+    } finally {
+      setRetraining(false);
+    }
+  };
+
+  const handleLoadWards = async () => {
+    if (!weather?.lat || !weather?.lon || !mlApiUrl) return;
+    setWardsLoading(true);
+    setWardsError('');
+    try {
+      const wards = await fetchWardReadiness(mlApiUrl, weather.lat, weather.lon, 15);
+      setWardReadiness(wards);
+    } catch (err) {
+      setWardReadiness(null);
+      setWardsError(err instanceof Error ? err.message : 'Failed to load ward readiness.');
+    } finally {
+      setWardsLoading(false);
+    }
+  };
+
+  const handleLoadHotspots = async () => {
+    if (!weather?.lat || !weather?.lon || !mlApiUrl) return;
+    setHotspotsLoading(true);
+    setHotspotsError('');
+    try {
+      const res = await fetchHotspots(mlApiUrl, weather.lat, weather.lon, {
+        radiusKm: 10,
+        gridSizeKm: 1.0,
+        minRisk: 0.5,
+      });
+      setHotspots(res);
+    } catch (err) {
+      setHotspots(null);
+      setHotspotsError(err instanceof Error ? err.message : 'Failed to load hotspots.');
+    } finally {
+      setHotspotsLoading(false);
+    }
+  };
+
+  // ── AI Analysis ─────────────────────────────────────────────────────────────
+  const handleAnalyze = async () => {
+    if (rawData.length === 0 || !riskScore || !histStats || !seasonCtx || !weather) return;
+    setAnalyzing(true);
+    setAnalysis('');
+    setAnalysisPhase('Connecting to GloFAS v4 hydrological database...');
+
+    const historical = rawData.slice(0, todayIdx + 1);
+    const forecast   = rawData.slice(todayIdx + 1);
+
+    const fcMedians = forecast
+      .map(d => d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge ?? 0)
+      .filter(v => v > 0);
+    const peakMedian    = fcMedians.length > 0 ? Math.max(...fcMedians) : 0;
+    const peakMedianDate = fcMedians.length > 0
+      ? (forecast[fcMedians.indexOf(Math.max(...fcMedians))]?.date ?? 'N/A')
+      : 'N/A';
+    const fcMean = fcMedians.length > 0
+      ? fcMedians.reduce((a, b) => a + b, 0) / fcMedians.length : 0;
+    const p75Exceeded = forecast.filter(
+      d => (d.river_discharge_median ?? 0) > histStats.p75
+    ).length;
+
+    // Near-term precipitation forecast (Open-Meteo daily forecast is max 16 days)
+    const precipForecast = (weather.dailyForecast ?? [])
+      .map(d => {
+        const dateIso = new Date(d.dt * 1000).toISOString().slice(0, 10);
+        const mm = typeof d.precipitationSum === 'number' ? d.precipitationSum : null;
+        const pop = typeof d.pop === 'number' ? d.pop : null;
+        return { date: dateIso, precipitationSumMm: mm, popPct: pop };
+      })
+      .filter(x => x.date);
+
+    const precipNext7 = precipForecast.slice(0, 7).map(p => p.precipitationSumMm ?? 0);
+    const precip7dTotal = precipNext7.length ? precipNext7.reduce((a, b) => a + b, 0) : null;
+    const precipMaxDayMm = precipForecast.length
+      ? Math.max(...precipForecast.map(p => p.precipitationSumMm ?? 0))
+      : null;
+    const precipMaxDayDate = precipForecast.length
+      ? (precipForecast.reduce((best, cur) => ((cur.precipitationSumMm ?? 0) > (best.precipitationSumMm ?? 0) ? cur : best), precipForecast[0]).date)
+      : null;
+
+    // Decide how much detail to send to AI based on near-future conditions
+    const dischargePeakOk = peakMedian <= (histStats.p75 || 0) * 1.05;
+    const precipOk = (precipMaxDayMm ?? 0) <= 5 && (precip7dTotal ?? 0) <= 15;
+    const ensembleOk = p75Exceeded <= 1;
+    const detailLevel: 'compact' | 'full' = (dischargePeakOk && precipOk && ensembleOk) ? 'compact' : 'full';
+
+    const dischargeForecastDaily = rawData
+      .slice(todayIdx + 1, todayIdx + 31)
+      .map(d => ({
+        date: d.date,
+        dischargeMedian: d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge ?? null,
+        dischargeP75: d.river_discharge_p75 ?? null,
+        dischargeMax: d.river_discharge_max ?? null,
+      }));
+
+    const monthlyForecast = toMonthlyFloodSeries(rawData, { startIndex: Math.max(0, todayIdx + 1) })
+      .slice(0, 8)
+      .map((m: MonthlyFloodPoint) => ({
+        month: m.month,
+        dischargeMedianMean: m.discharge_median_mean,
+        dischargeMedianMax: m.discharge_median_max,
+        days: m.days,
+      }));
+
+    const today = historical[historical.length - 1];
+    const todayDischarge = today
+      ? fmt(today.river_discharge ?? today.river_discharge_mean)
+      : null;
+
+    const input: FloodAnalysisInput = {
+      detailLevel,
+      locationName:          weather.city,
+      lat:                   weather.lat,
+      lon:                   weather.lon,
+      pastDays:              92,
+      forecastDays:          183,
+      histAvgDischarge:      fmt(histStats.mean),
+      histMaxDischarge:      fmt(histStats.max),
+      histMinDischarge:      fmt(histStats.min),
+      histP50:               fmt(histStats.p50),
+      histP75:               fmt(histStats.p75),
+      histP90:               fmt(histStats.p90),
+      forecastPeakMedian:    fmt(peakMedian),
+      forecastPeakDate:      peakMedianDate,
+      forecastMeanDischarge: fmt(fcMean),
+      seasonLabel:           seasonCtx.seasonLabel,
+      isFloodSeason:         seasonCtx.isFloodSeason,
+      seasonNote:            seasonCtx.note,
+      riskLevel:             riskScore.level,
+      riskScore:             riskScore.score,
+      todayDischarge,
+      recentTrend:           trend?.direction ?? 'STABLE',
+      trendWithinNorm:       trend?.withinNorm ?? true,
+      p75Exceedance:         p75Exceeded.toString(),
+      currentWeather: {
+        temp:          weather.temp,
+        precipitation: weather.precipitationSum,
+        humidity:      weather.humidity,
+        description:   weather.description,
+      },
+      futureWeather: {
+        days: precipForecast.length,
+        precipitation7dTotalMm: precip7dTotal,
+        precipitationMaxDayMm: precipMaxDayMm,
+        precipitationMaxDayDate: precipMaxDayDate,
+        // Only include the full daily list when conditions look unstable
+        precipitationDailyMm: detailLevel === 'full' ? precipForecast : undefined,
+      },
+      forecastDischargeDaily: detailLevel === 'full' ? dischargeForecastDaily : undefined,
+      forecastDischargeMonthly: monthlyForecast,
+      futurePrediction: {
+        windows: [future7d, future30d, future6mo]
+          .filter((x): x is FuturePredictionWindow => !!x)
+          .map(w => ({
+            label: w.label,
+            mostLikelyMean: w.mostLikelyMean,
+            bestCaseLow: w.bestCaseLow,
+            worstCaseHigh: w.worstCaseHigh,
+            daysMedianExceedsHistP75: w.daysMedianExceedsHistP75,
+            daysEnsembleP75ExceedsHistP75: w.daysEnsembleP75ExceedsHistP75,
+            precipTotalMm: w.precipTotalMm,
+          })),
+      },
+      // Inject ML prediction + model stats if available
+      mlPrediction: mlPrediction ?? undefined,
+      mlModelStats: mlStatus ? {
+        accuracy:           mlStatus.accuracy,
+        f1_score:           mlStatus.f1_score,
+        roc_auc:            mlStatus.roc_auc,
+        training_samples:   mlStatus.training_samples,
+        feature_importances: mlStatus.feature_importances,
+      } : undefined,
+    };
+
+    const phases = mlPrediction ? [
+      'Ingesting GloFAS v4 river discharge model output...',
+      'Processing Bio-SentinelX ML ensemble prediction...',
+      'Correlating upstream catchment precipitation patterns...',
+      'Applying multi-model consensus analysis...',
+      'Synthesising flood risk prediction and recommendations...',
+    ] : [
+      'Ingesting GloFAS v4 river discharge model output...',
+      'Correlating upstream catchment precipitation patterns...',
+      'Applying ensemble uncertainty analysis (P25–P75 spread)...',
+      'Cross-referencing regional flood frequency statistics...',
+      'Synthesising flood risk prediction and recommendations...',
+    ];
+    phases.forEach((phase, i) => setTimeout(() => setAnalysisPhase(phase), i * 2200));
+
+    try {
+      const result = await analyzeFloodRisk(input, aiProvider, aiModel, aiKey);
+      setAnalysis(result);
+      setAnalysisPhase('');
+      setFlood({ analysis: result });
+    } catch (err) {
+      setAnalysisPhase('');
+      setError(err instanceof Error ? err.message : 'Failed to generate flood analysis.');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  // ── Trend icon (no panic colouring for normal seasonal rises) ───────────────
+  const TrendIcon = trend?.direction === 'INCREASING'
+    ? <TrendingUp  className={`w-4 h-4 ${trend.withinNorm ? 'text-slate-500' : 'text-amber-500'}`} />
+    : trend?.direction === 'DECREASING'
+    ? <TrendingDown className="w-4 h-4 text-green-500" />
+    : <Minus        className="w-4 h-4 text-slate-400" />;
+
+  const trendBg   = trend?.direction === 'INCREASING' && !trend.withinNorm ? 'bg-amber-50 dark:bg-amber-900/30'  :
+                    trend?.direction === 'DECREASING' ? 'bg-green-50 dark:bg-green-900/30' : 'bg-slate-50 dark:bg-slate-700/60';
+  const trendText = trend?.direction === 'INCREASING' && !trend.withinNorm ? 'text-amber-700 dark:text-amber-300' :
+                    trend?.direction === 'DECREASING' ? 'text-green-700 dark:text-green-300' : 'text-slate-500 dark:text-slate-400';
+
+  // ── Forecast peak (use median, not ensemble max) ────────────────────────────
+  const forecastPeakMedian = rawData.length > 0 && todayIdx >= 0
+    ? Math.max(0, ...rawData.slice(todayIdx + 1)
+        .map(d => d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge ?? 0)
+        .filter(v => v > 0))
+    : 0;
+
+  // ── Today reference-line date ───────────────────────────────────────────────
+  const todayRefDate = chartData[todayChartIdx]?.date ?? null;
+
+  const monthlySeries = rawData.length
+    ? toMonthlyFloodSeries(rawData, { startIndex: Math.max(0, todayIdx + 1) })
+    : [];
+
+  const dailyPrecipSeries = (weather?.dailyForecast ?? [])
+    .map(d => ({
+      date: new Date(d.dt * 1000).toISOString().slice(0, 10),
+      precipitationSum: typeof d.precipitationSum === 'number' ? d.precipitationSum : 0,
+    }))
+    .slice(0, 16);
+
+  const buildFutureWindow = (label: string, windowDays: number): FuturePredictionWindow => {
+    const start = Math.max(0, todayIdx + 1);
+    const end = Math.min(rawData.length, start + windowDays);
+    const slice = rawData.slice(start, end);
+
+    const medians = slice
+      .map(d => d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge)
+      .filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
+    const lows = slice
+      .map(d => d.river_discharge_min ?? d.river_discharge_p25 ?? d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge)
+      .filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
+    const highs = slice
+      .map(d => d.river_discharge_max ?? d.river_discharge_p75 ?? d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge)
+      .filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
+
+    const histP75 = histStats?.p75 ?? 0;
+    const daysMedianExceedsHistP75 = slice.filter(d => {
+      const v = d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge;
+      return typeof v === 'number' && v > histP75;
+    }).length;
+    const daysEnsembleP75ExceedsHistP75 = slice.filter(d => {
+      const v = d.river_discharge_p75;
+      return typeof v === 'number' && v > histP75;
+    }).length;
+
+    const precipTotalMm = dailyPrecipSeries.slice(0, Math.min(windowDays, dailyPrecipSeries.length))
+      .reduce((a, b) => a + (b.precipitationSum ?? 0), 0);
+
+    return {
+      label,
+      mostLikelyMean: mean(medians),
+      bestCaseLow: min(lows),
+      worstCaseHigh: max(highs),
+      days: slice.length,
+      daysMedianExceedsHistP75,
+      daysEnsembleP75ExceedsHistP75,
+      precipTotalMm: windowDays <= dailyPrecipSeries.length ? precipTotalMm : null,
+    };
+  };
+
+  const future7d = rawData.length && histStats ? buildFutureWindow('7-day', 7) : null;
+  const future30d = rawData.length && histStats ? buildFutureWindow('30-day', 30) : null;
+  const future6mo = rawData.length && histStats ? buildFutureWindow('6-month', 183) : null;
+
+  // ── No weather loaded ───────────────────────────────────────────────────────
+  if (!weather?.lat) {
+    return (
+      <div className="space-y-8 animate-fade-in">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-3 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-slate-500 dark:text-slate-400">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-3">
+              <Waves className="w-7 h-7 text-blue-500" /> Flood Prediction
+            </h2>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              GloFAS v4 River Discharge · AI Flood Risk Intelligence · Open-Meteo Flood API
+            </p>
+          </div>
+        </div>
+        <div className="bg-white dark:bg-slate-800 p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700 flex items-start gap-4">
+          <Info className="w-6 h-6 text-blue-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-black text-slate-800 dark:text-slate-100 mb-1">No location loaded</p>
+            <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+              Search for a location using the sidebar first, then return here to view river discharge data and flood risk for your location.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8 animate-fade-in">
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-4">
+        <button onClick={onBack} className="p-3 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-slate-500 dark:text-slate-400">
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div>
+          <h2 className="text-2xl font-black text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-3">
+            <Waves className="w-7 h-7 text-blue-500" /> Flood Prediction
+          </h2>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+            GloFAS v4 River Discharge · AI Flood Risk Intelligence · Open-Meteo Flood API
+          </p>
+          <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1">
+            River discharge graph + current discharge summary for your selected location.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Flood overview (shown by default) ─────────────────────────────── */}
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className={`${riskScore ? `${riskScore.bgColor} border ${riskScore.borderColor}` : 'bg-slate-50 dark:bg-slate-700/60 border border-slate-100 dark:border-slate-600'} p-5 rounded-[1.5rem]`}>
+            <div className="flex items-center gap-2 mb-2">
+              <Activity className="w-5 h-5 text-slate-400" />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Risk Level</span>
+            </div>
+            <p className={`text-lg font-black ${riskScore ? riskScore.textColor : 'text-slate-600 dark:text-slate-200'}`}>{riskScore?.level ?? '—'}</p>
+            <p className="text-[10px] text-slate-400 font-bold mt-1">Percentile-based monitoring score</p>
+          </div>
+
+          <div className={`${trendBg} dark:bg-slate-700/60 p-5 rounded-[1.5rem] border border-slate-100 dark:border-slate-600`}>
+            <div className="flex items-center gap-2 mb-2">
+              {TrendIcon}
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">7-Day Trend</span>
+            </div>
+            <p className={`text-sm font-black ${trendText}`}>
+              {trend ? (trend.direction === 'INCREASING' ? 'Increasing' : trend.direction === 'DECREASING' ? 'Decreasing' : 'Stable') : '—'}
+            </p>
+            <p className="text-[10px] text-slate-400 font-bold mt-1">Short-term change vs prior week</p>
+          </div>
+
+          <div className="bg-blue-50 dark:bg-blue-900/30 p-5 rounded-[1.5rem] border border-blue-100 dark:border-blue-700">
+            <div className="flex items-center gap-2 mb-2">
+              <Waves className="w-5 h-5 text-blue-400" />
+              <span className="text-[10px] font-black text-slate-400 dark:text-slate-300 uppercase tracking-widest">Current Discharge</span>
+            </div>
+            <p className="text-lg font-black text-blue-700 dark:text-blue-300">
+              {rawData.length > 0 ? `${fmt(rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean)} m³/s` : '—'}
+            </p>
+            <p className="text-[10px] text-slate-400 font-bold mt-1">Today’s observed river flow</p>
+          </div>
+
+          <div className="bg-slate-50 dark:bg-slate-700/60 p-5 rounded-[1.5rem] border border-slate-100 dark:border-slate-600">
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="w-5 h-5 text-slate-400" />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Forecast Peak</span>
+            </div>
+            <p className="text-lg font-black text-slate-700 dark:text-slate-200">
+              {rawData.length > 0 ? `${fmt(forecastPeakMedian)} m³/s` : '—'}
+            </p>
+            <p className="text-[10px] text-slate-400 font-bold mt-1">Most-likely median peak</p>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+          <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+            <Waves className="w-4 h-4 text-blue-500" /> River Discharge Graph (m³/s)
+          </h3>
+          <p className="text-[10px] text-slate-400 font-bold mb-6">
+            Observed vs forecast (median/mean) with today marker.
+          </p>
+
+          {chartData.length === 0 ? (
+            <div className="h-96 w-full flex items-center justify-center rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
+              <div className="flex items-center gap-3 text-slate-500 dark:text-slate-300 text-xs font-bold">
+                {loading ? <Activity className="w-4 h-4 animate-spin" /> : <Info className="w-4 h-4" />}
+                {loading ? 'Loading discharge data…' : 'No discharge data yet. It will load automatically, or use Fetch below.'}
+              </div>
+            </div>
+          ) : (
+            <div className="h-96 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="histGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="forecastGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f97316" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#f97316" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="envelopeGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#a855f7" stopOpacity={0.12} />
+                      <stop offset="95%" stopColor="#a855f7" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={v => new Date(v + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={30}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                    tickLine={false}
+                    axisLine={false}
+                    unit=" m³/s"
+                    width={70}
+                  />
+                  <Tooltip
+                    contentStyle={tooltipStyle}
+                    labelFormatter={labelFmt}
+                    formatter={(v: number, name: string) => [`${v?.toFixed(2)} m³/s`, name]}
+                  />
+                  <Legend />
+
+                  {histStats && (
+                    <>
+                      <ReferenceLine
+                        y={histStats.p75}
+                        stroke="#eab308"
+                        strokeDasharray="4 4"
+                        strokeWidth={1}
+                        label={{ value: 'P75', position: 'insideTopRight', fontSize: 9, fill: '#ca8a04', fontWeight: 700 }}
+                      />
+                      <ReferenceLine
+                        y={histStats.p90}
+                        stroke="#f97316"
+                        strokeDasharray="4 4"
+                        strokeWidth={1}
+                        label={{ value: 'P90', position: 'insideTopRight', fontSize: 9, fill: '#ea580c', fontWeight: 700 }}
+                      />
+                    </>
+                  )}
+
+                  {todayRefDate && (
+                    <ReferenceLine
+                      x={todayRefDate}
+                      stroke="#64748b"
+                      strokeDasharray="6 3"
+                      strokeWidth={2}
+                      label={{ value: 'Today', position: 'top', fontSize: 10, fill: '#475569', fontWeight: 700 }}
+                    />
+                  )}
+
+                  <Area type="monotone" dataKey="river_discharge_p75" stroke="none" fill="url(#envelopeGrad)" dot={false} name="P75 Band" connectNulls />
+                  <Area type="monotone" dataKey="river_discharge_p25" stroke="none" fill="#ffffff" dot={false} name="P25 Band" connectNulls />
+                  <Area type="monotone" dataKey="river_discharge" stroke="#3b82f6" strokeWidth={2.5} fill="url(#histGrad)" dot={false} name="Observed Discharge" connectNulls />
+                  <Line type="monotone" dataKey="river_discharge_median" stroke="#8b5cf6" strokeWidth={2.5} dot={false} name="Forecast Median" connectNulls />
+                  <Area type="monotone" dataKey="river_discharge_mean" stroke="#f97316" strokeWidth={1.5} strokeDasharray="5 3" fill="url(#forecastGrad)" dot={false} name="Forecast Mean" connectNulls />
+                  <Line type="monotone" dataKey="river_discharge_max" stroke="#ef4444" strokeWidth={1} strokeDasharray="3 3" dot={false} name="Ensemble Max" connectNulls />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Data source panel ───────────────────────────────────────────────── */}
+      <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Location</p>
+            <p className="text-lg font-black text-slate-900 dark:text-white">{weather.city}</p>
+            <p className="text-xs font-bold text-slate-400 mt-0.5">
+              {weather.lat.toFixed(4)}° N &nbsp;·&nbsp; {weather.lon.toFixed(4)}° E
+            </p>
+            <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1">
+              Fetch discharge data, then optionally run ML prediction.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl text-[10px] font-bold text-blue-700 uppercase tracking-widest">
+              GloFAS v4 · 92 past days + 183-day forecast · 0.05° (~5 km) resolution
+            </div>
+            <button
+              onClick={() => setShowApiConfig(v => !v)}
+              className="p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-600 transition-all flex items-center gap-2 text-xs font-black uppercase tracking-widest"
+              title="Configure ML API"
+            >
+              <Settings className="w-4 h-4" />
+              ML API
+              {showApiConfig ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Weather snapshot (requested metrics) ─────────────────────── */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {([
+            { label: 'Humidity',     value: `${Math.round(weather.humidity)} %`, sub: 'Relative humidity' },
+            { label: 'Rain Chance',  value: `${Math.round(weather.pop ?? 0)} %`, sub: 'POP (prob. of precip)' },
+            { label: 'Wind Speed',   value: `${fmt(weather.windSpeed, 1)} km/h${windDir16(weather.windDeg) ? ` ${windDir16(weather.windDeg)}` : ''}`, sub: 'Sustained wind' },
+            { label: 'Pressure',     value: `${fmt(weather.pressure, 1)} hPa`, sub: 'Barometric' },
+            { label: 'Visibility',   value: `${weather.visibility != null ? (weather.visibility / 1000).toFixed(1) : 'N/A'} km`, sub: 'Line-of-sight' },
+            { label: 'Dew Point',    value: `${weather.dewPoint != null ? Math.round(weather.dewPoint) : 'N/A'} °`, sub: 'Comfort index' },
+            { label: 'Wind Gusts',   value: `${weather.windGusts != null ? fmt(weather.windGusts, 1) : 'N/A'} km/h`, sub: 'Peak gusts' },
+            { label: 'Precip Today', value: `${weather.precipitationSum != null ? fmt(weather.precipitationSum, 1) : '0.0'} mm`, sub: 'Daily total' },
+          ] as const).map(s => (
+            <div key={s.label} className="bg-slate-50 dark:bg-slate-700/60 p-4 rounded-xl border border-slate-100 dark:border-slate-600">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
+              <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1 break-all">{s.value}</p>
+              <p className="text-[9px] text-slate-400 font-bold mt-0.5">{s.sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* ── ML API config collapsible ──────────────────────────────────── */}
+        {showApiConfig && (
+          <div className="mb-6 p-5 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-200 dark:border-slate-600 space-y-3">
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+              <Server className="w-3.5 h-3.5" /> Bio-SentinelX ML API Endpoint
+            </p>
+            <div className="flex gap-3">
+              <input
+                type="url"
+                value={mlApiUrlInput}
+                onChange={e => setMlApiUrlInput(e.target.value)}
+                placeholder="https://your-api.railway.app  or  http://localhost:8000"
+                className="flex-1 px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400"
+              />
+              <button
+                onClick={saveMlApiUrl}
+                className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-blue-500 transition-all"
+              >
+                Save
+              </button>
+            </div>
+            <p className="text-[10px] font-bold text-slate-400">
+              Enter the URL of your deployed Bio-SentinelX FastAPI ML backend. Leave as localhost for local dev.
+              Saved to browser storage.
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={handleFetch}
+            disabled={loading}
+            className="px-8 py-3 bg-blue-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-blue-500 transition-all shadow-lg shadow-blue-200 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {loading
+              ? <><Activity className="w-4 h-4 animate-spin" /> Loading GloFAS Data...</>
+              : <><RefreshCw className="w-4 h-4" /> Fetch River Discharge Data</>}
+          </button>
+          <button
+            onClick={handleMLPredict}
+            disabled={mlLoading || !mlApiUrl}
+            className="px-8 py-3 bg-violet-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-violet-500 transition-all shadow-lg shadow-violet-200 disabled:opacity-50 flex items-center justify-center gap-2"
+            title={!rawData.length ? 'Fetch GloFAS data first for best results' : 'Run real-time ML prediction'}
+          >
+            {mlLoading
+              ? <><Activity className="w-4 h-4 animate-spin" /> Predicting...</>
+              : <><Brain className="w-4 h-4" /> ML Real-time Predict</>}
+          </button>
+          <button
+            onClick={handleRetrain}
+            disabled={retraining || !mlApiUrl}
+            className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-200 disabled:opacity-50 flex items-center justify-center gap-2"
+            title="Trigger model retraining on latest data for this location"
+          >
+            {retraining
+              ? <><Activity className="w-4 h-4 animate-spin" /> Queueing...</>
+              : <><RotateCcw className="w-4 h-4" /> Retrain Model</>}
+          </button>
+        </div>
+
+        {retrainMsg && (
+          <p className={`mt-3 text-xs font-bold px-4 py-2 rounded-xl ${retrainMsg.startsWith('✅') ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-700' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-100 dark:border-red-700'}`}>
+            {retrainMsg}
+          </p>
+        )}
+
+        {(mlStatus?.status === 'queued' || mlStatus?.status === 'running') && (
+          <p className="mt-3 text-xs font-bold px-4 py-2 rounded-xl bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-200 border border-slate-200 dark:border-slate-600">
+            Training status: {mlStatus.status}{mlStatus.message ? ` · ${mlStatus.message}` : ''}
+          </p>
+        )}
+      </div>
+
+      {/* ── ML Prediction result card ───────────────────────────────────────── */}
+      {(mlLoading || mlPrediction || mlError) && (
+        <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-violet-100 dark:border-violet-800/40">
+          <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+            <Brain className="w-4 h-4 text-violet-500" /> Bio-SentinelX ML Real-time Prediction
+            <span className="text-[10px] font-bold normal-case tracking-normal ml-1 opacity-60">
+              Stacked Ensemble: RF + XGBoost + LightGBM · trained on {mlStatus?.training_samples?.toLocaleString() ?? '—'} samples
+            </span>
+          </h3>
+
+          {mlError && (
+            <div className="p-4 bg-red-50 text-red-600 rounded-2xl text-xs font-bold border border-red-100 flex items-center gap-3">
+              <XCircle className="w-4 h-4 flex-shrink-0" /> {mlError}
+              <span className="text-red-400 font-normal ml-auto">Check API URL in settings above</span>
+            </div>
+          )}
+
+          {mlLoading && (
+            <div className="flex items-center gap-3 text-violet-600 text-sm font-bold">
+              <Activity className="w-5 h-5 animate-spin" /> Querying ML API…
+            </div>
+          )}
+
+          {mlPrediction && !mlLoading && (() => {
+            const prob = mlPrediction.flood_probability;
+            const probPct = (prob * 100).toFixed(1);
+            const riskColor =
+              prob >= 0.85 ? 'text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-700'   :
+              prob >= 0.65 ? 'text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-900/30 border-orange-200 dark:border-orange-700' :
+              prob >= 0.40 ? 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700'   :
+              prob >= 0.20 ? 'text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-700' :
+              'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-700';
+            const barColor =
+              prob >= 0.85 ? 'bg-red-500'    :
+              prob >= 0.65 ? 'bg-orange-500' :
+              prob >= 0.40 ? 'bg-amber-500'  :
+              prob >= 0.20 ? 'bg-yellow-500' :
+              'bg-green-500';
+
+            return (
+              <div className="space-y-5">
+                {/* KPI row */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className={`p-4 rounded-2xl border ${riskColor}`}>
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70 mb-1">Flood Probability</p>
+                    <p className="text-2xl font-black">{probPct}%</p>
+                    <p className="text-[10px] font-bold mt-1 opacity-60">{mlPrediction.flood_risk_level}</p>
+                  </div>
+                  <div className="p-4 rounded-2xl border bg-blue-50 dark:bg-blue-900/30 border-blue-100 dark:border-blue-700 text-blue-700 dark:text-blue-300">
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70 mb-1">Inundation Depth</p>
+                    <p className="text-2xl font-black">{mlPrediction.estimated_inundation_depth_m.toFixed(3)} m</p>
+                    <p className="text-[10px] font-bold mt-1 opacity-60">Estimated urban depth</p>
+                  </div>
+                  <div className="p-4 rounded-2xl border bg-violet-50 dark:bg-violet-900/30 border-violet-100 dark:border-violet-700 text-violet-700 dark:text-violet-300">
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70 mb-1">Confidence</p>
+                    <p className="text-2xl font-black">{(mlPrediction.confidence * 100).toFixed(1)}%</p>
+                    <p className="text-[10px] font-bold mt-1 opacity-60">Model certainty</p>
+                  </div>
+                  <div className="p-4 rounded-2xl border bg-slate-50 dark:bg-slate-700/60 border-slate-100 dark:border-slate-600">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Model Quality</p>
+                    {mlStatus ? (
+                      <>
+                        <p className="text-sm font-black text-slate-700 dark:text-slate-200">
+                          {((mlStatus.accuracy ?? 0) * 100).toFixed(2)}% acc
+                        </p>
+                        <p className="text-[10px] font-bold text-slate-400 mt-1">
+                          AUC {(mlStatus.roc_auc ?? 0).toFixed(4)} · F1 {(mlStatus.f1_score ?? 0).toFixed(3)}
+                        </p>
+                      </>
+                    ) : <p className="text-xs font-bold text-slate-400">—</p>}
+                  </div>
+                </div>
+
+                {/* Probability bar */}
+                <div>
+                  <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
+                    <span>0% — Safe</span>
+                    <span>Flood Probability</span>
+                    <span>100% — Critical</span>
+                  </div>
+                  <div className="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${barColor} rounded-full transition-all duration-700`}
+                      style={{ width: `${probPct}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Contributing factors */}
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                    ML Contributing Factors (Attribution)
+                  </p>
+                  <div className="space-y-2">
+                    {Object.entries(mlPrediction.contributing_factors)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([factor, value]) => {
+                        const pct = (value * 100).toFixed(1);
+                        return (
+                          <div key={factor} className="flex items-center gap-3">
+                            <span className="text-[10px] font-black text-slate-500 dark:text-slate-300 w-36 shrink-0 capitalize">
+                              {factor.replace(/_/g, ' ')}
+                            </span>
+                            <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-violet-500 rounded-full"
+                                style={{ width: `${Math.min(value / 0.35 * 100, 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 w-10 text-right">{pct}%</span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+
+                {/* ML recommendation */}
+                <div className={`p-4 rounded-2xl border ${riskColor} text-sm font-bold`}>
+                  {mlPrediction.recommendation}
+                </div>
+
+                {/* Top feature importances from training */}
+                {mlStatus?.feature_importances && Object.keys(mlStatus.feature_importances).length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <Cpu className="w-3 h-3" /> Top Trained Feature Importances (RF)
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(mlStatus.feature_importances).slice(0, 8).map(([k, v]) => (
+                        <span key={k} className="px-3 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-full text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-slate-600">
+                          {k.replace(/_/g, ' ')}
+                          <span className="ml-1 text-violet-600 dark:text-violet-400">{(v * 100).toFixed(1)}%</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="w-4 h-4" />
+                  ML prediction uses real-time weather + GloFAS river discharge as antecedent precipitation index. Retrain model with latest data for best accuracy.
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* ── Ward readiness + hotspots (API) ───────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald-500" /> Ward Readiness (API)
+              </h3>
+              <p className="text-[10px] font-bold text-slate-400 mt-1">
+                Uses <span className="font-black">/wards/readiness</span> · radius 15 km
+              </p>
+            </div>
+            <button
+              onClick={handleLoadWards}
+              disabled={!mlApiUrl || wardsLoading}
+              className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-emerald-500 disabled:opacity-50 flex items-center gap-2"
+              title={!mlApiUrl ? 'Configure ML API URL above' : 'Fetch ward readiness from API'}
+            >
+              {wardsLoading ? <><Activity className="w-3.5 h-3.5 animate-spin" /> Loading</> : 'Load'}
+            </button>
+          </div>
+
+          {!mlApiUrl && (
+            <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-200 dark:border-slate-600 text-xs font-bold text-slate-500 dark:text-slate-300">
+              Configure the ML API URL (ML API button above) to load ward readiness.
+            </div>
+          )}
+
+          {wardsError && (
+            <div className="p-4 bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300 rounded-2xl text-xs font-bold border border-rose-100 dark:border-rose-700 flex items-center gap-3">
+              <XCircle className="w-4 h-4 flex-shrink-0" /> {wardsError}
+            </div>
+          )}
+
+          {wardReadiness && wardReadiness.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                Top wards by risk score
+              </p>
+              <div className="space-y-2">
+                {[...wardReadiness]
+                  .sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0))
+                  .slice(0, 8)
+                  .map(w => (
+                    <div key={w.ward_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
+                            {w.ward_name ? w.ward_name : w.ward_id}
+                          </p>
+                          <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">
+                            Risk {fmt(w.risk_score, 1)} / 100 · Flood {(w.flood_probability * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 flex-shrink-0">
+                          {w.readiness_grade}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {wardReadiness && wardReadiness.length === 0 && (
+            <p className="text-xs font-bold text-slate-400">No ward results returned.</p>
+          )}
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Waves className="w-4 h-4 text-blue-500" /> Micro-Hotspots (API)
+              </h3>
+              <p className="text-[10px] font-bold text-slate-400 mt-1">
+                Uses <span className="font-black">/hotspots</span> · radius 10 km · grid 1 km · min risk 0.5
+              </p>
+            </div>
+            <button
+              onClick={handleLoadHotspots}
+              disabled={!mlApiUrl || hotspotsLoading}
+              className="px-4 py-2.5 bg-blue-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-500 disabled:opacity-50 flex items-center gap-2"
+              title={!mlApiUrl ? 'Configure ML API URL above' : 'Fetch hotspot scan from API'}
+            >
+              {hotspotsLoading ? <><Activity className="w-3.5 h-3.5 animate-spin" /> Loading</> : 'Load'}
+            </button>
+          </div>
+
+          {!mlApiUrl && (
+            <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-2xl border border-slate-200 dark:border-slate-600 text-xs font-bold text-slate-500 dark:text-slate-300">
+              Configure the ML API URL (ML API button above) to load hotspots.
+            </div>
+          )}
+
+          {hotspotsError && (
+            <div className="p-4 bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300 rounded-2xl text-xs font-bold border border-rose-100 dark:border-rose-700 flex items-center gap-3">
+              <XCircle className="w-4 h-4 flex-shrink-0" /> {hotspotsError}
+            </div>
+          )}
+
+          {hotspots && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-2xl border bg-slate-50 dark:bg-slate-700/30 border-slate-100 dark:border-slate-700">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Hotspots</p>
+                  <p className="text-lg font-black text-slate-900 dark:text-white mt-1">{hotspots.hotspots_identified}</p>
+                </div>
+                <div className="p-3 rounded-2xl border bg-slate-50 dark:bg-slate-700/30 border-slate-100 dark:border-slate-700">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Cells scanned</p>
+                  <p className="text-lg font-black text-slate-900 dark:text-white mt-1">{hotspots.total_cells_scanned}</p>
+                </div>
+              </div>
+
+              {hotspots.hotspots?.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                    Highest-risk cells
+                  </p>
+                  <div className="space-y-2">
+                    {[...hotspots.hotspots]
+                      .sort((a, b) => (b.flood_probability ?? 0) - (a.flood_probability ?? 0))
+                      .slice(0, 8)
+                      .map(h => (
+                        <div key={h.cell_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
+                                {h.cell_id}
+                              </p>
+                              <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">
+                                {(h.flood_probability * 100).toFixed(1)}% · {fmt(h.inundation_depth_m, 2)} m · {h.lat.toFixed(4)}, {h.lon.toFixed(4)}
+                              </p>
+                            </div>
+                            <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 flex-shrink-0">
+                              {h.risk_level}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Error ──────────────────────────────────────────────────────────── */}
+      {error && (
+        <div className="p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold border border-rose-100 flex items-center gap-3">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {error}
+        </div>
+      )}
+
+      {/* ── Results ────────────────────────────────────────────────────────── */}
+      {rawData.length > 0 && riskScore && seasonCtx && histStats && trend && (
+        <div className="space-y-8">
+
+          {/* ── Seasonal context banner ───────────────────────── */}
+          <div className={`p-4 rounded-2xl border flex items-start gap-3 ${
+            seasonCtx.isFloodSeason
+              ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-100 dark:border-blue-700 text-blue-800 dark:text-blue-200'
+              : 'bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200'
+          }`}>
+            <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest mb-0.5">
+                Seasonal Context — {new Date().toLocaleString('default', { month: 'long' })} · {seasonCtx.seasonLabel}
+              </p>
+              <p className="text-xs font-bold">{seasonCtx.note}</p>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-2xl border bg-slate-50 dark:bg-slate-700/40 border-slate-200 dark:border-slate-600">
+            <p className="text-[10px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest">More Flood Insights</p>
+            <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+              Percentiles, gauges, uncertainty spread, raw table, and AI summary.
+            </p>
+          </div>
+
+          {/* ── Historical percentile reference ──────────────── */}
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+            <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-4">
+              Historical Discharge Percentiles — 92-Day Baseline (m³/s)
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {[
+                { label: 'Min',  value: fmt(histStats.min),  bg: 'bg-blue-50 dark:bg-blue-900/30',     text: 'text-blue-700 dark:text-blue-300'   },
+                { label: 'P50',  value: fmt(histStats.p50),  bg: 'bg-green-50 dark:bg-green-900/30',   text: 'text-green-700 dark:text-green-300'  },
+                { label: 'P75',  value: fmt(histStats.p75),  bg: 'bg-yellow-50 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-300'},
+                { label: 'P90',  value: fmt(histStats.p90),  bg: 'bg-orange-50 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300'},
+                { label: 'Max',  value: fmt(histStats.max),  bg: 'bg-red-50 dark:bg-red-900/30',       text: 'text-red-700 dark:text-red-300'     },
+                { label: 'Mean', value: fmt(histStats.mean), bg: 'bg-slate-50 dark:bg-slate-700/60',   text: 'text-slate-700 dark:text-slate-200'  },
+              ].map(s => (
+                <div key={s.label} className={`${s.bg} dark:bg-slate-700/60 rounded-xl p-3 text-center border border-slate-100 dark:border-slate-600`}>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
+                  <p className={`text-base font-black mt-1 ${s.text}`}>{s.value}</p>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400 font-bold mt-3">
+              Risk is scored by comparing the forecast ensemble median against these percentile thresholds — not the raw max member.
+            </p>
+          </div>
+
+          {/* ── Risk Gauge ───────────────────────────────────── */}
+          <div className="bg-white dark:bg-slate-800 p-6 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity className="w-4 h-4 text-blue-500" /> Flood Monitoring Gauge
+              </h3>
+              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${riskScore.bgColor} ${riskScore.textColor}`}>
+                {riskScore.level}
+              </span>
+            </div>
+            <div className="h-4 bg-gradient-to-r from-green-200 via-yellow-200 via-orange-300 to-red-400 rounded-full relative overflow-hidden">
+              <div className="absolute top-0 right-0 h-full bg-white/60 dark:bg-slate-800/60 transition-all duration-700"
+                   style={{ width: `${100 - riskScore.score}%` }} />
+              <div className="absolute top-0 h-full w-1 bg-slate-900 dark:bg-white rounded-full transition-all duration-700"
+                   style={{ left: `calc(${riskScore.score}% - 2px)` }} />
+            </div>
+            <div className="flex justify-between text-[9px] font-black text-slate-400 uppercase tracking-widest mt-2">
+              <span>Normal</span><span>Moderate</span><span>Elevated</span><span>Watch</span>
+            </div>
+            <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-3">{riskScore.description}</p>
+            <p className="text-[10px] text-slate-400 font-bold mt-2">
+              Score reflects GloFAS ensemble median vs historical percentile distribution, seasonally adjusted for {seasonCtx.seasonLabel}.
+            </p>
+          </div>
+
+          {/* ── Future prediction summary ───────────────────── */}
+          {(future7d || future30d || future6mo) && (
+            <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-emerald-500" /> Future Flood Prediction
+                </h3>
+                <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-700">
+                  Model: GloFAS v4 (ensemble-derived)
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 font-bold mb-6">
+                Most-likely = mean of daily ensemble median. Best/worst use ensemble min/max (when available).
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {(() => {
+                  const windows = [future7d, future30d, future6mo].filter((x): x is FuturePredictionWindow => !!x);
+                  return windows.map(w => (
+                    <div key={w.label} className="bg-slate-50 dark:bg-slate-700/60 p-4 rounded-2xl border border-slate-100 dark:border-slate-600">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{w.label} Outlook</p>
+                      <p className="text-sm font-black text-slate-900 dark:text-slate-100 mt-1">
+                        {w.mostLikelyMean != null ? `${w.mostLikelyMean.toFixed(2)} m³/s` : 'N/A'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-300 font-bold mt-1">
+                        Best: {w.bestCaseLow != null ? w.bestCaseLow.toFixed(2) : '—'} · Worst: {w.worstCaseHigh != null ? w.worstCaseHigh.toFixed(2) : '—'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-300 font-bold mt-1">
+                        Days median &gt; Hist P75: {w.daysMedianExceedsHistP75} · Days forecast P75 &gt; Hist P75: {w.daysEnsembleP75ExceedsHistP75}
+                      </p>
+                      <p className="text-[10px] text-slate-400 font-bold mt-2">
+                        Precip total: {w.precipTotalMm != null ? `${w.precipTotalMm.toFixed(1)} mm` : 'N/A'}
+                      </p>
+                    </div>
+                  ));
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* ── Ensemble range chart ─────────────────────────── */}
+          <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity className="w-4 h-4 text-purple-500" /> {forecastView === 'daily' ? '60-Day Forecast — Ensemble Spread (m³/s)' : 'Monthly Forecast — Aggregated Discharge (m³/s)'}
+              </h3>
+              <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-100 dark:border-slate-600 rounded-full p-1">
+                <button
+                  onClick={() => setForecastView('daily')}
+                  className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${forecastView === 'daily' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-300'}`}
+                >
+                  Daily
+                </button>
+                <button
+                  onClick={() => setForecastView('monthly')}
+                  className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${forecastView === 'monthly' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-300'}`}
+                >
+                  Monthly
+                </button>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-400 font-bold mb-6">
+              {forecastView === 'daily'
+                ? 'Uncertainty view: median vs min/max spread.'
+                : 'Monthly values are derived from daily ensemble median (mean + max per month).'}
+            </p>
+
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                {forecastView === 'daily' ? (
+                  <AreaChart data={rawData.slice(todayIdx + 1, todayIdx + 61)}>
+                    <defs>
+                      <linearGradient id="maxEnv" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.2}  />
+                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0.02} />
+                      </linearGradient>
+                      <linearGradient id="minEnv" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.18} />
+                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="date"
+                      tickFormatter={v => new Date(v + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                      tickLine={false} axisLine={false} minTickGap={25} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                      tickLine={false} axisLine={false} unit=" m³/s" width={70} />
+                    <Tooltip contentStyle={tooltipStyle} labelFormatter={labelFmt}
+                      formatter={(v: number, name: string) => [`${v?.toFixed(2)} m³/s`, name]} />
+                    <Legend />
+                    <Area type="monotone" dataKey="river_discharge_max"    stroke="#ef4444" strokeWidth={1.5} fill="url(#maxEnv)" dot={false} name="Ensemble Max"    connectNulls />
+                    <Line  type="monotone" dataKey="river_discharge_median" stroke="#8b5cf6" strokeWidth={2.5}                     dot={false} name="Ensemble Median" connectNulls />
+                    <Area type="monotone" dataKey="river_discharge_min"    stroke="#22c55e" strokeWidth={1.5} fill="url(#minEnv)" dot={false} name="Ensemble Min"    connectNulls />
+                  </AreaChart>
+                ) : (
+                  <LineChart data={monthlySeries.slice(0, 8)}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="month"
+                      tickFormatter={v => {
+                        const [y, m] = String(v).split('-');
+                        const dt = new Date(Number(y), Math.max(0, Number(m) - 1), 1);
+                        return dt.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+                      }}
+                      tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                      tickLine={false} axisLine={false} minTickGap={10} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                      tickLine={false} axisLine={false} unit=" m³/s" width={70} />
+                    <Tooltip contentStyle={tooltipStyle}
+                      labelFormatter={(l: string) => {
+                        const [y, m] = String(l).split('-');
+                        const dt = new Date(Number(y), Math.max(0, Number(m) - 1), 1);
+                        return dt.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+                      }}
+                      formatter={(v: number, name: string) => [`${v?.toFixed(2)} m³/s`, name]} />
+                    <Legend />
+                    <Line type="monotone" dataKey="discharge_median_mean" stroke="#8b5cf6" strokeWidth={2.5} dot={false} name="Monthly Mean (Median)" connectNulls />
+                    <Line type="monotone" dataKey="discharge_median_max"  stroke="#ef4444" strokeWidth={1.8} dot={false} name="Monthly Max (Median)"  connectNulls />
+                  </LineChart>
+                )}
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* ── Precipitation (near-term) ───────────────────── */}
+          {dailyPrecipSeries.length > 0 && (
+            <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                <Zap className="w-4 h-4 text-sky-500" /> Precipitation Forecast — Next {Math.min(16, dailyPrecipSeries.length)} Days (mm)
+              </h3>
+              <p className="text-[10px] text-slate-400 font-bold mb-6">
+                Rainfall totals help interpret discharge rises and catchment saturation.
+              </p>
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dailyPrecipSeries}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="date"
+                      tickFormatter={v => new Date(v + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                      tickLine={false} axisLine={false} minTickGap={25} />
+                    <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                      tickLine={false} axisLine={false} unit=" mm" width={55} />
+                    <Tooltip contentStyle={tooltipStyle} labelFormatter={labelFmt}
+                      formatter={(v: number) => [`${v?.toFixed(1)} mm`, 'Precipitation']} />
+                    <Bar dataKey="precipitationSum" name="Daily Total" fill="#38bdf8" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* ── River Discharge & ML Feature Dashboard ─────── */}
+          <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-blue-500" /> River Discharge &amp; ML Feature Dashboard
+              </h3>
+              <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                Transparency: raw values + ML inputs and factors.
+              </p>
+              <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-100 dark:border-blue-700">
+                {rawData.length} data points · GloFAS v4
+              </span>
+            </div>
+
+            {/* ── Dataset stat strip ── */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Total Points',    value: rawData.length.toString(),                                                               sub: 'Historical + forecast rows'    },
+                { label: 'Date Window',     value: `${rawData[0]?.date ?? '—'} → ${rawData[rawData.length - 1]?.date ?? '—'}`,              sub: '92 past + 183 forecast days'   },
+                { label: 'Today Discharge', value: `${fmt(rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean)} m³/s`, sub: 'Current observed value'        },
+                { label: 'P90 − P50 Spread', value: `${fmt(histStats.p90 - histStats.p50)} m³/s`,                                          sub: 'Upper tail variability (m³/s)' },
+              ].map(s => (
+                <div key={s.label} className="bg-slate-50 dark:bg-slate-700/60 p-4 rounded-xl border border-slate-100 dark:border-slate-600">
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
+                  <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1 break-all">{s.value}</p>
+                  <p className="text-[9px] text-slate-400 font-bold mt-0.5">{s.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* ── ML model inputs fed to /predict ── */}
+            {mlPrediction && (
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                  <Brain className="w-3.5 h-3.5 text-violet-500" /> Feature Inputs Sent to ML /predict Endpoint
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                  {((): Array<{ label: string; value: string }> => {
+                    const precip  = weather?.precipitationSum ?? 0;
+                    const todayQ  = rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean ?? 0;
+                    const api     = histStats.p50 > 0 ? Math.min((todayQ / histStats.p50) * 30, 150) : 0;
+                    return [
+                      { label: 'Rainfall 1h',       value: `${fmt(precip, 2)} mm`                  },
+                      { label: 'Rainfall 3h',       value: `${fmt(precip * 2.5, 2)} mm`            },
+                      { label: 'Rainfall 6h',       value: `${fmt(precip * 4, 2)} mm`              },
+                      { label: 'Rainfall 24h',      value: `${fmt(precip * 8, 2)} mm`              },
+                      { label: 'Rainfall 48h',      value: `${fmt(precip * 12, 2)} mm`             },
+                      { label: 'Rainfall 72h',      value: `${fmt(precip * 15, 2)} mm`             },
+                      { label: 'Antecedent PI',     value: fmt(api, 2)                             },
+                      { label: 'Temperature',       value: weather ? `${fmt(weather.temp, 1)}°C` : 'N/A' },
+                      { label: 'Humidity',          value: weather ? `${weather.humidity}%` : 'N/A'     },
+                      { label: 'Pressure',          value: weather ? `${weather.pressure ?? 1013} hPa` : 'N/A' },
+                      { label: 'Month',             value: new Date().toLocaleString('default', { month: 'long' }) },
+                      { label: 'Hour of Day',       value: `${new Date().getHours()}:00`           },
+                    ];
+                  })().map(f => (
+                    <div key={f.label} className="flex justify-between items-center px-3 py-2 bg-violet-50 dark:bg-violet-900/20 rounded-lg border border-violet-100 dark:border-violet-800/40 text-[10px]">
+                      <span className="font-black text-slate-500 dark:text-slate-400 uppercase tracking-wide">{f.label}</span>
+                      <span className="font-black text-violet-700 dark:text-violet-300">{f.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Contributing factors bar chart ── */}
+            {mlPrediction && Object.keys(mlPrediction.contributing_factors).length > 0 && (() => {
+              const factors = Object.entries(mlPrediction.contributing_factors)
+                .sort(([, a], [, b]) => b - a)
+                .map(([k, v]) => ({ name: k.replace(/_/g, ' '), value: parseFloat((v * 100).toFixed(1)) }));
+              const barColors = ['#8b5cf6', '#7c3aed', '#a78bfa', '#c4b5fd', '#ddd6fe', '#ede9fe'];
+              return (
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">
+                    Contributing Factors — % Impact on Current Prediction
+                  </p>
+                  <div className="h-52 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={factors} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                        <XAxis type="number" unit="%" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: '#64748b', fontWeight: 700 }} tickLine={false} axisLine={false} width={132} />
+                        <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v}%`, 'Impact']} />
+                        <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                          {factors.map((_, i) => (
+                            <Cell key={i} fill={barColors[Math.min(i, barColors.length - 1)]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── Feature importance chart (from mlStatus) ── */}
+            {mlStatus?.feature_importances && Object.keys(mlStatus.feature_importances).length > 0 && (() => {
+              const fi = Object.entries(mlStatus.feature_importances)
+                .sort(([, a], [, b]) => b - a)
+                .slice(0, 12)
+                .map(([k, v]) => ({ name: k.replace(/_/g, ' '), value: parseFloat((v * 100).toFixed(1)) }));
+              const fiColors = ['#10b981', '#059669', '#34d399', '#6ee7b7', '#a7f3d0', '#d1fae5'];
+              return (
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 flex items-center gap-2">
+                    <Cpu className="w-3.5 h-3.5 text-emerald-500" /> Trained Model Feature Importances (top 12)
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-bold mb-3">
+                    Samples: {mlStatus.training_samples?.toLocaleString() ?? '—'} &nbsp;·&nbsp;
+                    Accuracy: {mlStatus.accuracy != null ? `${(mlStatus.accuracy * 100).toFixed(1)}%` : 'N/A'} &nbsp;·&nbsp;
+                    AUC-ROC: {mlStatus.roc_auc != null ? mlStatus.roc_auc.toFixed(3) : 'N/A'} &nbsp;·&nbsp;
+                    F1: {mlStatus.f1_score != null ? mlStatus.f1_score.toFixed(3) : 'N/A'}
+                  </p>
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={fi} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                        <XAxis type="number" unit="%" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: '#64748b', fontWeight: 700 }} tickLine={false} axisLine={false} width={140} />
+                        <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v}%`, 'Importance']} />
+                        <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                          {fi.map((_, i) => (
+                            <Cell key={i} fill={fiColors[Math.min(i, fiColors.length - 1)]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── Recent + upcoming discharge data table ── */}
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">
+                Raw Discharge Data Table — Last 14 Days + Next 14 Days
+              </p>
+              <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-slate-700">
+                <table className="min-w-full text-[10px] font-bold">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-900/40 text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-right">Observed</th>
+                      <th className="px-3 py-2 text-right">Fc Median</th>
+                      <th className="px-3 py-2 text-right">Fc Mean</th>
+                      <th className="px-3 py-2 text-right">Fc Max</th>
+                      <th className="px-3 py-2 text-right">Fc Min</th>
+                      <th className="px-3 py-2 text-right">P25</th>
+                      <th className="px-3 py-2 text-right">P75</th>
+                      <th className="px-3 py-2 text-center">vs P50</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {[
+                      ...rawData.slice(Math.max(0, todayIdx - 13), todayIdx + 1).map(d => ({ ...d, _type: 'hist' as const })),
+                      ...rawData.slice(todayIdx + 1, todayIdx + 15).map(d => ({ ...d, _type: 'fc' as const })),
+                    ].map((d, i) => {
+                      const q     = d.river_discharge ?? d.river_discharge_mean ?? d.river_discharge_median ?? null;
+                      const ratio = q != null && histStats.p50 > 0 ? q / histStats.p50 : null;
+                      const flag  = ratio == null ? '—' : ratio > 2 ? '▲ HIGH' : ratio > 1.5 ? '▲ ELEV' : ratio < 0.5 ? '▼ LOW' : '—';
+                      const flagCls = flag === '▲ HIGH' ? 'text-red-600 dark:text-red-400' :
+                                      flag === '▲ ELEV' ? 'text-amber-600 dark:text-amber-400' :
+                                      flag === '▼ LOW'  ? 'text-blue-500 dark:text-blue-400' : 'text-slate-400';
+                      const isToday = d.date === (chartData[todayChartIdx]?.date ?? '');
+                      return (
+                        <tr key={i} className={`${
+                          d._type === 'fc' ? 'bg-violet-50/40 dark:bg-violet-900/10' : ''
+                        } hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors`}>
+                          <td className="px-3 py-1.5 text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                            {new Date(d.date + 'T00:00:00').toLocaleDateString(undefined, {
+                              weekday: 'short', month: 'short', day: 'numeric',
+                            })}
+                            {isToday && <span className="ml-1 text-teal-600 dark:text-teal-400 font-black">[TODAY]</span>}
+                            {d._type === 'fc' && <span className="ml-1 text-violet-400 text-[9px]">FC</span>}
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-blue-700 dark:text-blue-300">{d._type === 'hist' ? fmt(q) : '—'}</td>
+                          <td className="px-3 py-1.5 text-right text-purple-700 dark:text-purple-300">{fmt(d.river_discharge_median)}</td>
+                          <td className="px-3 py-1.5 text-right text-orange-600 dark:text-orange-300">{fmt(d.river_discharge_mean)}</td>
+                          <td className="px-3 py-1.5 text-right text-red-600 dark:text-red-300">{fmt(d.river_discharge_max)}</td>
+                          <td className="px-3 py-1.5 text-right text-green-600 dark:text-green-300">{fmt(d.river_discharge_min)}</td>
+                          <td className="px-3 py-1.5 text-right text-slate-500">{fmt(d.river_discharge_p25)}</td>
+                          <td className="px-3 py-1.5 text-right text-slate-500">{fmt(d.river_discharge_p75)}</td>
+                          <td className={`px-3 py-1.5 text-center font-black ${flagCls}`}>{flag}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-slate-400 font-bold mt-2">
+                FC rows (purple) = GloFAS forecast. vs P50 compares discharge to 90-day historical median.
+                HIGH = &gt;2× median · ELEV = 1.5–2× · LOW = &lt;0.5×. All values in m³/s.
+              </p>
+            </div>
+          </div>
+
+          {/* ── AI Analysis ──────────────────────────────────── */}
+          <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
+                  <Zap className="w-6 h-6 text-blue-600" /> AI Flood Risk Analysis
+                </h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                  GloFAS v4 ensemble · {mlPrediction ? 'Bio-SentinelX ML prediction · ' : ''}Percentile-based scoring · Seasonal context · AI synthesis
+                </p>
+                <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1">
+                  Short narrative summary of the risk drivers.
+                </p>
+              </div>
+              <button onClick={handleAnalyze} disabled={analyzing}
+                className="px-6 py-3 bg-blue-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-blue-500 transition-all shadow-lg shadow-blue-200 disabled:opacity-50 flex items-center gap-2">
+                {analyzing
+                  ? <><Activity className="w-4 h-4 animate-spin" /> Analysing...</>
+                  : <><Waves className="w-4 h-4" /> {mlPrediction ? 'Run Combined AI Analysis' : 'Run AI Analysis'}</>}
+              </button>
+            </div>
+
+            {analyzing && analysisPhase && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-start gap-3">
+                <BookOpen className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0 animate-pulse" />
+                <div>
+                  <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">
+                    {mlPrediction ? 'Multi-Model Hydrological Analysis Active' : 'Hydrological Analysis Active'}
+                  </p>
+                  <p className="text-xs font-bold text-blue-800 mt-0.5">{analysisPhase}</p>
+                </div>
+              </div>
+            )}
+
+            {!analyzing && !analysis && (
+              <div className="space-y-3">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data and Model Sources</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: 'GloFAS v4 Reanalysis',   sub: '1984–2022 · 0.05° (~5 km) · Daily',        color: 'bg-blue-50   text-blue-700   border-blue-200'   },
+                    { label: 'GloFAS v4 Forecast',      sub: '30-day ensemble · Daily updates',           color: 'bg-blue-50   text-blue-700   border-blue-200'   },
+                    { label: 'GloFAS v4 Seasonal',      sub: '7-month probabilistic · Monthly updates',  color: 'bg-violet-50 text-violet-700 border-violet-200' },
+                    { label: 'P25–P75 Ensemble Band',   sub: '50-member uncertainty quantification',     color: 'bg-purple-50 text-purple-700 border-purple-200' },
+                    ...(mlPrediction ? [
+                      { label: 'Bio-SentinelX ML',    sub: 'RF + XGBoost + LightGBM stacked ensemble',  color: 'bg-violet-100 text-violet-800 border-violet-300' },
+                      { label: 'ML Inundation Depth', sub: `${mlPrediction.estimated_inundation_depth_m.toFixed(3)}m estimated urban depth`, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+                    ] : []),
+                    { label: 'Seasonal Flood Calendar', sub: 'Latitude-based flood regime context',       color: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600' },
+                    { label: 'WHO / UNDRR',             sub: 'Flood health impact and vulnerability',    color: 'bg-teal-50   text-teal-700   border-teal-200'   },
+                  ].map(s => (
+                    <span key={s.label} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${s.color}`}>
+                      {s.label}
+                      <span className="font-semibold normal-case tracking-normal opacity-70"> · {s.sub}</span>
+                    </span>
+                  ))}
+                </div>
+                {mlPrediction && (
+                  <p className="text-[10px] font-bold text-violet-600 flex items-center gap-2 mt-2">
+                    <Brain className="w-3.5 h-3.5" />
+                    ML prediction loaded — AI will produce a multi-model consensus analysis with GloFAS + ML combined.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {analysis && (
+              <div className="bg-gradient-to-br from-blue-50 dark:from-blue-950/30 to-slate-50 dark:to-slate-800/50 p-6 sm:p-8 rounded-[2rem] border border-blue-100 dark:border-blue-800/50 prose prose-sm max-w-none prose-p:text-slate-600 dark:prose-p:text-slate-300 prose-li:text-slate-600 dark:prose-li:text-slate-300 prose-strong:text-slate-800 dark:prose-strong:text-slate-100 prose-headings:text-slate-800 dark:prose-headings:text-slate-100 prose-headings:font-black prose-h2:text-blue-800 dark:prose-h2:text-blue-400 prose-h3:text-slate-700 dark:prose-h3:text-slate-200 prose-a:text-blue-700 dark:prose-a:text-blue-300">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    table: ({ node, ...props }) => (
+                      <div className="overflow-x-auto my-4 rounded-2xl border border-slate-200 dark:border-slate-700">
+                        <table className="min-w-full text-xs" {...props} />
+                      </div>
+                    ),
+                    thead: ({ node, ...props }) => (
+                      <thead className="bg-slate-50 dark:bg-slate-900/40 text-slate-700 dark:text-slate-200" {...props} />
+                    ),
+                    tbody: ({ node, ...props }) => (
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-700" {...props} />
+                    ),
+                    tr: ({ node, ...props }) => (
+                      <tr className="even:bg-white/60 dark:even:bg-slate-800/30 hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors" {...props} />
+                    ),
+                    th: ({ node, ...props }) => (
+                      <th className="px-3 py-2 text-left font-black text-[10px] uppercase tracking-widest border-r border-slate-200 dark:border-slate-700 last:border-r-0" {...props} />
+                    ),
+                    td: ({ node, ...props }) => (
+                      <td className="px-3 py-2 text-slate-700 dark:text-slate-200 border-r border-slate-100 dark:border-slate-800 last:border-r-0" {...props} />
+                    ),
+                    hr: () => <hr className="border-slate-200 dark:border-slate-700 my-6" />,
+                  }}
+                >
+                  {analysis}
+                </ReactMarkdown>
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+};

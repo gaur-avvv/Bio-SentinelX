@@ -1,0 +1,43 @@
+{
+  "name": "Bio-SentinelX",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bullseye",
+
+  // ── Machine size ────────────────────────────────────────────────────────
+  // Request an 8-core / 32 GB Codespace so the ML training doesn't OOM.
+  // Apply via: Codespaces → kebab menu → "Change machine type" → rebuild.
+  "hostRequirements": {
+    "cpus": 8,
+    "memory": "32gb",
+    "storage": "64gb"
+  },
+
+  // ── Lifecycle ───────────────────────────────────────────────────────────
+  // Run once after the container is created: install Python deps + add swap.
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+
+  // Re-enable swap every time the container starts (swap file persists but
+  // swapon state is lost on container restart).
+  "postStartCommand": "sudo swapon /swapfile 2>/dev/null || true",
+
+  // ── VS Code settings ────────────────────────────────────────────────────
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylance",
+        "ms-toolsai.jupyter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true
+      }
+    }
+  },
+
+  // ── Port forwarding ─────────────────────────────────────────────────────
+  "forwardPorts": [8000, 5173],
+  "portsAttributes": {
+    "8000": { "label": "Flood ML API", "onAutoForward": "notify" },
+    "5173": { "label": "Frontend (Vite)", "onAutoForward": "notify" }
+  }
+}

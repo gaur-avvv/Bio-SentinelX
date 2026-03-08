@@ -1,0 +1,10 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.env
+*.db
+saved_models/
+.git
+.github
+*.md
+tests/

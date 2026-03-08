@@ -1,0 +1,8 @@
+{
+  "name": "BioSentinel",
+  "description": "A Preventive Healthcare Intelligence Platform that combines real-time weather data with historical health trends to predict risks using Gemini AI.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ]
+}

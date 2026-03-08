@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bio-SentinelX - Hackathon Presentation Guide</title>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <style>
+        @media print {
+            body { background: white; }
+            .page-break { page-break-before: always; }
+            .no-break { page-break-inside: avoid; }
+        }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.7;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        h1 { 
+            font-size: 2.5rem; 
+            font-weight: 800; 
+            color: #0d9488;
+            margin-bottom: 0.5rem;
+        }
+        h2 { 
+            font-size: 1.8rem; 
+            font-weight: 700; 
+            color: #115e59;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 3px solid #14b8a6;
+        }
+        h3 { 
+            font-size: 1.4rem; 
+            font-weight: 600; 
+            color: #0f766e;
+            margin-top: 1.5rem;
+        }
+        h4 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #134e4a;
+            margin-top: 1rem;
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin: 1rem 0;
+        }
+        th, td { 
+            border: 1px solid #cbd5e1; 
+            padding: 12px; 
+            text-align: left;
+        }
+        th { 
+            background: #0d9488; 
+            color: white;
+            font-weight: 600;
+        }
+        tr:nth-child(even) { background: #f0fdfa; }
+        blockquote {
+            border-left: 4px solid #14b8a6;
+            padding-left: 1rem;
+            margin: 1rem 0;
+            color: #334155;
+            background: #f0fdfa;
+            padding: 1rem;
+            border-radius: 0 8px 8px 0;
+        }
+        code {
+            background: #1e293b;
+            color: #2dd4bf;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        pre code {
+            background: none;
+            color: inherit;
+            padding: 0;
+        }
+        .emoji { font-size: 1.3rem; }
+        .cover-page {
+            text-align: center;
+            padding: 100px 20px;
+            background: linear-gradient(135deg, #0d9488 0%, #115e59 100%);
+            color: white;
+            border-radius: 16px;
+            margin-bottom: 40px;
+        }
+        .cover-page h1 { color: white; }
+        .cover-page p { font-size: 1.2rem; margin-top: 1rem; }
+        .feature-box {
+            background: #f0fdfa;
+            border: 2px solid #14b8a6;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        }
+        .tip-box {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0 8px 8px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="cover-page">
+        <h1>🛡️ Bio-SentinelX</h1>
+        <p style="font-size: 1.5rem; font-weight: 600; margin-top: 1rem;">AI-Powered Preventive Health Intelligence Platform</p>
+        <p style="margin-top: 2rem; opacity: 0.9;">Hackathon Presentation Guide</p>
+        <p style="margin-top: 3rem; font-size: 0.9rem;">Your Health, Predicted.</p>
+    </div>
+
+    <h2>📋 Elevator Pitch (30 seconds)</h2>
+    <blockquote>
+        <strong>Bio-SentinelX is an AI-powered preventive health intelligence platform that predicts health risks BEFORE symptoms appear.</strong> We fuse real-time environmental data, machine learning, and large language models to forecast disease outbreaks, respiratory hazards, heat stress, and flood risks — empowering individuals and communities to act proactively instead of reactively.
+    </blockquote>
+
+    <div class="page-break"></div>
+
+    <h2>🎯 Problem Statement</h2>
+    <table>
+        <tr><th>Problem</th><th>Impact</th></tr>
+        <tr><td><strong>Reactive Healthcare</strong></td><td>Current health systems treat symptoms after they appear</td></tr>
+        <tr><td><strong>Environmental Health Blindspot</strong></td><td>People don't know how weather, air quality, and climate affect their health</td></tr>
+        <tr><td><strong>Information Overload</strong></td><td>Weather apps show data but don't explain health implications</td></tr>
+        <tr><td><strong>Climate Change Impact</strong></td><td>Rising temperatures, floods, and air pollution create new health threats daily</td></tr>
+    </table>
+
+    <h2>💡 Solution Overview</h2>
+    <div class="feature-box">
+        <p><strong>Bio-SentinelX</strong> is a <strong>full-stack AI health intelligence platform</strong>:</p>
+        <ul>
+            <li><strong>Frontend:</strong> React 18 + TypeScript + Vite + Tailwind CSS</li>
+            <li><strong>Backend:</strong> FastAPI ML API (Railway deployment)</li>
+            <li><strong>AI:</strong> 6 providers (Gemini, Groq, Cerebras, SiliconFlow, OpenRouter, Pollinations)</li>
+            <li><strong>Data:</strong> Open-Meteo APIs (weather, flood, air quality, pollen)</li>
+            <li><strong>Mobile:</strong> Capacitor Android app</li>
+        </ul>
+    </div>
+
+    <div class="page-break"></div>
+
+    <h2>🚀 Key Features (Demo Flow)</h2>
+
+    <h3>1. Real-Time Environmental Intelligence 🌤️</h3>
+    <p><strong>20+ atmospheric variables:</strong></p>
+    <ul>
+        <li>Temperature, humidity, UV index, AQI</li>
+        <li>PM2.5, PM10, pollen counts (6 types)</li>
+        <li>Wind speed/direction, pressure, dew point</li>
+        <li>Wet-bulb temperature, CAPE (storm potential)</li>
+    </ul>
+    <div class="tip-box">
+        <strong>💡 Demo Tip:</strong> Show the weather card with all advanced atmospheric data expanded.
+    </div>
+
+    <h3>2. ML Disease Risk Prediction 🤖</h3>
+    <pre><code>Stacked Ensemble Model:
+├── Random Forest (interpretable, handles missing data)
+├── XGBoost (high accuracy on tabular hydro data)
+├── LightGBM (fast, handles large grids)
+└── Logistic Regression meta-learner (calibrated probabilities)</code></pre>
+    
+    <p><strong>Risk Levels:</strong></p>
+    <table>
+        <tr><th>Level</th><th>Description</th></tr>
+        <tr><td>🟢 LOW</td><td>Favorable conditions — maintain regular health habits</td></tr>
+        <tr><td>🟡 MODERATE</td><td>Minor caution advised — monitor sensitive groups</td></tr>
+        <tr><td>🟠 HIGH</td><td>Significant risk — proactive preventive measures recommended</td></tr>
+        <tr><td>🔴 CRITICAL</td><td>Severe conditions — immediate action and medical awareness required</td></tr>
+    </table>
+    <div class="tip-box">
+        <strong>💡 Demo Tip:</strong> Run an analysis and show the risk score gauge with confidence percentage.
+    </div>
+
+    <div class="page-break"></div>
+
+    <h3>3. AI Health Risk Assessment 🧠</h3>
+    <p><strong>6 AI Providers (user-selectable):</strong></p>
+    <table>
+        <tr><th>Provider</th><th>Models</th><th>Key Feature</th></tr>
+        <tr><td><strong>Google Gemini</strong></td><td>8 models</td><td>Gemini 3 Flash, 2.5 Pro, 2.0, 1.5 Pro/Flash</td></tr>
+        <tr><td><strong>Groq</strong></td><td>5 models</td><td>Llama 3.3 70B, Mixtral 8x7B @ ultra-fast speeds</td></tr>
+        <tr><td><strong>Cerebras</strong></td><td>4 models</td><td>GPT OSS 120B @ 3000 tok/s, automatic prompt caching</td></tr>
+        <tr><td><strong>SiliconFlow</strong></td><td>25+ models</td><td>DeepSeek V3, Qwen3, Kimi K2, MiniMax</td></tr>
+        <tr><td><strong>OpenRouter</strong></td><td>10+ models</td><td>Claude 3.5, GPT-4o, Gemini 2.5</td></tr>
+        <tr><td><strong>Pollinations</strong></td><td>10 models</td><td>GPT-4o, o3 Mini — <strong>no API key needed</strong></td></tr>
+    </table>
+
+    <h3>4. BioX Assistant (AI Chatbot) 💬</h3>
+    <ul>
+        <li>✅ <strong>Persistent session memory</strong> — conversations saved across sessions</li>
+        <li>✅ <strong>Cross-session context</strong> — auto-summarizes past conversations</li>
+        <li>✅ <strong>Context-aware</strong> — knows your weather, ML predictions, and health profile</li>
+        <li>✅ <strong>Smart prompt suggestions</strong> — generates relevant follow-up questions</li>
+        <li>✅ <strong>Feedback system</strong> — rate AI responses (helpful/not helpful)</li>
+    </ul>
+    <div class="tip-box">
+        <strong>💡 Demo Tip:</strong> Ask "What health risks should I worry about today?" and show how it uses real-time data.
+    </div>
+
+    <div class="page-break"></div>
+
+    <h3>5. Personal Health Profile 👤</h3>
+    <p><strong>Data Collected:</strong></p>
+    <ul>
+        <li>Age, height, weight, gender</li>
+        <li><strong>Live BMI calculator</strong> with 7-category classification</li>
+        <li>Lifestyle: sedentary/active/athlete/night shift/outdoor worker</li>
+        <li>Exercise level, smoking status, alcohol consumption</li>
+        <li>Medications, allergies, medical history</li>
+    </ul>
+
+    <h3>6. Flood Prediction & River Risk Monitor 🌊</h3>
+    <ul>
+        <li><strong>Open-Meteo Flood API</strong> (GloFAS v4) — 50-member ensemble forecasts</li>
+        <li><strong>90-day historical</strong> + <strong>60-day forecast</strong> river discharge data</li>
+        <li>Composite risk score from discharge percentiles (P50/P75/P90)</li>
+        <li>Seasonal calibration (monsoon/wet/dry season awareness)</li>
+    </ul>
+    <div class="tip-box">
+        <strong>💡 Demo Tip:</strong> Show the flood risk gauge and explain how the seasonal factor works.
+    </div>
+
+    <h3>7. Historical Climate & Health Analysis 📅</h3>
+    <ul>
+        <li><strong>1-year archive data</strong> from Open-Meteo Archive API</li>
+        <li>Selectable variables: Temperature, precipitation, wind, humidity, AQI, solar radiation</li>
+        <li>Interactive charts: Line, area, bar charts with reference lines</li>
+        <li>AI correlation analysis — explains how past weather affected health</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <h3>8. Research Library (RAG System) 📚</h3>
+    <p><strong>In-Browser Vector Database:</strong></p>
+    <table>
+        <tr><th>Feature</th><th>Implementation</th></tr>
+        <tr><td><strong>Document Upload</strong></td><td>Text paste, .txt/.md/.csv files, PDF via LlamaCloud, URL scraping</td></tr>
+        <tr><td><strong>Chunking</strong></td><td>~650-char segments with 120-char overlap</td></tr>
+        <tr><td><strong>Dual Embedding</strong></td><td>Gemini embeddings (dense) + TF-IDF fallback (no API key)</td></tr>
+        <tr><td><strong>Semantic Search</strong></td><td>Cosine similarity retrieval</td></tr>
+        <tr><td><strong>RAG Integration</strong></td><td>Top-k chunks injected into AI prompts</td></tr>
+    </table>
+
+    <h3>9. AI Smart Notifications 🔔</h3>
+    <p><strong>20+ Rule-Based Alerts:</strong></p>
+    <table>
+        <tr><th>Category</th><th>Triggers</th></tr>
+        <tr><td>Temperature</td><td>Heat stress (&gt;35°C), cold stress (&lt;5°C)</td></tr>
+        <tr><td>Humidity</td><td>Mold risk (&gt;70%), respiratory discomfort</td></tr>
+        <tr><td>UV Index</td><td>Skin damage risk (UV &gt; 6)</td></tr>
+        <tr><td>Air Quality</td><td>AQI &gt; 100, PM2.5 &gt; 35, PM10 &gt; 50</td></tr>
+        <tr><td>Pollen</td><td>Grass/tree pollen counts</td></tr>
+        <tr><td>Dew Point</td><td>Respiratory comfort (&gt;18°C)</td></tr>
+    </table>
+
+    <h3>10. Theme & Customization Engine 🌙</h3>
+    <ul>
+        <li><strong>App theme:</strong> Light / Dark / Auto (OS-sync)</li>
+        <li><strong>Weather card mode:</strong> Light / Partial-dark / Full-dark</li>
+        <li><strong>Custom color picker:</strong> Accent, surface, and text colors</li>
+    </ul>
+
+    <div class="page-break"></div>
+
+    <h2>⚙️ Technical Architecture</h2>
+
+    <h3>Context Manager 🗂️</h3>
+    <pre><code>Model Registry:
+├── Context window per model
+├── Input budget allocation
+├── Output token limits
+└── Temperature settings
+
+Compact Weather Builder:
+└── Strips all null/N/A fields before building prompts
+
+Budget Allocation:
+├── Weather: 35%
+├── Dataset: 30%
+├── Lifestyle: 10%
+└── Memory: 25%</code></pre>
+
+    <h3>Prompt Cache Service 🗃️</h3>
+    <table>
+        <tr><th>Layer</th><th>Mechanism</th><th>Benefit</th></tr>
+        <tr><td><strong>Client-side LRU</strong></td><td>System instructions memoized (30 min TTL)</td><td>Avoids rebuilding 2K–8K char strings</td></tr>
+        <tr><td><strong>Server-side</strong></td><td>Reads cached_tokens from API responses</td><td>Tracks provider-cached tokens</td></tr>
+    </table>
+
+    <h3>Persistent Memory Service 💾</h3>
+    <pre><code>1. Report Chunking → TF-IDF-indexed sections
+2. Cross-Session Memory → Last 5 cities, 15 insights, 10 concerns
+3. Session Summaries → Auto-generated every 4 messages</code></pre>
+
+    <div class="page-break"></div>
+
+    <h2>📊 Health Coverage Matrix</h2>
+    <table>
+        <tr><th>Domain</th><th>Conditions Monitored</th></tr>
+        <tr><td><strong>Respiratory</strong></td><td>Asthma, COPD, pollen allergies, bronchitis</td></tr>
+        <tr><td><strong>Cardiovascular</strong></td><td>Heat-induced cardiac stress, hypertension, migraine</td></tr>
+        <tr><td><strong>Infectious Disease</strong></td><td>Waterborne outbreaks, airborne pathogens, seasonal flu</td></tr>
+        <tr><td><strong>Vector-Borne</strong></td><td>Mosquito proliferation (dengue/malaria), tick activity</td></tr>
+        <tr><td><strong>Heat Stress</strong></td><td>Heat exhaustion, heat stroke, wet-bulb danger zones</td></tr>
+        <tr><td><strong>Mental Health</strong></td><td>SAD risk, low-sunshine depression, sleep disruption</td></tr>
+        <tr><td><strong>Flood/Disaster</strong></td><td>Flood injury risk, post-disaster infection</td></tr>
+    </table>
+
+    <div class="page-break"></div>
+
+    <h2>🏆 Unique Selling Points</h2>
+    <table>
+        <tr><th>#</th><th>USP</th><th>Why It Matters</th></tr>
+        <tr><td>1</td><td><strong>Preventive, Not Reactive</strong></td><td>Predicts risks BEFORE symptoms appear</td></tr>
+        <tr><td>2</td><td><strong>Multi-Modal AI</strong></td><td>ML + LLM + RAG combined</td></tr>
+        <tr><td>3</td><td><strong>6 AI Providers</strong></td><td>User choice (cost/quality tradeoff)</td></tr>
+        <tr><td>4</td><td><strong>In-Browser Vector DB</strong></td><td>Full RAG without external costs</td></tr>
+        <tr><td>5</td><td><strong>Zero-API-Key Fallback</strong></td><td>TF-IDF works without any key</td></tr>
+        <tr><td>6</td><td><strong>Persistent Memory</strong></td><td>Remembers users without login</td></tr>
+        <tr><td>7</td><td><strong>Explainable ML</strong></td><td>Shows top factors, not just predictions</td></tr>
+        <tr><td>8</td><td><strong>Flood Prediction</strong></td><td>90-day historical + 60-day forecast</td></tr>
+        <tr><td>9</td><td><strong>Smart Notifications</strong></td><td>AI-rewritten, cached alerts</td></tr>
+        <tr><td>10</td><td><strong>Mobile Ready</strong></td><td>Full Android app via Capacitor</td></tr>
+    </table>
+
+    <div class="page-break"></div>
+
+    <h2>📱 Live Demo Script (5 minutes)</h2>
+    <table>
+        <tr><th>Time</th><th>Section</th><th>Key Points</th></tr>
+        <tr><td>0:00–0:30</td><td><strong>Homepage</strong></td><td>Show weather card with 20+ variables</td></tr>
+        <tr><td>0:30–1:00</td><td><strong>Health Profile</strong></td><td>Fill out profile, show BMI calculator</td></tr>
+        <tr><td>1:00–2:00</td><td><strong>ML Prediction</strong></td><td>Run analysis, show risk score + factors</td></tr>
+        <tr><td>2:00–3:00</td><td><strong>AI Health Report</strong></td><td>Generate report, expand sections</td></tr>
+        <tr><td>3:00–4:00</td><td><strong>BioX Chat</strong></td><td>Ask context-aware question</td></tr>
+        <tr><td>4:00–4:30</td><td><strong>Flood Prediction</strong></td><td>Show discharge chart + risk score</td></tr>
+        <tr><td>4:30–5:00</td><td><strong>Research Library</strong></td><td>Upload PDF, ask retrieved question</td></tr>
+    </table>
+
+    <h2>🏅 Judging Criteria Alignment</h2>
+    <table>
+        <tr><th>Criteria</th><th>How Bio-SentinelX Delivers</th></tr>
+        <tr><td><strong>Innovation</strong></td><td>First preventive health platform: ML + LLM + RAG + flood prediction</td></tr>
+        <tr><td><strong>Technical Complexity</strong></td><td>6 AI providers, in-browser vector DB, stacked ensemble ML</td></tr>
+        <tr><td><strong>User Experience</strong></td><td>Intuitive UI, persistent memory, smart notifications, mobile app</td></tr>
+        <tr><td><strong>Impact</strong></td><td>Addresses climate change health impacts, preventive healthcare</td></tr>
+        <tr><td><strong>Scalability</strong></td><td>Serverless architecture, client-side processing</td></tr>
+        <tr><td><strong>Completeness</strong></td><td>Full-stack app with Android version, production-ready</td></tr>
+    </table>
+
+    <div class="page-break"></div>
+
+    <h2>❓ Anticipated Q&A</h2>
+    
+    <p><strong>Q: How accurate are the ML predictions?</strong></p>
+    <blockquote>A: The stacked ensemble achieves ~91% accuracy on training data. Confidence scores are shown for every prediction, and users can submit feedback to improve the model.</blockquote>
+
+    <p><strong>Q: What happens if APIs go down?</strong></p>
+    <blockquote>A: Multiple fallbacks: TF-IDF embedding works without API keys, Pollinations AI requires no key, cached data persists in localStorage.</blockquote>
+
+    <p><strong>Q: How is user data stored?</strong></p>
+    <blockquote>A: All data is stored locally in the browser's localStorage — no backend database, no login required. Users own their data completely.</blockquote>
+
+    <p><strong>Q: What's the business model?</strong></p>
+    <blockquote>A: <strong>Freemium:</strong> Free tier with basic features; Premium tier ($5/month) for all AI providers, unlimited reports, advanced analytics.</blockquote>
+
+    <div class="page-break"></div>
+
+    <h2>🎤 Closing Statement</h2>
+    <blockquote style="font-size: 1.1rem; padding: 1.5rem;">
+        <strong>"Bio-SentinelX isn't just another weather app or health tracker.</strong>
+        <br><br>
+        It's a <strong>paradigm shift</strong> from reactive treatment to proactive prevention.
+        <br><br>
+        By combining real-time environmental intelligence, machine learning prediction, and cutting-edge AI analysis, we're giving people the power to protect their health <strong>BEFORE</strong> illness strikes.
+        <br><br>
+        In a world where climate change is creating new health threats daily, <strong>Bio-SentinelX is the early-warning system everyone needs.</strong>"
+    </blockquote>
+
+    <div style="margin-top: 3rem; padding-top: 2rem; border-top: 2px solid #14b8a6; text-align: center;">
+        <p style="font-size: 1.2rem; color: #0d9488;"><strong>📞 Contact & Links</strong></p>
+        <p><strong>Live Demo:</strong> https://bio-sentinelx.vercel.app</p>
+        <p><strong>GitHub:</strong> https://github.com/gaur-avvv/Bio-SentinelX</p>
+        <p><strong>License:</strong> MIT</p>
+        <p style="margin-top: 2rem; color: #0d9488;"><strong>Made with ❤️ for preventive healthcare</strong></p>
+        <p style="font-size: 1.1rem; margin-top: 1rem;"><em>Bio-SentinelX — Your Health, Predicted.</em></p>
+    </div>
+</body>
+</html>

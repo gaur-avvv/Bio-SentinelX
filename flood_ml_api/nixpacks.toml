@@ -1,0 +1,11 @@
+# Railway Nixpacks configuration
+# Used when deploying without Dockerfile (alternative to Docker build)
+
+[phases.setup]
+nixPkgs = ["python311", "gcc", "libgomp"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --loop asyncio"

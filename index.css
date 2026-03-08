@@ -1,0 +1,159 @@
+/* ── Scrollbar utilities ── */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ── Mobile overflow guards ── */
+html, body { max-width: 100%; overflow-x: hidden; }
+#root { min-height: 100dvh; }
+img, video, canvas, svg { max-width: 100%; }
+
+/* ── Visual viewport offset (mobile browser bars) ── */
+:root { --vv-bottom: 0px; }
+
+/* ── App base background ── */
+body { background-color: #ffffff; }
+.dark body { background-color: #020617; }
+
+/* ── Custom accent overrides (when Custom Colours enabled) ──
+   This keeps button colors consistent across the app without editing every component.
+   We scope to html.bsx-custom to avoid affecting the default palette.
+*/
+html.bsx-custom .bg-teal-500,
+html.bsx-custom .bg-teal-600,
+html.bsx-custom .bg-teal-700 {
+  background-color: var(--bsx-accent) !important;
+}
+html.bsx-custom .text-teal-500,
+html.bsx-custom .text-teal-600,
+html.bsx-custom .text-teal-700 {
+  color: var(--bsx-accent) !important;
+}
+html.bsx-custom .border-teal-200,
+html.bsx-custom .border-teal-300,
+html.bsx-custom .border-teal-500 {
+  border-color: var(--bsx-accent) !important;
+}
+html.bsx-custom .focus\:border-teal-500:focus {
+  border-color: var(--bsx-accent) !important;
+}
+html.bsx-custom .hover\:bg-teal-600:hover,
+html.bsx-custom .hover\:bg-teal-500:hover {
+  background-color: var(--bsx-accent) !important;
+}
+html.bsx-custom .hover\:text-teal-600:hover,
+html.bsx-custom .hover\:text-teal-500:hover {
+  color: var(--bsx-accent) !important;
+}
+html.bsx-custom .ring-teal-400,
+html.bsx-custom .ring-teal-500 {
+  --tw-ring-color: var(--bsx-accent) !important;
+}
+
+/* Apply chosen surface to cards/panels in light mode (keeps page background white) */
+html.bsx-custom:not(.dark) .bg-white {
+  background-color: var(--bsx-surface) !important;
+}
+
+/* Extend accent mapping beyond teal so other primary buttons match the accent */
+html.bsx-custom button.bg-blue-600,
+html.bsx-custom button.bg-blue-800,
+html.bsx-custom button.bg-indigo-500,
+html.bsx-custom button.bg-indigo-600,
+html.bsx-custom button.bg-amber-400,
+html.bsx-custom .bg-purple-500 {
+  background-color: var(--bsx-accent) !important;
+}
+
+html.bsx-custom button.hover\:bg-blue-500:hover,
+html.bsx-custom button.hover\:bg-blue-600:hover,
+html.bsx-custom button.hover\:bg-indigo-600:hover,
+html.bsx-custom button.hover\:bg-indigo-500:hover {
+  background-color: var(--bsx-accent) !important;
+}
+
+html.bsx-custom .text-blue-500,
+html.bsx-custom .text-blue-600,
+html.bsx-custom .text-indigo-500,
+html.bsx-custom .text-indigo-600,
+html.bsx-custom .text-amber-400,
+html.bsx-custom .text-amber-500,
+html.bsx-custom .text-purple-500 {
+  color: var(--bsx-accent) !important;
+}
+
+html.bsx-custom .border-blue-100,
+html.bsx-custom .border-blue-500,
+html.bsx-custom .border-indigo-200,
+html.bsx-custom .border-indigo-500,
+html.bsx-custom .border-amber-400,
+html.bsx-custom .border-purple-200,
+html.bsx-custom .border-purple-300,
+html.bsx-custom .border-purple-500 {
+  border-color: var(--bsx-accent) !important;
+}
+
+html.bsx-custom .focus\:border-blue-500:focus,
+html.bsx-custom .focus\:border-indigo-500:focus {
+  border-color: var(--bsx-accent) !important;
+}
+
+html.bsx-custom .ring-blue-500,
+html.bsx-custom .ring-indigo-500,
+html.bsx-custom .focus\:ring-blue-500:focus,
+html.bsx-custom .focus\:ring-indigo-500:focus,
+html.bsx-custom .focus\:ring-teal-500:focus {
+  --tw-ring-color: var(--bsx-accent) !important;
+}
+
+/* ── Custom thin scrollbar for panels ── */
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 9999px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+/* ── Fade-in animation ── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in     { animation: fade-in 0.3s ease-out both; }
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up  { animation: fade-in-up 0.4s ease-out both; }
+
+/* ── Prevent body scroll when mobile drawer is open ── */
+body.sidebar-open { overflow: hidden; }
+
+/* ── Toast slide-in from right ── */
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-right { animation: slide-in-right 0.35s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* ── Alert bell pulse ── */
+@keyframes pulse-bell {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  10%       { transform: scale(1.15) rotate(-15deg); }
+  20%       { transform: scale(1.15) rotate(15deg); }
+  30%       { transform: scale(1.1) rotate(-10deg); }
+  40%       { transform: scale(1.1) rotate(10deg); }
+  50%       { transform: scale(1.05) rotate(0deg); }
+}
+.animate-pulse-bell { animation: pulse-bell 2.5s ease-in-out infinite; }
+
+/* ── Thin scrollbar for alert panel ── */
+.scrollbar-thin::-webkit-scrollbar { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 9999px; }
+.dark .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; }
+
+/* ── Safe area insets for notch devices ── */
+@supports (padding: env(safe-area-inset-bottom)) {
+  main {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
