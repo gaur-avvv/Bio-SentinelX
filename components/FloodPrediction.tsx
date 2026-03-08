@@ -514,6 +514,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   // ── Forecast view mode (daily vs derived monthly) ─────────────────────────
   const [forecastView, setForecastView] = useState<'daily' | 'monthly'>('daily');
+  const [forecastWindowDays, setForecastWindowDays] = useState<number>(30); // Default 30 days
 
   // Prevent duplicate auto-fetch in React strict mode
   const didAutoFetchRef = useRef(false);
@@ -550,13 +551,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     setRiskScore(computeFloodRisk(rawData, idx, sc));
     setTrend(computeTrend(historical, stats.p50));
 
-    // Chart window: 60 past days + 60 forecast days for readability
+    // Chart window: 60 past days + dynamic forecast days
     const pastStart    = Math.max(0, idx - 59);
     const chartPast    = rawData.slice(pastStart, idx + 1);
-    const chartFuture  = rawData.slice(idx + 1, idx + 61);
+    const chartFuture  = rawData.slice(idx + 1, idx + 1 + forecastWindowDays);
     setChartData([...chartPast, ...chartFuture]);
     setTodayChartIdx(chartPast.length - 1);
-  }, [rawData, weather?.lat]);
+  }, [rawData, weather?.lat, forecastWindowDays]);
 
   // ── Fetch GloFAS data ────────────────────────────────────────────────────────
   const handleFetch = useCallback(async () => {
@@ -1983,7 +1984,30 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
                   <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1 break-all">{s.value}</p>
                   <p className="text-[9px] text-slate-400 font-bold mt-0.5">{s.sub}</p>
-                </div>
+                  {/* Interactive Horizon Controls */}
+            {forecastView === 'daily' && (
+              <div className="flex bg-white dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm border border-slate-200 dark:border-slate-700 w-full sm:w-auto mt-4 sm:mt-0">
+                {[
+                  { label: '7 Days', val: 7 },
+                  { label: '15 Days', val: 15 },
+                  { label: '30 Days', val: 30 },
+                  { label: 'All', val: 183 }
+                ].map(opt => (
+                  <button
+                    key={opt.val}
+                    onClick={() => setForecastWindowDays(opt.val)}
+                    className={`flex-1 sm:px-5 py-2.5 text-xs font-black uppercase tracking-widest transition-colors ${
+                      forecastWindowDays === opt.val
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
               ))}
             </div>
 
