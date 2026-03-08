@@ -57,8 +57,8 @@ export interface SettingsPageProps {
   setMlApiKey: (key: string) => void;
   mapplsToken: string;
   setMapplsToken: (key: string) => void;
-  mapProvider: 'mappls' | 'maptiler' | 'mapbox';
-  setMapProvider: (p: 'mappls' | 'maptiler' | 'mapbox') => void;
+  mapProvider: 'mappls' | 'maptiler' | 'mapbox' | 'osm';
+  setMapProvider: (p: 'mappls' | 'maptiler' | 'mapbox' | 'osm') => void;
   mapTilerKey: string;
   setMapTilerKey: (key: string) => void;
   mapboxToken: string;
@@ -504,8 +504,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="mt-6 space-y-4">
               <div className="space-y-1.5">
                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Map Provider</span>
-                <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-                  {(['mappls', 'maptiler', 'mapbox'] as const).map(p => (
+                <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl flex-wrap">
+                  {(['osm', 'mappls', 'maptiler', 'mapbox'] as const).map(p => (
                     <button
                       key={p}
                       onClick={() => setMapProvider(p)}
@@ -515,12 +515,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
                       }`}
                     >
-                      {p === 'mappls' ? 'Mappls' : p === 'maptiler' ? 'MapTiler' : 'Mapbox'}
+                      {p === 'osm' ? '🌍 Free' : p === 'mappls' ? 'Mappls' : p === 'maptiler' ? 'MapTiler' : 'Mapbox'}
                     </button>
                   ))}
                 </div>
               </div>
-              {mapProvider === 'mappls' ? (
+              {mapProvider === 'osm' ? (
+                <div className="animate-fade-in p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-emerald-600 dark:text-emerald-400 text-lg">✅</span>
+                    <span className="text-xs font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-tight">No API Key Required</span>
+                  </div>
+                  <p className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 leading-relaxed">
+                    Uses <strong>OpenStreetMap + CartoDB Dark Matter</strong> tiles via MapLibre GL. Completely free, no account needed. Best for testing or quick use.
+                  </p>
+                </div>
+              ) : mapProvider === 'mappls' ? (
                 <div className="animate-fade-in">
                   <KeyInput
                     label="Mappls (MapmyIndia) API Key"

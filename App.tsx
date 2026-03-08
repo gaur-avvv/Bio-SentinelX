@@ -130,9 +130,13 @@ const AppInner: React.FC = () => {
   const [mapplsToken, setMapplsToken] = useState<string>(
     () => localStorage.getItem('biosentinel_mappls_token') || import.meta.env.VITE_MAPPLS_TOKEN || ''
   );
-  const [mapProvider, setMapProvider] = useState<'mappls' | 'maptiler' | 'mapbox'>(
-    () => (localStorage.getItem('biosentinel_map_provider') as 'mappls' | 'maptiler' | 'mapbox') || 'mappls'
+  const [mapProvider, setMapProvider] = useState<'mappls' | 'maptiler' | 'mapbox' | 'osm'>(
+    () => {
+      const stored = localStorage.getItem('biosentinel_map_provider') as 'mappls' | 'maptiler' | 'mapbox' | 'osm';
+      return ['mappls', 'maptiler', 'mapbox', 'osm'].includes(stored) ? stored : 'osm';
+    }
   );
+
   const [mapTilerKey, setMapTilerKey] = useState<string>(
     () => localStorage.getItem('biosentinel_maptiler_key') || ''
   );

@@ -55,7 +55,7 @@ interface FloodPredictionProps {
   aiProvider?: string;
   aiModel?: string;
   aiKey?: string;
-  mapProvider?: 'mappls' | 'maptiler' | 'mapbox';
+  mapProvider?: 'mappls' | 'maptiler' | 'mapbox' | 'osm';
   mapplsToken?: string;
   mapTilerKey?: string;
   mapboxToken?: string;
@@ -198,7 +198,7 @@ function computeGiStar(
 
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
-  mapProvider = 'mappls', mapplsToken, mapTilerKey, mapboxToken,
+  mapProvider = 'osm', mapplsToken, mapTilerKey, mapboxToken,
 }) => {
   // ── Cache ───────────────────────────────────────────────────────────────────
   const { flood: floodCache, setFlood } = useDataCache();
@@ -245,6 +245,21 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [indiaWardsLoading, setIndiaWardsLoading] = useState(false);
   const [indiaWardsError,  setIndiaWardsError]  = useState('');
   const [showWardPolygons, setShowWardPolygons] = useState(true);
+
+  // ── Map style ready gate — prevents 'Style is not done loading' crashes ──────
+  // Set to true inside 'load' event handler; all overlay useEffects depend on it.
+  const [mapReady, setMapReady] = useState(false);
+
+  /** Run `fn` immediately if the map style is loaded, else queue it via 'load'. */
+  const runWhenReady = useCallback((fn: () => void) => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (map.isStyleLoaded?.()) {
+      fn();
+    } else {
+      map.once('load', fn);
+    }
+  }, []);
 
   // ── Mappls map refs & Layer State ───────────────────────────────────────────
   const [showHeatmap, setShowHeatmap] = useState(true);
@@ -496,7 +511,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             zoomControl: true,
             mapType: isSatellite ? "satellite" : undefined,
           });
-          mapRef.current.on('load', renderWards);
+          mapRef.current.on('load', () => { setMapReady(true); renderWards(); });
+        } else if (mapProvider === 'osm') {
+          // ── Free / no-key: CartoDB Dark Matter via MapLibre GL JS ──
+          mapRef.current = new maplibregl.Map({
+            container: wardMapContainerRef.current,
+            style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
+            zoom: 12,
+          });
+          mapRef.current.on('load', () => { setMapReady(true); renderWards(); });
         } else if (mapProvider === 'maptiler') {
           // Initialize MapTiler SDK — zoom 12 for tighter neighbourhood-level focus
           maptilersdk.config.apiKey = mapTilerKey;
@@ -506,7 +530,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
             zoom: 12,
           });
-          mapRef.current.on('load', renderWards);
+          mapRef.current.on('load', () => { setMapReady(true); renderWards(); });
         } else if (mapProvider === 'mapbox') {
           // Initialize Mapbox SDK — zoom 12 for tighter neighbourhood focus
           mapboxgl.accessToken = mapboxToken;
@@ -516,15 +540,21 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
             zoom: 12,
           });
-          mapRef.current.on('load', renderWards);
+          mapRef.current.on('load', () => { setMapReady(true); renderWards(); });
         }
       } catch (e) {
         console.error(`[Map] ${mapProvider} init error`, e);
       }
     } else {
-      renderWards();
+      // Map already exists — only re-render wards if style is done loading
+      if (mapRef.current?.isStyleLoaded?.()) {
+        renderWards();
+      } else {
+        mapRef.current?.once?.('load', renderWards);
+      }
     }
   }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers, mapProvider, mapTilerKey, mapboxToken]);
+
 
   // ── Auto-fetch India Ward Boundaries when location changes ─────────────────
   useEffect(() => {
@@ -546,7 +576,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   // ── India Ward Polygons overlay on MapTiler/Mapbox ──────────────────────────
   useEffect(() => {
-    if (!mapRef.current || !indiaWards.length) return;
+    if (!mapReady || !mapRef.current || !indiaWards.length) return;
     const isMappls = mapProvider === 'mappls';
     const map = mapRef.current;
 
@@ -660,7 +690,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         console.warn('[India Wards] Layer error', e);
       }
     }
-  }, [indiaWards, showWardPolygons, mapProvider, wardReadiness]);
+  }, [indiaWards, showWardPolygons, mapProvider, wardReadiness, mapReady]);
 
   // ── Getis-Ord Gi* computation whenever ward data or India ward boundaries change ─
   useEffect(() => {
@@ -686,7 +716,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   // ── Gi* Hot Spot Overlay on Map ─────────────────────────────────────────────
   useEffect(() => {
-    if (!giStarResults.length || !mapRef.current) return;
+    if (!mapReady || !giStarResults.length || !mapRef.current) return;
     const isMappls = mapProvider === 'mappls';
     const map = mapRef.current;
 
@@ -811,7 +841,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
       // Interactive popup on click
       map.on('click', 'gi-star-layer', (e: any) => {
-        const PopupClass = mapProvider === 'maptiler' ? maptilersdk.Popup : mapboxgl.Popup;
+        const PopupClass =
+          mapProvider === 'maptiler' ? maptilersdk.Popup
+          : mapProvider === 'mapbox' ? mapboxgl.Popup
+          : maplibregl.Popup;  // 'osm' also uses MapLibre
         new PopupClass({ maxWidth: '280px' })
           .setLngLat(e.lngLat)
           .setHTML(e.features[0].properties.popup)
@@ -820,12 +853,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       map.on('mouseenter', 'gi-star-layer', () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'gi-star-layer', () => { map.getCanvas().style.cursor = ''; });
     }
-  }, [giStarResults, showHotspotZones, mapProvider]);
+  }, [giStarResults, showHotspotZones, mapProvider, mapReady]);
 
   // ── Heatmap layer based on Gi* significant hot spots ───────────────────────
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapReady || !mapRef.current) return;
     const isMappls = mapProvider === 'mappls';
+
     const map = mapRef.current;
 
     // Cleanup
@@ -884,7 +918,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         }
       });
     }
-  }, [giStarResults, showHeatmap, mapProvider]);
+  }, [giStarResults, showHeatmap, mapProvider, mapReady]);
+
+  // ── Reset mapReady when provider changes (map is re-created) ─────────────────
+  useEffect(() => {
+    setMapReady(false);
+  }, [mapProvider]);
+
 
 
 
