@@ -7,7 +7,7 @@ import { FloodPrediction } from './components/FloodPrediction';
 import { BioXAssistant } from './components/BioXAssistant';
 import { ResearchLibrary } from './components/ResearchLibrary';
 import { AlertNotificationPanel } from './components/AlertNotificationPanel';
-import { WeatherData, LoadingState, AiProvider, AI_MODELS, HealthAlert, NotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, ForecastUpdatePeriod } from './types';
+import { WeatherData, LoadingState, AiProvider, AI_MODELS, HealthAlert, NotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, ForecastUpdatePeriod, EmailAlertSettings, DEFAULT_EMAIL_ALERT_SETTINGS } from './types';
 import { fetchWeatherData } from './services/weatherService';
 import { setBioSentinelApiKey } from './services/mlService';
 import {
@@ -23,6 +23,7 @@ import {
 } from './services/alertService';
 import { enrichAlertsWithAI } from './services/aiNotificationService';
 import { buildAIUserContext, personalizeAlertsInPlace } from './services/personalizationService';
+import { checkAndSendForecastEmails } from './services/forecastEmailService';
 import { AlertTriangle, XCircle, MapPin, Crosshair, RefreshCw, Settings, Loader2 } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { DataCacheProvider } from './contexts/DataCacheContext';
@@ -136,6 +137,19 @@ const AppInner: React.FC = () => {
     return DEFAULT_NOTIFICATION_SETTINGS;
   });
 
+  // ── Email Alert Settings ───────────────────────────────────────────────────
+  const [emailAlertSettings, setEmailAlertSettingsState] = useState<EmailAlertSettings>(() => {
+    try {
+      const stored = localStorage.getItem('biosentinel_email_alert_settings');
+      if (stored) return { ...DEFAULT_EMAIL_ALERT_SETTINGS, ...JSON.parse(stored) };
+    } catch { /* ignore */ }
+    return DEFAULT_EMAIL_ALERT_SETTINGS;
+  });
+
+  const setEmailAlertSettings = (patch: Partial<EmailAlertSettings>) => {
+    setEmailAlertSettingsState(prev => ({ ...prev, ...patch }));
+  };
+
   const [view, setView] = useState<'dashboard' | 'historical' | 'flood' | 'assistant' | 'research' | 'settings'>('dashboard');
 
   // ── Health Alert State ────────────────────────────────────────────────────
@@ -214,6 +228,7 @@ const AppInner: React.FC = () => {
   useEffect(() => { localStorage.setItem('biosentinel_location', location); }, [location]);
   useEffect(() => { if (weather) localStorage.setItem('biosentinel_weather_data', JSON.stringify(weather)); }, [weather]);
   useEffect(() => { localStorage.setItem('biosentinel_notification_settings', JSON.stringify(notificationSettings)); }, [notificationSettings]);
+  useEffect(() => { localStorage.setItem('biosentinel_email_alert_settings', JSON.stringify(emailAlertSettings)); }, [emailAlertSettings]);
 
   // Derive the active API key based on provider
   const aiKey = aiProvider === 'groq' ? groqKey
@@ -282,6 +297,16 @@ const AppInner: React.FC = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weather, addAlerts]);
+
+  // ── Proactive forecast email alerts ──────────────────────────────────────
+  useEffect(() => {
+    if (!weather) return;
+    // Run in background — non-blocking, fire-and-forget
+    checkAndSendForecastEmails(weather, emailAlertSettings, setEmailAlertSettings).catch(
+      err => console.warn('[ForecastEmail] Background check error:', err)
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weather]);
 
   // ── Scheduled morning / afternoon / evening briefings ─────────────────────
   useEffect(() => {
@@ -585,6 +610,9 @@ const AppInner: React.FC = () => {
                 setMlApiKey={setMlApiKey}
                 notificationSettings={notificationSettings}
                 setNotificationSettings={setNotificationSettings}
+                emailAlertSettings={emailAlertSettings}
+                setEmailAlertSettings={setEmailAlertSettings}
+                weather={weather}
               />
             )}
           </div>

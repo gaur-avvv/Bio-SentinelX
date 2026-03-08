@@ -3,11 +3,12 @@ import {
   Settings, MapPin, Key, CheckCircle2, Crosshair, Zap, ShieldCheck, Loader2,
   Server, Wifi, WifiOff, ChevronDown, Brain, Sun, Sunset, Moon, Palette, Wand2,
   RefreshCw, Globe, Cpu, Lock, Info, Bell, BellRing, Clock, CloudRain, Wind,
-  AlertTriangle, Bot, Activity, Biohazard,
+  AlertTriangle, Bot, Activity, Biohazard, Mail, MailCheck, Send,
 } from 'lucide-react';
-import { LoadingState, AiProvider, AI_MODELS, NotificationSettings, ForecastUpdatePeriod, DEFAULT_NOTIFICATION_SETTINGS } from '../types';
+import { LoadingState, AiProvider, AI_MODELS, NotificationSettings, ForecastUpdatePeriod, DEFAULT_NOTIFICATION_SETTINGS, EmailAlertSettings } from '../types';
 import { geocodeLocation } from '../services/weatherService';
 import { checkBioSentinelHealth } from '../services/mlService';
+import { sendTestEmail } from '../services/forecastEmailService';
 import { TokenBudgetPanel } from './TokenBudgetPanel';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -56,6 +57,9 @@ export interface SettingsPageProps {
   setMlApiKey: (key: string) => void;
   notificationSettings: NotificationSettings;
   setNotificationSettings: (s: NotificationSettings) => void;
+  emailAlertSettings: EmailAlertSettings;
+  setEmailAlertSettings: (patch: Partial<EmailAlertSettings>) => void;
+  weather?: import('../types').WeatherData | null;
 }
 
 /* ─── Collapsible Section Card ─────────────────────────────────────────────── */
@@ -138,7 +142,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
   mlApiKey, setMlApiKey,
   notificationSettings, setNotificationSettings,
+  emailAlertSettings, setEmailAlertSettings, weather,
 }) => {
+  const [emailTestStatus, setEmailTestStatus] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
+  const [emailTestMsg, setEmailTestMsg] = useState('');
   const isLoading = loadingState === LoadingState.LOADING_WEATHER;
   const [isLocating, setIsLocating] = useState(false);
   const [resolvedPreview, setResolvedPreview] = useState<string | null>(null);
@@ -736,6 +743,180 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               className="w-full py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-widest border border-dashed border-slate-200 dark:border-slate-700 text-slate-400 hover:text-amber-600 hover:border-amber-300 dark:hover:border-amber-700 transition-all">
               Reset to Defaults
             </button>
+          </div>
+        </Card>
+
+        {/* 8. Email Early-Warning ─────────────────────────────────── */}
+        <Card icon={<Mail className="w-5 h-5" />} title="Email Early-Warning" subtitle="Proactive severe weather alerts"
+          badge={emailAlertSettings.enabled ? 'Active' : 'Off'}
+          accent="rose">
+          <div className="space-y-5">
+
+            {/* Master toggle */}
+            <label className="flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-all
+              bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-800/50">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-xl bg-rose-100 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400">
+                  <Mail className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-wide text-rose-800 dark:text-rose-200">Enable Email Alerts</p>
+                  <p className="text-[8px] font-bold text-slate-400">Send email before severe weather arrives</p>
+                </div>
+              </div>
+              <div className="relative flex-shrink-0">
+                <input type="checkbox" className="sr-only" checked={emailAlertSettings.enabled}
+                  onChange={e => setEmailAlertSettings({ enabled: e.target.checked })} />
+                <div className={`w-9 h-5 rounded-full transition-colors ${emailAlertSettings.enabled ? 'bg-rose-500' : 'bg-slate-300 dark:bg-slate-600'}
+                  relative after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all
+                  ${emailAlertSettings.enabled ? 'after:translate-x-4' : 'after:translate-x-0'}`} />
+              </div>
+            </label>
+
+            {/* Recipient email */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Alert Destination Email</span>
+                <a href="https://app.smtp.dev" target="_blank" rel="noopener noreferrer"
+                  className="text-[9px] font-black text-rose-600 hover:underline">Get smtp.dev inbox ↗</a>
+              </div>
+              <div className="relative group">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-rose-500 transition-colors" />
+                <input
+                  type="email"
+                  value={emailAlertSettings.recipientEmail}
+                  onChange={e => setEmailAlertSettings({ recipientEmail: e.target.value })}
+                  placeholder="you@example.com"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-rose-500 focus:bg-white dark:focus:bg-slate-700 transition-all"
+                />
+              </div>
+              <p className="text-[9px] font-bold text-slate-400 leading-relaxed">
+                📧 Only used for severe weather alerts. No spam. No data sharing. Stored locally only.
+              </p>
+            </div>
+
+            {/* smtp.dev API Key */}
+            <div className="space-y-1.5">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">smtp.dev API Key</span>
+              <div className="relative group">
+                <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-rose-500 transition-colors" />
+                <input
+                  type="password"
+                  value={emailAlertSettings.smtpDevApiKey}
+                  onChange={e => setEmailAlertSettings({ smtpDevApiKey: e.target.value })}
+                  placeholder="smtplabs_…"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-rose-500 focus:bg-white dark:focus:bg-slate-700 transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Lead time */}
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-3.5 h-3.5 text-rose-500" />
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Alert Lead Time</p>
+                <span className="ml-auto text-[9px] font-black text-rose-600">{emailAlertSettings.leadTimeHours}h ahead</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[3, 6, 12, 24, 48, 72].map(h => (
+                  <button key={h}
+                    onClick={() => setEmailAlertSettings({ leadTimeHours: h })}
+                    className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
+                      emailAlertSettings.leadTimeHours === h
+                        ? 'bg-rose-500 text-white shadow-lg shadow-rose-300/30'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:text-rose-600'
+                    }`}>
+                    {h}h
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Min severity threshold */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Min Risk Score to Email</p>
+                <span className={`text-[9px] font-black ${
+                  emailAlertSettings.minSeverityScore >= 75 ? 'text-rose-600' :
+                  emailAlertSettings.minSeverityScore >= 55 ? 'text-amber-600' : 'text-teal-600'
+                }`}>{emailAlertSettings.minSeverityScore}/100</span>
+              </div>
+              <input
+                type="range" min={30} max={90} step={5}
+                value={emailAlertSettings.minSeverityScore}
+                onChange={e => setEmailAlertSettings({ minSeverityScore: Number(e.target.value) })}
+                className="w-full accent-rose-500"
+              />
+              <div className="flex justify-between text-[8px] font-bold text-slate-300 mt-0.5">
+                <span>Moderate (30)</span><span>High (60)</span><span>Critical (90)</span>
+              </div>
+            </div>
+
+            {/* Critical-only toggle */}
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className={`w-8 h-4 rounded-full relative transition-colors ${emailAlertSettings.onlyCritical ? 'bg-rose-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${emailAlertSettings.onlyCritical ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                <input type="checkbox" checked={emailAlertSettings.onlyCritical}
+                  onChange={e => setEmailAlertSettings({ onlyCritical: e.target.checked })} className="sr-only" />
+              </div>
+              <span className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                Critical Events Only (score ≥ 75)
+              </span>
+            </label>
+
+            {/* Sender info (if provisioned) */}
+            {emailAlertSettings.senderEmail && (
+              <div className="flex items-center gap-2 p-2.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-800 rounded-xl">
+                <MailCheck className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                <p className="text-[9px] font-bold text-slate-500 dark:text-slate-400">
+                  Sender: <span className="text-emerald-600 font-black">{emailAlertSettings.senderEmail}</span>
+                </p>
+              </div>
+            )}
+
+            {/* Test email button */}
+            <button
+              disabled={!emailAlertSettings.recipientEmail || emailTestStatus === 'loading'}
+              onClick={async () => {
+                setEmailTestStatus('loading');
+                setEmailTestMsg('');
+                const result = await sendTestEmail(
+                  weather ?? null,
+                  emailAlertSettings,
+                  (patch) => setEmailAlertSettings(patch)
+                );
+                setEmailTestStatus(result.ok ? 'ok' : 'err');
+                setEmailTestMsg(result.message);
+                setTimeout(() => setEmailTestStatus('idle'), 6000);
+              }}
+              className={`w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                !emailAlertSettings.recipientEmail
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                  : emailTestStatus === 'loading'
+                  ? 'bg-rose-400 text-white cursor-wait'
+                  : emailTestStatus === 'ok'
+                  ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-300/30'
+                  : emailTestStatus === 'err'
+                  ? 'bg-red-500 text-white'
+                  : 'bg-rose-500 text-white hover:bg-rose-600 shadow-lg shadow-rose-200/40 active:scale-95'
+              }`}>
+              {emailTestStatus === 'loading' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending…</>
+               : emailTestStatus === 'ok'     ? <><MailCheck className="w-3.5 h-3.5" /> Sent!</>
+               : emailTestStatus === 'err'    ? <><AlertTriangle className="w-3.5 h-3.5" /> Failed</>
+               : <><Send className="w-3.5 h-3.5" /> Send Test Email</>}
+            </button>
+            {emailTestMsg && (
+              <p className={`text-[9px] font-bold text-center ${
+                emailTestStatus === 'ok' ? 'text-emerald-600' : 'text-red-500'
+              }`}>{emailTestMsg}</p>
+            )}
+
+            <p className="text-[9px] font-bold text-slate-400 leading-relaxed text-center">
+              ⚠ Requires recipient to be an smtp.dev address. See
+              {' '}<a href="https://app.smtp.dev" target="_blank" rel="noopener noreferrer"
+                className="text-rose-500 hover:underline">app.smtp.dev</a> to create a free test inbox.
+            </p>
+
           </div>
         </Card>
 

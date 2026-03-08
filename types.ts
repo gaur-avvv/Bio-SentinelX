@@ -342,3 +342,29 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
     aiBasedAlerts: true,
   },
 };
+
+// ─── Email Early-Warning Settings ─────────────────────────────────────────────
+export interface EmailAlertSettings {
+  enabled: boolean;
+  recipientEmail: string;      // user's alert destination email
+  smtpDevApiKey: string;       // smtp.dev API key for creating sender account
+  senderEmail: string;         // auto-provisioned smtp.dev sender (stored after first run)
+  senderPassword: string;      // auto-generated password for the sender smtp.dev account
+  leadTimeHours: number;       // how many hours ahead to scan forecast (1–72)
+  minSeverityScore: number;    // 0–100 threshold to trigger email
+  onlyCritical: boolean;       // restrict to critical-only events
+  sentAlertKeys: string[];     // dedup keys: city+date+factor already emailed
+}
+
+export const DEFAULT_EMAIL_ALERT_SETTINGS: EmailAlertSettings = {
+  enabled: false,
+  recipientEmail: '',
+  smtpDevApiKey: 'smtplabs_ekcW2c4f46ie4Frwh9y3gaj4Y5Pbo18eaT9mvrRd2QAj6dLB',
+  senderEmail: '',
+  senderPassword: '',
+  leadTimeHours: 12,
+  minSeverityScore: 60,
+  onlyCritical: false,
+  sentAlertKeys: [],
+};
+
