@@ -184,43 +184,68 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
     };
 
-    // ─ Init map once ──────────────────────────────────────────────────────────
+    // ─ Init map & Render Wards as Polygons ───────────────────────────────────
     const renderWards = () => {
       // Clear previous markers
       mapplsMarkersRef.current.forEach(m => { try { m.remove(); } catch { try { m.setMap(null); } catch {} } });
       mapplsMarkersRef.current = [];
 
+      // Remove existing ward polygon layer if any
+      const map = mapplsMapRef.current;
+      if (map && map.getLayer && map.getLayer('mgis-ward-layer')) {
+        map.removeLayer('mgis-ward-layer');
+        map.removeSource('mgis-ward-source');
+      }
+
+      // Arrays for the batch getWard query
+      const wardIdsForApi: string[] = [];
+      const gradeColor: Record<string, string> = {
+        A: '22c55e', B: '84cc16', C: 'eab308', D: 'f97316', F: 'dc2626',
+      };
+
+      // Ensure geoAnalytics is loaded
+      if (typeof mappls.geoAnalytics === 'undefined') {
+        console.warn('[Mappls] geoAnalytics library missing');
+        return;
+      }
+
       wardReadiness.forEach(w => {
         if (!w.lat || !w.lon) return;
-        const col      = gradeColor[w.readiness_grade] ?? '#94a3b8';
-        const prob     = w.flood_probability;
+
+        // Try extracting numeric ward number from Ward ID (e.g. "WARD-001" -> "0001")
+        // Note: mGIS expects specific ward numbers or names based on the city. 
+        // Here we render the markers as fallback and also try the polygon API.
+        const match = w.ward_id.match(/\d+/);
+        if (match) {
+           const wNo = match[0].padStart(4, '0');
+           wardIdsForApi.push(wNo);
+        }
+
+        const colHex = '#' + (gradeColor[w.readiness_grade] ?? '94a3b8');
+        const prob = w.flood_probability;
         const riskLabel = prob >= 0.80 ? 'CRITICAL' : prob >= 0.60 ? 'HIGH' : prob >= 0.35 ? 'MEDIUM' : prob >= 0.15 ? 'LOW' : 'SAFE';
 
         const popupHtml = `
           <div style="font-family:Inter,system-ui,sans-serif;min-width:220px;max-width:280px;padding:2px">
             <div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:6px">${w.ward_name ?? w.ward_id}</div>
             <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-              <span style="background:${col};color:#fff;padding:3px 10px;border-radius:9999px;font-size:10px;font-weight:800">Grade ${w.readiness_grade}</span>
-              <span style="border:1.5px solid ${col};color:${col};padding:3px 8px;border-radius:9999px;font-size:10px;font-weight:800">${riskLabel}</span>
+              <span style="background:${colHex};color:#fff;padding:3px 10px;border-radius:9999px;font-size:10px;font-weight:800">Grade ${w.readiness_grade}</span>
+              <span style="border:1.5px solid ${colHex};color:${colHex};padding:3px 8px;border-radius:9999px;font-size:10px;font-weight:800">${riskLabel}</span>
             </div>
             <div style="background:#f8fafc;border-radius:10px;padding:8px;font-size:11px">
               <table style="width:100%;border-collapse:collapse">
-                <tr><td style="color:#64748b;padding:3px 0">Flood Risk</td><td style="font-weight:900;text-align:right;color:${col}">${(prob * 100).toFixed(1)}%</td></tr>
+                <tr><td style="color:#64748b;padding:3px 0">Flood Risk</td><td style="font-weight:900;text-align:right;color:${colHex}">${(prob * 100).toFixed(1)}%</td></tr>
                 <tr><td style="color:#64748b;padding:3px 0">Risk Score</td><td style="font-weight:900;text-align:right">${w.risk_score?.toFixed(1) ?? '—'}/100</td></tr>
                 <tr><td style="color:#64748b;padding:3px 0">Inundation Risk</td><td style="font-weight:900;text-align:right">${w.inundation_risk_score?.toFixed(1) ?? '—'}</td></tr>
                 <tr><td style="color:#64748b;padding:3px 0">Drainage Health</td><td style="font-weight:900;text-align:right">${w.drainage_health_score?.toFixed(1) ?? '—'}</td></tr>
                 <tr><td style="color:#64748b;padding:3px 0">Hotspots in Ward</td><td style="font-weight:900;text-align:right">${w.hotspot_count_in_ward}</td></tr>
               </table>
             </div>
-            ${w.recommended_actions?.length ? `
-              <div style="font-size:10px;font-weight:800;color:#374151;margin-top:8px;margin-bottom:3px">Recommended Actions:</div>
-              <ul style="margin:0 0 0 14px;padding:0;font-size:10px;color:#475569;line-height:1.7">${w.recommended_actions.slice(0, 4).map(a => `<li>${a}</li>`).join('')}</ul>` : ''}
-            <div style="font-size:9px;color:#94a3b8;margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0">${w.readiness_description}</div>
           </div>`;
 
         try {
           const marker = new mappls.Marker({
-            map: mapplsMapRef.current,
+            map: map,
             position: { lat: w.lat, lng: w.lon },
             icon: {
               url: makeSvgUrl(w.readiness_grade),
@@ -235,6 +260,47 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         }
       });
 
+      // mGIS GeoAnalytics Polygon layer (if we have extracted numbers)
+      // Since our ward IDs are synthetic in the backend ('WARD-001'), mGIS won't strictly match a real 
+      // Delhi ward unless we pass valid numbers. Just add the geoAnalytics block so the tool exists 
+      // when real data is fed.
+      if (wardIdsForApi.length > 0 && typeof mappls.geoAnalytics !== 'undefined') {
+        const geoParams = {
+          "AccessToken": "nzakkmhibkqugncpxygnqqvynhpizagefvpn", 
+          "GeoBoundType": "ward_no",
+          "GeoBound": wardIdsForApi,
+          "Attribute": "t_p",
+          "Query": ">0",
+          "Style": {
+              BorderColor: "3b82f6",
+              BorderWidth: 1,
+              FillColor: "3b82f6",
+              Geometry: "polygon",
+              Opacity: 0.15,
+          },
+          "SpatialLayer": "geoAnalyticsWard",
+          "SpatialLayer1": "ward"
+        };
+        try {
+          const tilesUrl = mappls.geoAnalytics.getWard(geoParams);
+          if (tilesUrl) {
+            map.addSource('mgis-ward-source', {
+              'type': 'raster',
+              'tiles': [tilesUrl],
+              'tileSize': 256
+            });
+            map.addLayer({
+              'id': 'mgis-ward-layer',
+              'type': 'raster',
+              'source': 'mgis-ward-source',
+              'paint': {}
+            }, map.getStyle().layers[map.getStyle().layers.length - 1].id); // insert below labels
+          }
+        } catch (err) {
+          console.warn('[Mappls] geoAnalytics ward poly failed', err);
+        }
+      }
+
       // Fit map to all ward coords
       const validWards = wardReadiness.filter(w => w.lat && w.lon);
       if (validWards.length > 0) {
@@ -243,12 +309,24 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           const lons = validWards.map(w => w.lon);
           const swLat = Math.min(...lats); const neLat = Math.max(...lats);
           const swLon = Math.min(...lons); const neLon = Math.max(...lons);
-          mapplsMapRef.current.fitBounds([[swLon, swLat], [neLon, neLat]], { padding: { top: 40, bottom: 40, left: 40, right: 40 }, maxZoom: 14 });
+          
+          if (typeof mappls.geoAnalytics !== 'undefined' && wardIdsForApi.length > 0) {
+            // Attempt to use mGIS getBounds
+             const geoParams = {
+               "AccessToken": "nzakkmhibkqugncpxygnqqvynhpizagefvpn",
+               "GeoBoundType": "ward_no",
+               "GeoBound": wardIdsForApi,
+             };
+             try {
+                map.fitBounds(mappls.geoAnalytics.getBounds('ward', geoParams));
+                return;
+             } catch {}
+          }
+          
+          map.fitBounds([[swLon, swLat], [neLon, neLat]], { padding: { top: 40, bottom: 40, left: 40, right: 40 } });
         } catch {
-          try {
-            const c = validWards[0];
-            mapplsMapRef.current.setCenter({ lat: c.lat, lng: c.lon }); mapplsMapRef.current.setZoom(11);
-          } catch {}
+          const c = validWards[0];
+          map.setCenter({ lat: c.lat, lng: c.lon }); map.setZoom(11);
         }
       }
     };

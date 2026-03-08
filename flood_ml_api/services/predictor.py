@@ -271,29 +271,35 @@ class FloodPredictor:
         m = model.metadata
 
         requests = []
-        for i in np.arange(-max_steps, max_steps + 1):
-            for j in np.arange(-max_steps, max_steps + 1):
+        for i in range(-max_steps, max_steps + 1):
+            for j in range(-max_steps, max_steps + 1):
                 clat = lat + i * delta_lat
                 clon = lon + j * delta_lon
                 dist = math.sqrt((i * grid_size_km) ** 2 + (j * grid_size_km) ** 2)
                 if dist <= radius_km:
-                    # Perturb features based on position for spatial variability
-                    elev = max(0, 15 - abs(i) * 2 + abs(j))
+                    # Spatially correlated base features (simulating elevation traps & rain bands)
+                    # Use sin/cos of coordinates to create macro patterns
+                    spatial_pattern = math.sin(clat * 100) * math.cos(clon * 100)
+                    micro_pattern = math.sin(clat * 500) * math.cos(clon * 500)
+                    
+                    elev = max(0.0, 15.0 + spatial_pattern * 10.0 + micro_pattern * 3.0 - dist * 0.5)
+                    rain_mult = 1.0 + spatial_pattern * 0.3
+                    
                     requests.append(
                         PredictionRequest(
                             latitude=round(clat, 6),
                             longitude=round(clon, 6),
-                            rainfall_24h_mm=50 + np.random.exponential(10),
-                            rainfall_1h_mm=5 + np.random.exponential(3),
-                            rainfall_3h_mm=12 + np.random.exponential(5),
-                            elevation_m=max(0, elev),
-                            slope_degrees=max(0.1, 2 - abs(i) * 0.3),
-                            flow_accumulation=max(0, 800 - elev * 30),
-                            impervious_surface_pct=min(95, 50 + abs(j) * 5),
-                            drainage_capacity_pct=max(10, 70 - abs(i) * 10),
-                            soil_moisture_pct=min(95, 40 + abs(j) * 5),
-                            previous_flood_events_5y=max(0, 2 - int(dist)),
-                            month=6,  # Monsoon baseline
+                            rainfall_24h_mm=float(120.0 * rain_mult + max(0.0, micro_pattern)*20.0),
+                            rainfall_1h_mm=float(15.0 * rain_mult),
+                            rainfall_3h_mm=float(35.0 * rain_mult),
+                            elevation_m=max(0.0, elev),
+                            slope_degrees=max(0.1, 2.0 + micro_pattern * 2.0),
+                            flow_accumulation=max(0.0, 1500.0 - elev * 50.0),
+                            impervious_surface_pct=min(95.0, max(10.0, 60.0 - dist * 3.0 + micro_pattern * 10.0)),
+                            drainage_capacity_pct=max(10.0, min(90.0, 60.0 + spatial_pattern * 20.0)),
+                            soil_moisture_pct=min(95.0, max(30.0, 70.0 + spatial_pattern * 15.0)),
+                            previous_flood_events_5y=int(max(0.0, 3.0 - dist + micro_pattern)),
+                            month=6,
                         )
                     )
         return requests
@@ -314,23 +320,29 @@ class FloodPredictor:
         for ward in wards:
             wlat, wlon, ward_id, ward_name = ward
 
+            # Spatially correlated weather & terrain for wards
+            spatial_pattern = math.sin(wlat * 50) * math.cos(wlon * 50)
+            dist_from_center = math.sqrt((wlat - lat)**2 + (wlon - lon)**2) * 111.32
+            
+            rain_base = 100 + spatial_pattern * 40
+            elev = max(1.0, 12 + spatial_pattern * 8 + dist_from_center * 0.5)
+
             req = PredictionRequest(
                 latitude=wlat,
                 longitude=wlon,
                 ward_id=ward_id,
-                rainfall_24h_mm=float(np.clip(60 + np.random.exponential(15), 0, 300)),
-                rainfall_1h_mm=float(np.clip(8 + np.random.exponential(5), 0, 100)),
-                rainfall_3h_mm=float(np.clip(18 + np.random.exponential(8), 0, 200)),
-                rainfall_48h_mm=float(np.clip(85 + np.random.exponential(20), 0, 500)),
-                elevation_m=float(max(1.0, 15 + np.random.randn() * 5)),
-                slope_degrees=float(np.clip(1.5 + np.random.exponential(0.5), 0.1, 89)),
-                impervious_surface_pct=float(np.clip(55 + np.random.randn() * 15, 0, 100)),
-                drainage_capacity_pct=float(np.clip(65 + np.random.randn() * 20, 0, 100)),
-                drain_condition_score=float(np.clip(0.65 + np.random.randn() * 0.15, 0.0, 1.0)),
-                soil_moisture_pct=float(np.clip(45 + np.random.exponential(10), 0, 100)),
-                previous_flood_events_5y=int(max(0, np.random.exponential(2))),
-                # population_density must be >= 0 (Pydantic ge=0 constraint)
-                population_density=float(max(0.0, 8000 + np.random.randn() * 3000)),
+                rainfall_24h_mm=float(np.clip(rain_base, 0, 300)),
+                rainfall_1h_mm=float(np.clip(rain_base * 0.15, 0, 100)),
+                rainfall_3h_mm=float(np.clip(rain_base * 0.35, 0, 200)),
+                rainfall_48h_mm=float(np.clip(rain_base * 1.5, 0, 500)),
+                elevation_m=float(elev),
+                slope_degrees=float(np.clip(1.5 + spatial_pattern * 1.0, 0.1, 89)),
+                impervious_surface_pct=float(np.clip(65 - dist_from_center * 2 + spatial_pattern * 10, 0, 100)),
+                drainage_capacity_pct=float(np.clip(55 + spatial_pattern * 20, 0, 100)),
+                drain_condition_score=float(np.clip(0.65 + spatial_pattern * 0.2, 0.0, 1.0)),
+                soil_moisture_pct=float(np.clip(60 + spatial_pattern * 20, 0, 100)),
+                previous_flood_events_5y=int(max(0.0, 3.0 + spatial_pattern * 2.0 - dist_from_center * 0.2)),
+                population_density=float(max(0.0, 12000.0 - dist_from_center * 500.0)),
                 month=6,
             )
             pred = await self.predict(req)
@@ -377,8 +389,8 @@ class FloodPredictor:
         delta = ward_spacing_km / 111.32
         wards = []
         idx = 1
-        for i in np.arange(-3, 4):
-            for j in np.arange(-3, 4):
+        for i in range(-3, 4):
+            for j in range(-3, 4):
                 wlat = round(lat + i * delta, 5)
                 wlon = round(lon + j * delta, 5)
                 dist = math.sqrt((i * ward_spacing_km) ** 2 + (j * ward_spacing_km) ** 2)
