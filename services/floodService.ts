@@ -873,3 +873,125 @@ export function computeHistoricalStats(historical: FloodDataPoint[]): Historical
     count: vals.length,
   };
 }
+
+// ============================================================
+// ESRI India Ward Boundaries — ArcGIS Living Atlas
+// Service: https://livingatlas.esri.in/server1/rest/services/Wards/India_Ward_Boundaries/MapServer
+// Provides official ward polygon boundaries for all Indian cities.
+// ============================================================
+
+export interface IndiaWardFeature {
+  wardId:    string;
+  wardName:  string;
+  cityName:  string;
+  stateName: string;
+  lat:       number;   // centroid
+  lon:       number;   // centroid
+  geometry:  GeoJSON.Geometry;
+  properties: Record<string, unknown>;
+}
+
+const INDIA_WARD_BOUNDARIES_URL =
+  'https://livingatlas.esri.in/server1/rest/services/Wards/India_Ward_Boundaries/MapServer/0';
+
+/**
+ * Convert Web Mercator (EPSG:3857) coordinates to WGS84 (EPSG:4326).
+ */
+function webMercatorToWgs84(x: number, y: number): [number, number] {
+  const lon = (x / 20037508.342) * 180;
+  let lat   = (y / 20037508.342) * 180;
+  lat = (180 / Math.PI) * (2 * Math.atan(Math.exp((lat * Math.PI) / 180)) - Math.PI / 2);
+  return [lon, lat];
+}
+
+/**
+ * Compute the centroid [lon, lat] of a GeoJSON polygon ring (Web Mercator input → WGS84 output).
+ */
+function ringCentroidWgs84(ring: number[][], inWgs84 = false): [number, number] {
+  let sumX = 0, sumY = 0;
+  const n = ring.length;
+  for (const [x, y] of ring) { sumX += x; sumY += y; }
+  const avgX = sumX / n;
+  const avgY = sumY / n;
+  return inWgs84 ? [avgX, avgY] : webMercatorToWgs84(avgX, avgY);
+}
+
+/**
+ * Fetch official India ward boundaries from the ESRI Living Atlas ArcGIS MapServer.
+ *
+ * Queries wards that intersect a bounding box around the given lat/lon within the specified radius.
+ * Returns GeoJSON features with real ward polygons and centroids.
+ */
+export async function fetchIndiaWardBoundaries(
+  lat: number,
+  lon: number,
+  radiusKm = 15
+): Promise<IndiaWardFeature[]> {
+  // Convert radius to degrees (rough approximation for bounding box query)
+  const degLat = radiusKm / 111.32;
+  const degLon = radiusKm / (111.32 * Math.cos(lat * Math.PI / 180));
+
+  const minLon = lon - degLon; const maxLon = lon + degLon;
+  const minLat = lat - degLat; const maxLat = lat + degLat;
+
+  const params = new URLSearchParams({
+    geometry:         `${minLon},${minLat},${maxLon},${maxLat}`,
+    geometryType:     'esriGeometryEnvelope',
+    inSR:             '4326',
+    spatialRel:       'esriSpatialRelIntersects',
+    outFields:        '*',
+    returnGeometry:   'true',
+    outSR:            '4326',               // get output in WGS84
+    f:                'geojson',
+    resultRecordCount: '200',              // cap at 200 wards
+  });
+
+  const url = `${INDIA_WARD_BOUNDARIES_URL}/query?${params.toString()}`;
+
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    // 10s timeout via AbortController
+    signal: AbortSignal.timeout?.(10000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`India Ward Boundaries API error: ${res.status} ${res.statusText}`);
+  }
+
+  const json = await res.json() as { features?: Array<{ geometry: any; properties: any }> };
+  if (!json.features?.length) return [];
+
+  return json.features
+    .filter(f => f.geometry && f.properties)
+    .map(f => {
+      const props = f.properties as Record<string, unknown>;
+
+      // Try multiple possible field names for ward/city/state across ESRI schema versions
+      const wardId   = String(props['WARD_NO']    ?? props['Ward_No']    ?? props['OBJECTID']  ?? '');
+      const wardName = String(props['WARD_NAME']  ?? props['Ward_Name']  ?? props['WardName']  ?? props['NAME'] ?? `Ward ${wardId}`);
+      const cityName = String(props['CITY_NAME']  ?? props['City_Name']  ?? props['CITY']      ?? props['ULB_NAME'] ?? '');
+      const stateName= String(props['STATE_NAME'] ?? props['State_Name'] ?? props['STATE']     ?? '');
+
+      // Compute centroid from first polygon ring (geometry is already in WGS84)
+      let lon = 0, lat = 0;
+      try {
+        const geom = f.geometry;
+        if (geom.type === 'Polygon' && geom.coordinates?.[0]) {
+          [lon, lat] = ringCentroidWgs84(geom.coordinates[0], true);
+        } else if (geom.type === 'MultiPolygon' && geom.coordinates?.[0]?.[0]) {
+          [lon, lat] = ringCentroidWgs84(geom.coordinates[0][0], true);
+        } else if (geom.type === 'Point') {
+          [lon, lat] = [geom.coordinates[0], geom.coordinates[1]];
+        }
+      } catch {}
+
+      return {
+        wardId, wardName, cityName, stateName,
+        lat, lon,
+        geometry: f.geometry,
+        properties: props,
+      } satisfies IndiaWardFeature;
+    })
+    .filter(w => w.lat !== 0 && w.lon !== 0);
+}
+

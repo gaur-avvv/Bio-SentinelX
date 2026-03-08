@@ -35,6 +35,8 @@ import {
   fetchWardReadiness,
   fetchHotspots,
   enrichWardsWithGeoNames,
+  fetchIndiaWardBoundaries,
+  IndiaWardFeature,
   FloodDataPoint,
   FloodRiskScore,
   TrendResult,
@@ -237,6 +239,12 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   // Getis-Ord Gi* results — computed from ward data when available
   const [giStarResults, setGiStarResults] = useState<GiStarFeature[]>([]);
+
+  // India Ward Boundaries — official ESRI ArcGIS Living Atlas polygons
+  const [indiaWards,       setIndiaWards]       = useState<IndiaWardFeature[]>([]);
+  const [indiaWardsLoading, setIndiaWardsLoading] = useState(false);
+  const [indiaWardsError,  setIndiaWardsError]  = useState('');
+  const [showWardPolygons, setShowWardPolygons] = useState(true);
 
   // ── Mappls map refs & Layer State ───────────────────────────────────────────
   const [showHeatmap, setShowHeatmap] = useState(true);
@@ -518,16 +526,163 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     }
   }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers, mapProvider, mapTilerKey, mapboxToken]);
 
-  // ── Getis-Ord Gi* computation whenever ward data changes ───────────────────
+  // ── Auto-fetch India Ward Boundaries when location changes ─────────────────
   useEffect(() => {
-    if (!wardReadiness?.length) { setGiStarResults([]); return; }
-    const features = wardReadiness
-      .filter(w => w.lat && w.lon)
-      .map(w => ({ lat: w.lat, lon: w.lon, value: w.flood_probability }));
+    if (!weather?.lat || !weather?.lon) return;
+    setIndiaWardsLoading(true);
+    setIndiaWardsError('');
+    fetchIndiaWardBoundaries(weather.lat, weather.lon, 15)
+      .then(wards => {
+        setIndiaWards(wards);
+        setIndiaWardsLoading(false);
+      })
+      .catch(err => {
+        // ESRI service may be unavailable or require auth — fail silently
+        console.warn('[India Ward Boundaries]', err?.message ?? err);
+        setIndiaWardsError(err?.message ?? 'Failed to load ward boundaries');
+        setIndiaWardsLoading(false);
+      });
+  }, [weather?.lat, weather?.lon]);
+
+  // ── India Ward Polygons overlay on MapTiler/Mapbox ──────────────────────────
+  useEffect(() => {
+    if (!mapRef.current || !indiaWards.length) return;
+    const isMappls = mapProvider === 'mappls';
+    const map = mapRef.current;
+
+    // Clean up previous ward polygon layers
+    ['india-wards-fill', 'india-wards-stroke', 'india-wards-label'].forEach(id => {
+      try { if (map.getLayer?.(id)) map.removeLayer(id); } catch {}
+    });
+    ['india-wards-source'].forEach(id => {
+      try { if (map.getSource?.(id)) map.removeSource(id); } catch {}
+    });
+
+    if (!showWardPolygons) return;
+
+    if (!isMappls) {
+      // Build GeoJSON FeatureCollection from India ward features
+      const geojsonFeatures = indiaWards
+        .filter(w => w.geometry)
+        .map(w => {
+          // Enrich with ML ward risk data if available
+          const mlWard = wardReadiness?.find(m =>
+            Math.abs(m.lat - w.lat) < 0.008 && Math.abs(m.lon - w.lon) < 0.008
+          );
+          const grade = mlWard?.grade ?? 'C';
+          const gradeColors: Record<string, string> = {
+            A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
+          };
+          const fillColor = gradeColors[grade] ?? '#eab308';
+          return {
+            type: 'Feature' as const,
+            geometry: w.geometry,
+            properties: {
+              wardId:   w.wardId,
+              wardName: w.wardName,
+              cityName: w.cityName,
+              grade,
+              fillColor,
+              floodProbability: mlWard?.flood_probability ?? 0,
+            }
+          };
+        });
+
+      try {
+        map.addSource('india-wards-source', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: geojsonFeatures }
+        });
+
+        // Fill layer — semi-transparent risk color
+        map.addLayer({
+          id: 'india-wards-fill',
+          type: 'fill',
+          source: 'india-wards-source',
+          paint: {
+            'fill-color': ['get', 'fillColor'],
+            'fill-opacity': 0.18,
+          }
+        });
+
+        // Stroke layer
+        map.addLayer({
+          id: 'india-wards-stroke',
+          type: 'line',
+          source: 'india-wards-source',
+          paint: {
+            'line-color': ['get', 'fillColor'],
+            'line-width': 1.5,
+            'line-opacity': 0.7,
+          }
+        });
+
+        // Ward name labels
+        map.addLayer({
+          id: 'india-wards-label',
+          type: 'symbol',
+          source: 'india-wards-source',
+          layout: {
+            'text-field': ['get', 'wardName'],
+            'text-size': 9,
+            'text-allow-overlap': false,
+            'text-ignore-placement': false,
+          },
+          paint: {
+            'text-color': '#1e293b',
+            'text-halo-color': '#ffffff',
+            'text-halo-width': 1.5,
+          }
+        });
+
+        // Click for ward popup
+        map.on('click', 'india-wards-fill', (e: any) => {
+          const props = e.features[0].properties;
+          const PopupClass = mapProvider === 'maptiler' ? maptilersdk.Popup : mapboxgl.Popup;
+          new PopupClass({ maxWidth: '260px' })
+            .setLngLat(e.lngLat)
+            .setHTML(`
+              <div style="font-family:Inter,system-ui,sans-serif;padding:4px">
+                <div style="font-weight:900;font-size:12px;color:#0f172a;margin-bottom:4px">${props.wardName}</div>
+                <div style="font-size:10px;color:#64748b;margin-bottom:6px">${props.cityName}</div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <span style="background:${props.fillColor};color:#fff;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:800">Grade ${props.grade}</span>
+                  <span style="font-size:10px;color:#64748b">Flood Risk: ${(props.floodProbability * 100).toFixed(1)}%</span>
+                </div>
+                <div style="margin-top:4px;font-size:9px;color:#94a3b8">India Ward Boundaries · ESRI Living Atlas</div>
+              </div>
+            `)
+            .addTo(map);
+        });
+        map.on('mouseenter', 'india-wards-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'india-wards-fill', () => { map.getCanvas().style.cursor = ''; });
+      } catch (e) {
+        console.warn('[India Wards] Layer error', e);
+      }
+    }
+  }, [indiaWards, showWardPolygons, mapProvider, wardReadiness]);
+
+  // ── Getis-Ord Gi* computation whenever ward data or India ward boundaries change ─
+  useEffect(() => {
+    // Prefer ML ward readiness data (has actual flood_probability). Fall back to India Ward centroids.
+    let features: Array<{ lat: number; lon: number; value: number }> = [];
+
+    if (wardReadiness?.length) {
+      features = wardReadiness
+        .filter(w => w.lat && w.lon)
+        .map(w => ({ lat: w.lat, lon: w.lon, value: w.flood_probability }));
+    } else if (indiaWards.length) {
+      // Use uniform value = 0.5 as placeholder when no risk data is available
+      features = indiaWards.map(w => ({ lat: w.lat, lon: w.lon, value: 0.5 }));
+    }
+
+    if (!features.length) { setGiStarResults([]); return; }
     // Use ~3 km distance band (optimal for urban ward density ≈ 1–5 km²)
     const results = computeGiStar(features, 3.0);
     setGiStarResults(results);
-  }, [wardReadiness]);
+  }, [wardReadiness, indiaWards]);
+
+
 
   // ── Gi* Hot Spot Overlay on Map ─────────────────────────────────────────────
   useEffect(() => {
