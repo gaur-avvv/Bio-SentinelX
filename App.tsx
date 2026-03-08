@@ -246,12 +246,22 @@ const AppInner: React.FC = () => {
   useEffect(() => { localStorage.setItem('biosentinel_maptiler_key', mapTilerKey); }, [mapTilerKey]);
   useEffect(() => { localStorage.setItem('biosentinel_mapbox_token', mapboxToken); }, [mapboxToken]);
 
-  // Dynamically load Map SDK scripts when map provider or tokens change
   useEffect(() => {
-    // Remove existing scripts to swap providers cleanly
+    // Remove existing map SDK scripts to swap providers cleanly
     ['mappls-sdk-script', 'maptiler-sdk-script', 'maplibre-sdk-script', 'mapbox-sdk-script'].forEach(id => {
       document.getElementById(id)?.remove();
     });
+
+    const getOrCreateLink = (id: string): HTMLLinkElement => {
+      let link = document.getElementById(id) as HTMLLinkElement | null;
+      if (!link) {
+        link = document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+      return link;
+    };
 
     if (mapProvider === 'mappls' && mapplsToken) {
       const script = document.createElement('script');
@@ -259,56 +269,35 @@ const AppInner: React.FC = () => {
       script.src = `https://sdk.mappls.com/map/sdk/web?v=3.0&access_token=${mapplsToken}&libraries=geoanalytics`;
       script.defer = true;
       document.head.appendChild(script);
+      getOrCreateLink('map-provider-css').href = 'https://sdk.mappls.com/map/sdk/web/styles/styles.css';
 
-      // Load Mappls CSS
-      let link = document.getElementById('map-provider-css') as HTMLLinkElement;
-      if (!link) {
-        link = document.createElement('link');
-        link.id = 'map-provider-css';
-        link.rel = 'stylesheet';
-        document.head.appendChild(link);
-      }
-      link.href = 'https://sdk.mappls.com/map/sdk/web/styles/styles.css';
     } else if (mapProvider === 'maptiler' && mapTilerKey) {
-      // Load MapLibre GL JS + MapTiler SDK
+      // MapLibre GL JS (base engine for MapTiler SDK)
       const maplibreScript = document.createElement('script');
       maplibreScript.id = 'maplibre-sdk-script';
-      maplibreScript.src = 'https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js';
+      maplibreScript.src = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js';
       maplibreScript.defer = true;
       document.head.appendChild(maplibreScript);
 
+      // MapTiler SDK
       const maptilerScript = document.createElement('script');
       maptilerScript.id = 'maptiler-sdk-script';
-      maptilerScript.src = `https://cdn.maptiler.com/maptiler-sdk-js/latest/maptiler-sdk.umd.js`;
+      maptilerScript.src = 'https://cdn.maptiler.com/maptiler-sdk-js/latest/maptiler-sdk.umd.js';
       maptilerScript.defer = true;
       document.head.appendChild(maptilerScript);
 
-      // Load CSS
-      let link = document.getElementById('map-provider-css') as HTMLLinkElement;
-      if (!link) {
-        link = document.createElement('link');
-        link.id = 'map-provider-css';
-        link.rel = 'stylesheet';
-        document.head.appendChild(link);
-      }
-      link.href = 'https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css';
+      // MapLibre CSS (required)
+      getOrCreateLink('map-provider-css').href = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css';
+      // MapTiler SDK CSS (optional but improves controls)
+      getOrCreateLink('map-provider-css-2').href = 'https://cdn.maptiler.com/maptiler-sdk-js/latest/maptiler-sdk.css';
+
     } else if (mapProvider === 'mapbox' && mapboxToken) {
-      // Load Mapbox SDK
       const mapboxScript = document.createElement('script');
       mapboxScript.id = 'mapbox-sdk-script';
       mapboxScript.src = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js';
       mapboxScript.defer = true;
       document.head.appendChild(mapboxScript);
-
-      // Load CSS
-      let link = document.getElementById('map-provider-css') as HTMLLinkElement;
-      if (!link) {
-        link = document.createElement('link');
-        link.id = 'map-provider-css';
-        link.rel = 'stylesheet';
-        document.head.appendChild(link);
-      }
-      link.href = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css';
+      getOrCreateLink('map-provider-css').href = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css';
     }
   }, [mapProvider, mapplsToken, mapTilerKey, mapboxToken]);
 
@@ -646,6 +635,7 @@ const AppInner: React.FC = () => {
                 mapProvider={mapProvider}
                 mapplsToken={mapplsToken}
                 mapTilerKey={mapTilerKey}
+                mapboxToken={mapboxToken}
               />
             ) : view === 'assistant' ? (
               <BioXAssistant

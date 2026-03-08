@@ -57,8 +57,8 @@ export interface SettingsPageProps {
   setMlApiKey: (key: string) => void;
   mapplsToken: string;
   setMapplsToken: (key: string) => void;
-  mapProvider: 'mappls' | 'maptiler';
-  setMapProvider: (p: 'mappls' | 'maptiler') => void;
+  mapProvider: 'mappls' | 'maptiler' | 'mapbox';
+  setMapProvider: (p: 'mappls' | 'maptiler' | 'mapbox') => void;
   mapTilerKey: string;
   setMapTilerKey: (key: string) => void;
   mapboxToken: string;
