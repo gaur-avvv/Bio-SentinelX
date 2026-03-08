@@ -270,7 +270,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       // mGIS GeoAnalytics Polygon layer (if we have extracted numbers)
       if (wardIdsForApi.length > 0 && typeof mappls.geoAnalytics !== 'undefined' && showWardMarkers) {
         const geoParams = {
-          "AccessToken": "nzakkmhibkqugncpxygnqqvynhpizagefvpn", 
+          "AccessToken": import.meta.env.VITE_MAPPLS_TOKEN, 
           "GeoBoundType": "ward_no",
           "GeoBound": wardIdsForApi,
           "Attribute": "t_p",
@@ -317,7 +317,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           if (typeof mappls.geoAnalytics !== 'undefined' && wardIdsForApi.length > 0) {
             // Attempt to use mGIS getBounds
              const geoParams = {
-               "AccessToken": "nzakkmhibkqugncpxygnqqvynhpizagefvpn",
+               "AccessToken": import.meta.env.VITE_MAPPLS_TOKEN,
                "GeoBoundType": "ward_no",
                "GeoBound": wardIdsForApi,
              };

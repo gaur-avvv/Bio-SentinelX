@@ -790,7 +790,7 @@ interface MapplsRevGeoResult {
  */
 export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
   try {
-    const token = 'nzakkmhibkqugncpxygnqqvynhpizagefvpn';
+    const token = import.meta.env.VITE_MAPPLS_TOKEN;
     const url = `https://apis.mappls.com/advancedmaps/v1/${token}/rev_geocode?lat=${lat}&lng=${lon}`;
     
     const res = await fetch(url);
