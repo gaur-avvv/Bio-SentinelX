@@ -61,6 +61,8 @@ export interface SettingsPageProps {
   setMapProvider: (p: 'mappls' | 'maptiler') => void;
   mapTilerKey: string;
   setMapTilerKey: (key: string) => void;
+  mapboxToken: string;
+  setMapboxToken: (key: string) => void;
   notificationSettings: NotificationSettings;
   setNotificationSettings: (s: NotificationSettings) => void;
   emailAlertSettings: EmailAlertSettings;
@@ -148,6 +150,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
   mlApiKey, setMlApiKey, mapplsToken, setMapplsToken,
   mapProvider, setMapProvider, mapTilerKey, setMapTilerKey,
+  mapboxToken, setMapboxToken,
   notificationSettings, setNotificationSettings,
   emailAlertSettings, setEmailAlertSettings, weather,
 }) => {
@@ -502,7 +505,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="space-y-1.5">
                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Map Provider</span>
                 <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-                  {(['mappls', 'maptiler'] as const).map(p => (
+                  {(['mappls', 'maptiler', 'mapbox'] as const).map(p => (
                     <button
                       key={p}
                       onClick={() => setMapProvider(p)}
@@ -512,12 +515,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
                       }`}
                     >
-                      {p === 'mappls' ? 'Mappls' : 'MapTiler'}
+                      {p === 'mappls' ? 'Mappls' : p === 'maptiler' ? 'MapTiler' : 'Mapbox'}
                     </button>
                   ))}
                 </div>
               </div>
-
               {mapProvider === 'mappls' ? (
                 <div className="animate-fade-in">
                   <KeyInput
@@ -529,7 +531,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     note="Required for interactive ward-level flood maps in India. Get a free key at their portal."
                   />
                 </div>
-              ) : (
+              ) : mapProvider === 'maptiler' ? (
                 <div className="animate-fade-in">
                   <KeyInput
                     label="MapTiler API Key"
@@ -538,6 +540,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     placeholder="Enter MapTiler API Key…"
                     getKeyUrl="https://cloud.maptiler.com/account/keys/"
                     note="Global vector maps & terrain data. Get a free key at MapTiler Cloud."
+                  />
+                </div>
+              ) : (
+                <div className="animate-fade-in">
+                  <KeyInput
+                    label="Mapbox Access Token"
+                    value={mapboxToken}
+                    onChange={setMapboxToken}
+                    placeholder="Enter Mapbox public token…"
+                    getKeyUrl="https://account.mapbox.com/access-tokens/"
+                    note="Industry-standard vector maps. Get a free public token at Mapbox Account."
                   />
                 </div>
               )}

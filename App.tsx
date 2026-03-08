@@ -130,11 +130,14 @@ const AppInner: React.FC = () => {
   const [mapplsToken, setMapplsToken] = useState<string>(
     () => localStorage.getItem('biosentinel_mappls_token') || import.meta.env.VITE_MAPPLS_TOKEN || ''
   );
-  const [mapProvider, setMapProvider] = useState<'mappls' | 'maptiler'>(
-    () => (localStorage.getItem('biosentinel_map_provider') as 'mappls' | 'maptiler') || 'mappls'
+  const [mapProvider, setMapProvider] = useState<'mappls' | 'maptiler' | 'mapbox'>(
+    () => (localStorage.getItem('biosentinel_map_provider') as 'mappls' | 'maptiler' | 'mapbox') || 'mappls'
   );
   const [mapTilerKey, setMapTilerKey] = useState<string>(
     () => localStorage.getItem('biosentinel_maptiler_key') || ''
+  );
+  const [mapboxToken, setMapboxToken] = useState<string>(
+    () => localStorage.getItem('biosentinel_mapbox_token') || ''
   );
 
   // ── Notification Settings ──────────────────────────────────────────────────
@@ -241,11 +244,12 @@ const AppInner: React.FC = () => {
   useEffect(() => { localStorage.setItem('biosentinel_mappls_token', mapplsToken); }, [mapplsToken]);
   useEffect(() => { localStorage.setItem('biosentinel_map_provider', mapProvider); }, [mapProvider]);
   useEffect(() => { localStorage.setItem('biosentinel_maptiler_key', mapTilerKey); }, [mapTilerKey]);
+  useEffect(() => { localStorage.setItem('biosentinel_mapbox_token', mapboxToken); }, [mapboxToken]);
 
   // Dynamically load Map SDK scripts when map provider or tokens change
   useEffect(() => {
     // Remove existing scripts to swap providers cleanly
-    ['mappls-sdk-script', 'maptiler-sdk-script', 'maplibre-sdk-script'].forEach(id => {
+    ['mappls-sdk-script', 'maptiler-sdk-script', 'maplibre-sdk-script', 'mapbox-sdk-script'].forEach(id => {
       document.getElementById(id)?.remove();
     });
 
@@ -288,8 +292,25 @@ const AppInner: React.FC = () => {
         document.head.appendChild(link);
       }
       link.href = 'https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css';
+    } else if (mapProvider === 'mapbox' && mapboxToken) {
+      // Load Mapbox SDK
+      const mapboxScript = document.createElement('script');
+      mapboxScript.id = 'mapbox-sdk-script';
+      mapboxScript.src = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js';
+      mapboxScript.defer = true;
+      document.head.appendChild(mapboxScript);
+
+      // Load CSS
+      let link = document.getElementById('map-provider-css') as HTMLLinkElement;
+      if (!link) {
+        link = document.createElement('link');
+        link.id = 'map-provider-css';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+      link.href = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css';
     }
-  }, [mapProvider, mapplsToken, mapTilerKey]);
+  }, [mapProvider, mapplsToken, mapTilerKey, mapboxToken]);
 
   // Derive the active API key based on provider
   const aiKey = aiProvider === 'groq' ? groqKey
@@ -678,6 +699,8 @@ const AppInner: React.FC = () => {
                 setMapProvider={setMapProvider}
                 mapTilerKey={mapTilerKey}
                 setMapTilerKey={setMapTilerKey}
+                mapboxToken={mapboxToken}
+                setMapboxToken={setMapboxToken}
                 notificationSettings={notificationSettings}
                 setNotificationSettings={setNotificationSettings}
                 emailAlertSettings={emailAlertSettings}

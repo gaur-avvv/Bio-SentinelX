@@ -19,6 +19,7 @@ import { WeatherData } from '../types';
 declare const mappls: any;
 declare const maptilersdk: any;
 declare const maplibregl: any;
+declare const mapboxgl: any;
 import {
   fetchFloodData,
   computeFloodRisk,
@@ -52,9 +53,10 @@ interface FloodPredictionProps {
   aiProvider?: string;
   aiModel?: string;
   aiKey?: string;
-  mapProvider?: 'mappls' | 'maptiler';
+  mapProvider?: 'mappls' | 'maptiler' | 'mapbox';
   mapplsToken?: string;
   mapTilerKey?: string;
+  mapboxToken?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -107,7 +109,7 @@ function max(nums: number[]): number | null {
 
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
-  mapProvider = 'mappls', mapplsToken, mapTilerKey,
+  mapProvider = 'mappls', mapplsToken, mapTilerKey, mapboxToken,
 }) => {
   // ── Cache ───────────────────────────────────────────────────────────────────
   const { flood: floodCache, setFlood } = useDataCache();
@@ -189,8 +191,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   useEffect(() => {
     if (!wardReadiness?.length || !wardMapContainerRef.current) return;
     const isMappls = mapProvider === 'mappls';
+    const isMapbox = mapProvider === 'mapbox';
     if (isMappls && typeof mappls === 'undefined') return;
-    if (!isMappls && typeof maptilersdk === 'undefined') return;
+    if (!isMappls && mapProvider === 'maptiler' && typeof maptilersdk === 'undefined') return;
+    if (isMapbox && typeof mapboxgl === 'undefined') return;
 
     const gradeColor: Record<string, string> = {
       A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
@@ -283,6 +287,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 },
                 htmlPopup: popupHtml,
               });
+            } else if (mapProvider === 'mapbox') {
+              // Mapbox marker
+              const el = document.createElement('div');
+              el.className = 'ward-marker-pin';
+              el.innerHTML = `<img src="${makeSvgUrl(w.readiness_grade)}" width="34" height="34" style="cursor:pointer; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1))" />`;
+              
+              marker = new mapboxgl.Marker({ element: el })
+                .setLngLat([w.lon, w.lat])
+                .setPopup(new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml))
+                .addTo(map);
             } else {
               // MapTiler / MapLibre marker
               const el = document.createElement('div');
@@ -389,6 +403,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             zoom: 11,
           });
           mapRef.current.on('load', renderWards);
+        } else if (mapProvider === 'mapbox') {
+          // Initialize Mapbox SDK
+          mapboxgl.accessToken = mapboxToken;
+          mapRef.current = new mapboxgl.Map({
+            container: wardMapContainerRef.current,
+            style: isSatellite ? 'mapbox://styles/mapbox/satellite-v9' : 'mapbox://styles/mapbox/streets-v11',
+            center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
+            zoom: 11,
+          });
+          mapRef.current.on('load', renderWards);
         }
       } catch (e) {
         console.error(`[Map] ${mapProvider} init error`, e);
@@ -396,13 +420,15 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     } else {
       renderWards();
     }
-  }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers, mapProvider, mapTilerKey]);
+  }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers, mapProvider, mapTilerKey, mapboxToken]);
 
   // ── Hotspot circles + heatmap whenever hotspots data changes ───────────────
   useEffect(() => {
     const isMappls = mapProvider === 'mappls';
+    const isMapbox = mapProvider === 'mapbox';
     if (isMappls && typeof mappls === 'undefined') return;
-    if (!isMappls && typeof maptilersdk === 'undefined') return;
+    if (!isMappls && mapProvider === 'maptiler' && typeof maptilersdk === 'undefined') return;
+    if (isMapbox && typeof mapboxgl === 'undefined') return;
     if (!mapRef.current) return;
 
     const map = mapRef.current;
@@ -491,7 +517,8 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         
         // Add click listener for popups
         map.on('click', 'hotspot-circles-layer', (e: any) => {
-          new maptilersdk.Popup()
+          const PopupClass = mapProvider === 'maptiler' ? maptilersdk.Popup : mapboxgl.Popup;
+          new PopupClass()
             .setLngLat(e.lngLat)
             .setHTML(e.features[0].properties.popup)
             .addTo(map);
@@ -571,9 +598,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     try {
       if (mapProvider === 'mappls') {
         map.setMapFeature({ mapType: isSatellite ? "satellite" : "standard" });
-      } else {
-        // MapTiler
+      } else if (mapProvider === 'maptiler') {
         map.setStyle(isSatellite ? maptilersdk.MapStyle.SATELLITE : maptilersdk.MapStyle.STREETS);
+      } else {
+        // Mapbox
+        map.setStyle(isSatellite ? 'mapbox://styles/mapbox/satellite-v9' : 'mapbox://styles/mapbox/streets-v11');
       }
     } catch (e) {
       console.warn(`[Map] ${mapProvider} style toggle error`, e);
