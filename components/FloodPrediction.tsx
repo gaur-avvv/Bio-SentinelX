@@ -144,6 +144,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showHotspotZones, setShowHotspotZones] = useState(true);
   const [showWardMarkers, setShowWardMarkers] = useState(true);
+  const [isSatellite, setIsSatellite] = useState(false);
 
   const wardMapContainerRef  = useRef<HTMLDivElement | null>(null);
   const mapplsMapRef         = useRef<any>(null);      // mappls.Map instance
@@ -340,6 +341,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
           zoom: 11,
           zoomControl: true,
+          mapType: isSatellite ? "satellite" : undefined,
         });
         mapplsMapRef.current.on('load', renderWards);
       } catch (e) {
@@ -439,6 +441,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     }
     
   }, [hotspots, showHeatmap, showHotspotZones]);
+
+  // ── Mappls map type toggle (Satellite vs Standard) ───────────────────────
+  useEffect(() => {
+    if (!mapplsMapRef.current) return;
+    try {
+      mapplsMapRef.current.setMapFeature({ mapType: isSatellite ? "satellite" : "standard" });
+    } catch (e) {
+      console.warn('[Mappls] Failed to toggle map type', e);
+    }
+  }, [isSatellite]);
 
   // ── Cleanup Mappls map when component unmounts ───────────────────────────
   useEffect(() => {
@@ -1587,10 +1599,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 Risk Heatmap
               </button>
               <button
-                onClick={() => setShowHotspotZones(!showHotspotZones)}
-                className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors flex items-center gap-1 ${showHotspotZones ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-50 text-slate-400 border-slate-200'} hover:bg-slate-100`}
+                onClick={() => setIsSatellite(!isSatellite)}
+                className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors flex items-center gap-1 ${isSatellite ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-slate-50 text-slate-400 border-slate-200'} hover:bg-slate-100`}
               >
-                Hotspot Zones
+                mGIS SAT View
               </button>
             </div>
           </div>
