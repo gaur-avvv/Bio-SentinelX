@@ -55,6 +55,12 @@ export interface SettingsPageProps {
   setOpenWeatherKey: (key: string) => void;
   mlApiKey: string;
   setMlApiKey: (key: string) => void;
+  mapplsToken: string;
+  setMapplsToken: (key: string) => void;
+  mapProvider: 'mappls' | 'maptiler';
+  setMapProvider: (p: 'mappls' | 'maptiler') => void;
+  mapTilerKey: string;
+  setMapTilerKey: (key: string) => void;
   notificationSettings: NotificationSettings;
   setNotificationSettings: (s: NotificationSettings) => void;
   emailAlertSettings: EmailAlertSettings;
@@ -140,7 +146,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   openrouterKey, setOpenrouterKey, siliconflowKey, setSiliconflowKey, cerebrasKey, setCerebrasKey,
   aiProvider, setAiProvider, aiModel, setAiModel,
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
-  mlApiKey, setMlApiKey,
+  mlApiKey, setMlApiKey, mapplsToken, setMapplsToken,
+  mapProvider, setMapProvider, mapTilerKey, setMapTilerKey,
   notificationSettings, setNotificationSettings,
   emailAlertSettings, setEmailAlertSettings, weather,
 }) => {
@@ -485,11 +492,56 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   value={openWeatherKey}
                   onChange={setOpenWeatherKey}
                   placeholder="Enter OpenWeather key…"
-                  getKeyUrl="https://home.openweathermap.org/api_keys"
                   note="Required when OpenWeather is active. Stored locally in your browser."
                 />
               </div>
             )}
+
+            {/* Map Provider Selection */}
+            <div className="mt-6 space-y-4">
+              <div className="space-y-1.5">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Map Provider</span>
+                <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
+                  {(['mappls', 'maptiler'] as const).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setMapProvider(p)}
+                      className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        mapProvider === p
+                          ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-300 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                      }`}
+                    >
+                      {p === 'mappls' ? 'Mappls' : 'MapTiler'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {mapProvider === 'mappls' ? (
+                <div className="animate-fade-in">
+                  <KeyInput
+                    label="Mappls (MapmyIndia) API Key"
+                    value={mapplsToken}
+                    onChange={setMapplsToken}
+                    placeholder="Enter Mappls Web SDK token…"
+                    getKeyUrl="https://about.mappls.com/api/"
+                    note="Required for interactive ward-level flood maps in India. Get a free key at their portal."
+                  />
+                </div>
+              ) : (
+                <div className="animate-fade-in">
+                  <KeyInput
+                    label="MapTiler API Key"
+                    value={mapTilerKey}
+                    onChange={setMapTilerKey}
+                    placeholder="Enter MapTiler API Key…"
+                    getKeyUrl="https://cloud.maptiler.com/account/keys/"
+                    note="Global vector maps & terrain data. Get a free key at MapTiler Cloud."
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </Card>
 

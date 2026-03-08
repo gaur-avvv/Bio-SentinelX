@@ -127,6 +127,15 @@ const AppInner: React.FC = () => {
   const [llamaCloudKey, setLlamaCloudKey] = useState<string>(
     () => localStorage.getItem('biosentinel_llamacloud_key') || process.env.LLAMACLOUD_KEY || ''
   );
+  const [mapplsToken, setMapplsToken] = useState<string>(
+    () => localStorage.getItem('biosentinel_mappls_token') || import.meta.env.VITE_MAPPLS_TOKEN || ''
+  );
+  const [mapProvider, setMapProvider] = useState<'mappls' | 'maptiler'>(
+    () => (localStorage.getItem('biosentinel_map_provider') as 'mappls' | 'maptiler') || 'mappls'
+  );
+  const [mapTilerKey, setMapTilerKey] = useState<string>(
+    () => localStorage.getItem('biosentinel_maptiler_key') || ''
+  );
 
   // ── Notification Settings ──────────────────────────────────────────────────
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => {
@@ -229,6 +238,58 @@ const AppInner: React.FC = () => {
   useEffect(() => { if (weather) localStorage.setItem('biosentinel_weather_data', JSON.stringify(weather)); }, [weather]);
   useEffect(() => { localStorage.setItem('biosentinel_notification_settings', JSON.stringify(notificationSettings)); }, [notificationSettings]);
   useEffect(() => { localStorage.setItem('biosentinel_email_alert_settings', JSON.stringify(emailAlertSettings)); }, [emailAlertSettings]);
+  useEffect(() => { localStorage.setItem('biosentinel_mappls_token', mapplsToken); }, [mapplsToken]);
+  useEffect(() => { localStorage.setItem('biosentinel_map_provider', mapProvider); }, [mapProvider]);
+  useEffect(() => { localStorage.setItem('biosentinel_maptiler_key', mapTilerKey); }, [mapTilerKey]);
+
+  // Dynamically load Map SDK scripts when map provider or tokens change
+  useEffect(() => {
+    // Remove existing scripts to swap providers cleanly
+    ['mappls-sdk-script', 'maptiler-sdk-script', 'maplibre-sdk-script'].forEach(id => {
+      document.getElementById(id)?.remove();
+    });
+
+    if (mapProvider === 'mappls' && mapplsToken) {
+      const script = document.createElement('script');
+      script.id = 'mappls-sdk-script';
+      script.src = `https://sdk.mappls.com/map/sdk/web?v=3.0&access_token=${mapplsToken}&libraries=geoanalytics`;
+      script.defer = true;
+      document.head.appendChild(script);
+
+      // Load Mappls CSS
+      let link = document.getElementById('map-provider-css') as HTMLLinkElement;
+      if (!link) {
+        link = document.createElement('link');
+        link.id = 'map-provider-css';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+      link.href = 'https://sdk.mappls.com/map/sdk/web/styles/styles.css';
+    } else if (mapProvider === 'maptiler' && mapTilerKey) {
+      // Load MapLibre GL JS + MapTiler SDK
+      const maplibreScript = document.createElement('script');
+      maplibreScript.id = 'maplibre-sdk-script';
+      maplibreScript.src = 'https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js';
+      maplibreScript.defer = true;
+      document.head.appendChild(maplibreScript);
+
+      const maptilerScript = document.createElement('script');
+      maptilerScript.id = 'maptiler-sdk-script';
+      maptilerScript.src = `https://cdn.maptiler.com/maptiler-sdk-js/latest/maptiler-sdk.umd.js`;
+      maptilerScript.defer = true;
+      document.head.appendChild(maptilerScript);
+
+      // Load CSS
+      let link = document.getElementById('map-provider-css') as HTMLLinkElement;
+      if (!link) {
+        link = document.createElement('link');
+        link.id = 'map-provider-css';
+        link.rel = 'stylesheet';
+        document.head.appendChild(link);
+      }
+      link.href = 'https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css';
+    }
+  }, [mapProvider, mapplsToken, mapTilerKey]);
 
   // Derive the active API key based on provider
   const aiKey = aiProvider === 'groq' ? groqKey
@@ -561,6 +622,9 @@ const AppInner: React.FC = () => {
                 aiProvider={aiProvider}
                 aiModel={aiModel}
                 aiKey={aiKey}
+                mapProvider={mapProvider}
+                mapplsToken={mapplsToken}
+                mapTilerKey={mapTilerKey}
               />
             ) : view === 'assistant' ? (
               <BioXAssistant
@@ -608,6 +672,12 @@ const AppInner: React.FC = () => {
                 setOpenWeatherKey={setOpenWeatherKey}
                 mlApiKey={mlApiKey}
                 setMlApiKey={setMlApiKey}
+                mapplsToken={mapplsToken}
+                setMapplsToken={setMapplsToken}
+                mapProvider={mapProvider}
+                setMapProvider={setMapProvider}
+                mapTilerKey={mapTilerKey}
+                setMapTilerKey={setMapTilerKey}
                 notificationSettings={notificationSettings}
                 setNotificationSettings={setNotificationSettings}
                 emailAlertSettings={emailAlertSettings}

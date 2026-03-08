@@ -788,10 +788,11 @@ interface MapplsRevGeoResult {
  * Reverse-geocode a lat/lon using Mappls mGIS API to get a human-readable area name.
  * Extremely accurate for Indian sub-localities (Wards, Blocks).
  */
-export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
+export async function reverseGeocode(lat: number, lon: number, token?: string): Promise<string | null> {
   try {
-    const token = import.meta.env.VITE_MAPPLS_TOKEN;
-    const url = `https://apis.mappls.com/advancedmaps/v1/${token}/rev_geocode?lat=${lat}&lng=${lon}`;
+    const finalToken = token || import.meta.env.VITE_MAPPLS_TOKEN;
+    if (!finalToken) return null;
+    const url = `https://apis.mappls.com/advancedmaps/v1/${finalToken}/rev_geocode?lat=${lat}&lng=${lon}`;
     
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -820,7 +821,8 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string |
  * Can be run in parallel since API key has higher limits, but we keep small delay purely for UI smooth rendering.
  */
 export async function enrichWardsWithGeoNames(
-  wards: WardReadinessItem[]
+  wards: WardReadinessItem[],
+  token?: string
 ): Promise<WardReadinessItem[]> {
   const enriched: WardReadinessItem[] = [];
   
@@ -829,7 +831,7 @@ export async function enrichWardsWithGeoNames(
     if (w.ward_name && !w.ward_name.startsWith('ward_') && !w.ward_name.match(/^[0-9a-f-]+$/i)) {
       return w; // Already named
     }
-    const geoName = await reverseGeocode(w.lat, w.lon);
+    const geoName = await reverseGeocode(w.lat, w.lon, token);
     
     // If geoName is quite long (full address), split by comma and take first 2 parts for brevity
     let finalName = geoName ?? w.ward_name ?? w.ward_id;

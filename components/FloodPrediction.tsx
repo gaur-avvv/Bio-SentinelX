@@ -15,8 +15,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { WeatherData } from '../types';
 
-// Mappls (MapmyIndia) SDK global — loaded via CDN in index.html
+// Map SDK globals — loaded dynamically via script tags in App.tsx
 declare const mappls: any;
+declare const maptilersdk: any;
+declare const maplibregl: any;
 import {
   fetchFloodData,
   computeFloodRisk,
@@ -50,6 +52,9 @@ interface FloodPredictionProps {
   aiProvider?: string;
   aiModel?: string;
   aiKey?: string;
+  mapProvider?: 'mappls' | 'maptiler';
+  mapplsToken?: string;
+  mapTilerKey?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -102,6 +107,7 @@ function max(nums: number[]): number | null {
 
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
+  mapProvider = 'mappls', mapplsToken, mapTilerKey,
 }) => {
   // ── Cache ───────────────────────────────────────────────────────────────────
   const { flood: floodCache, setFlood } = useDataCache();
@@ -147,10 +153,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [isSatellite, setIsSatellite] = useState(false);
 
   const wardMapContainerRef  = useRef<HTMLDivElement | null>(null);
-  const mapplsMapRef         = useRef<any>(null);      // mappls.Map instance
-  const mapplsMarkersRef     = useRef<any[]>([]);      // ward marker instances
-  const mapplsCirclesRef     = useRef<any[]>([]);      // hotspot circle instances
-  const mapplsHeatmapRef     = useRef<any>(null);      // mappls.HeatmapLayer instance
+  const mapRef               = useRef<any>(null);      // Map instance (mappls or maplibre)
+  const markersRef           = useRef<any[]>([]);      // Marker instances
+  const circlesRef           = useRef<any[]>([]);      // Hotspot circle/polygon instances
+  const heatmapRef           = useRef<any>(null);      // Heatmap layer instance
+
+  // Legend aliases for backward compatibility with existing code
+  const mapplsMapRef         = mapRef;
+  const mapplsMarkersRef     = markersRef;
+  const mapplsCirclesRef     = circlesRef;
+  const mapplsHeatmapRef     = heatmapRef;
   // Keep legacy alias names so later JSX refs still compile
   const leafletMapRef        = mapplsMapRef;
   const leafletMarkersRef    = mapplsMarkersRef;
@@ -176,7 +188,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   // ── Mappls: init map + ward markers whenever wardReadiness changes ───────────
   useEffect(() => {
     if (!wardReadiness?.length || !wardMapContainerRef.current) return;
-    if (typeof mappls === 'undefined') return;
+    const isMappls = mapProvider === 'mappls';
+    if (isMappls && typeof mappls === 'undefined') return;
+    if (!isMappls && typeof maptilersdk === 'undefined') return;
 
     const gradeColor: Record<string, string> = {
       A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
@@ -196,10 +210,18 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       mapplsMarkersRef.current = [];
 
       // Remove existing ward polygon layer if any
-      const map = mapplsMapRef.current;
-      if (map && map.getLayer && map.getLayer('mgis-ward-layer')) {
-        map.removeLayer('mgis-ward-layer');
-        map.removeSource('mgis-ward-source');
+      const map = mapRef.current;
+      if (!map) return;
+
+      if (isMappls) {
+        if (map.getLayer && map.getLayer('mgis-ward-layer')) {
+          map.removeLayer('mgis-ward-layer');
+          map.removeSource('mgis-ward-source');
+        }
+      } else {
+        // MapTiler/MapLibre cleanup
+        if (map.getLayer?.('ward-poly-layer')) map.removeLayer('ward-poly-layer');
+        if (map.getSource?.('ward-poly-source')) map.removeSource('ward-poly-source');
       }
 
       // Arrays for the batch getWard query
@@ -208,10 +230,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         A: '22c55e', B: '84cc16', C: 'eab308', D: 'f97316', F: 'dc2626',
       };
 
-      // Ensure geoAnalytics is loaded
-      if (typeof mappls.geoAnalytics === 'undefined') {
+      // Ensure geoAnalytics is loaded for Mappls
+      if (isMappls && typeof mappls.geoAnalytics === 'undefined') {
         console.warn('[Mappls] geoAnalytics library missing');
-        return;
       }
 
       wardReadiness.forEach(w => {
@@ -250,27 +271,40 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
         if (showWardMarkers) {
           try {
-            const marker = new mappls.Marker({
-              map: map,
-              position: { lat: w.lat, lng: w.lon },
-              icon: {
-                url: makeSvgUrl(w.readiness_grade),
-                size: { width: 34, height: 34 },
-                anchor: { x: 17, y: 17 },
-              },
-              htmlPopup: popupHtml,
-            });
-            mapplsMarkersRef.current.push(marker);
+            let marker: any;
+            if (isMappls) {
+              marker = new mappls.Marker({
+                map: map,
+                position: { lat: w.lat, lng: w.lon },
+                icon: {
+                  url: makeSvgUrl(w.readiness_grade),
+                  size: { width: 34, height: 34 },
+                  anchor: { x: 17, y: 17 },
+                },
+                htmlPopup: popupHtml,
+              });
+            } else {
+              // MapTiler / MapLibre marker
+              const el = document.createElement('div');
+              el.className = 'ward-marker-pin';
+              el.innerHTML = `<img src="${makeSvgUrl(w.readiness_grade)}" width="34" height="34" style="cursor:pointer; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1))" />`;
+              
+              marker = new maptilersdk.Marker({ element: el })
+                .setLngLat([w.lon, w.lat])
+                .setPopup(new maptilersdk.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml))
+                .addTo(map);
+            }
+            markersRef.current.push(marker);
           } catch (e) {
-            console.warn('[Mappls] Marker creation error', e);
+            console.warn('[Map] Marker creation error', e);
           }
         }
       });
 
-      // mGIS GeoAnalytics Polygon layer (if we have extracted numbers)
-      if (wardIdsForApi.length > 0 && typeof mappls.geoAnalytics !== 'undefined' && showWardMarkers) {
+      // mGIS GeoAnalytics Polygon layer (Mappls only)
+      if (isMappls && wardIdsForApi.length > 0 && typeof mappls.geoAnalytics !== 'undefined' && showWardMarkers) {
         const geoParams = {
-          "AccessToken": import.meta.env.VITE_MAPPLS_TOKEN, 
+          "AccessToken": mapplsToken, 
           "GeoBoundType": "ward_no",
           "GeoBound": wardIdsForApi,
           "Attribute": "t_p",
@@ -314,10 +348,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           const swLat = Math.min(...lats); const neLat = Math.max(...lats);
           const swLon = Math.min(...lons); const neLon = Math.max(...lons);
           
-          if (typeof mappls.geoAnalytics !== 'undefined' && wardIdsForApi.length > 0) {
+          if (isMappls && typeof mappls.geoAnalytics !== 'undefined' && wardIdsForApi.length > 0) {
             // Attempt to use mGIS getBounds
              const geoParams = {
-               "AccessToken": import.meta.env.VITE_MAPPLS_TOKEN,
+               "AccessToken": mapplsToken,
                "GeoBoundType": "ward_no",
                "GeoBound": wardIdsForApi,
              };
@@ -335,28 +369,43 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       }
     };
 
-    if (!mapplsMapRef.current) {
+    if (!mapRef.current) {
       try {
-        mapplsMapRef.current = new mappls.Map(wardMapContainerRef.current, {
-          center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
-          zoom: 11,
-          zoomControl: true,
-          mapType: isSatellite ? "satellite" : undefined,
-        });
-        mapplsMapRef.current.on('load', renderWards);
+        if (mapProvider === 'mappls') {
+          mapRef.current = new mappls.Map(wardMapContainerRef.current, {
+            center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
+            zoom: 11,
+            zoomControl: true,
+            mapType: isSatellite ? "satellite" : undefined,
+          });
+          mapRef.current.on('load', renderWards);
+        } else if (mapProvider === 'maptiler') {
+          // Initialize MapTiler SDK (which uses MapLibre under the hood)
+          maptilersdk.config.apiKey = mapTilerKey;
+          mapRef.current = new maptilersdk.Map({
+            container: wardMapContainerRef.current,
+            style: isSatellite ? maptilersdk.MapStyle.SATELLITE : maptilersdk.MapStyle.STREETS,
+            center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
+            zoom: 11,
+          });
+          mapRef.current.on('load', renderWards);
+        }
       } catch (e) {
-        console.error('[Mappls] Map init error', e);
+        console.error(`[Map] ${mapProvider} init error`, e);
       }
     } else {
       renderWards();
     }
-  }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers]);
+  }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers, mapProvider, mapTilerKey]);
 
-  // ── Mappls: hotspot circles + heatmap whenever hotspots data changes ────────
+  // ── Hotspot circles + heatmap whenever hotspots data changes ───────────────
   useEffect(() => {
-    if (typeof mappls === 'undefined' || !mapplsMapRef.current) return;
+    const isMappls = mapProvider === 'mappls';
+    if (isMappls && typeof mappls === 'undefined') return;
+    if (!isMappls && typeof maptilersdk === 'undefined') return;
+    if (!mapRef.current) return;
 
-    // Clear old circles
+    const map = mapRef.current;
     mapplsCirclesRef.current.forEach(c => { try { c.remove(); } catch { try { c.setMap(null); } catch {} } });
     mapplsCirclesRef.current = [];
 
@@ -373,12 +422,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     const riskLabel    = (p: number) =>
       p >= 0.85 ? 'CRITICAL' : p >= 0.65 ? 'HIGH' : p >= 0.40 ? 'MEDIUM' : 'LOW';
 
-    // ─ Transparent flood-risk circles (one per hotspot cell) ───────────────────
-    if (showHotspotZones) {
-      hotspots.hotspots.forEach(h => {
-        const col      = hotspotColor(h.flood_probability);
-        const radiusM  = Math.max(Math.sqrt(h.area_km2 * 1_000_000 / Math.PI), 400);
-      const popupHtml = `
+    const makeHotspotPopup = (h: any, col: string) => `
         <div style="font-family:Inter,system-ui,sans-serif;min-width:180px">
           <div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:6px">
             Flood Hotspot
@@ -391,30 +435,73 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             <tr><td style="color:#64748b;padding:2px 0">Dominant Factor</td><td style="font-weight:800;text-align:right">${h.dominant_factor.replace(/_/g,' ')}</td></tr>
           </table>
         </div>`;
-      try {
-        const circle = new mappls.Circle({
-          map: mapplsMapRef.current,
-          center: { lat: h.lat, lng: h.lon },
-          radius: radiusM,
-          fillColor: col,
-          fillOpacity: 0.22,
-          strokeColor: col,
-          strokeOpacity: 0.8,
-          strokeWidth: 2,
-          htmlPopup: popupHtml,
+
+    // ─ Transparent flood-risk circles (one per hotspot cell) ───────────────────
+    if (showHotspotZones) {
+      if (isMappls) {
+        hotspots.hotspots.forEach(h => {
+          const col      = hotspotColor(h.flood_probability);
+          const radiusM  = Math.max(Math.sqrt(h.area_km2 * 1_000_000 / Math.PI), 400);
+          try {
+            const circle = new mappls.Circle({
+              map: map,
+              center: { lat: h.lat, lng: h.lon },
+              radius: radiusM,
+              fillColor: col,
+              fillOpacity: 0.22,
+              strokeColor: col,
+              strokeOpacity: 0.8,
+              strokeWidth: 2,
+              htmlPopup: makeHotspotPopup(h, col),
+            });
+            circlesRef.current.push(circle);
+          } catch (e) { console.warn('[Mappls] Circle error', e); }
         });
-        mapplsCirclesRef.current.push(circle);
-      } catch (e) {
-        console.warn('[Mappls] Circle error', e);
+      } else {
+        // MapTiler/MapLibre circles via GeoJSON
+        const features = hotspots.hotspots.map(h => {
+          const col = hotspotColor(h.flood_probability);
+          return {
+            type: 'Feature' as const,
+            geometry: { type: 'Point' as const, coordinates: [h.lon, h.lat] },
+            properties: {
+              color: col,
+              radius: 20, // Pixel radius for MapLibre circle layer
+              popup: makeHotspotPopup(h, col),
+            }
+          };
+        });
+        
+        map.addSource('hotspot-circles-source', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features }
+        });
+        map.addLayer({
+          id: 'hotspot-circles-layer',
+          type: 'circle',
+          source: 'hotspot-circles-source',
+          paint: {
+            'circle-radius': ['get', 'radius'],
+            'circle-color': ['get', 'color'],
+            'circle-opacity': 0.25,
+            'circle-stroke-width': 2,
+            'circle-stroke-color': ['get', 'color']
+          }
+        });
+        
+        // Add click listener for popups
+        map.on('click', 'hotspot-circles-layer', (e: any) => {
+          new maptilersdk.Popup()
+            .setLngLat(e.lngLat)
+            .setHTML(e.features[0].properties.popup)
+            .addTo(map);
+        });
+        map.on('mouseenter', 'hotspot-circles-layer', () => { map.getCanvas().style.cursor = 'pointer'; });
+        map.on('mouseleave', 'hotspot-circles-layer', () => { map.getCanvas().style.cursor = ''; });
       }
-    });
     }
 
     // ─ Heatmap layer (flood probability intensity) ─────────────────────────
-    const pts = hotspots.hotspots.map(h => ({
-      lat: h.lat, lng: h.lon,
-      weight: h.flood_probability,
-    }));
     const floodGradient = [
       'rgba(59,130,246,0)',    // transparent (low risk)
       'rgba(59,130,246,0.8)',  // blue
@@ -423,34 +510,75 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       'rgba(239,68,68,1)',     // red
       'rgba(127,29,29,1)',     // dark-red (extreme)
     ];
-    try {
-      mapplsHeatmapRef.current = new mappls.HeatmapLayer({
-        map: mapplsMapRef.current,
-        data: pts,
-        gradient: floodGradient,
-        radius: 30,
-        opacity: 0.7,
-        fitbounds: false,
-      });
-    } catch (e) { console.warn('[Mappls] HeatmapLayer error', e); }
-    
-    // Toggle heatmap visibility via Mapbox style property if the object exposes it, else re-create
-    if (!showHeatmap && mapplsHeatmapRef.current) {
-        try { mapplsHeatmapRef.current.remove(); } catch {}
-        mapplsHeatmapRef.current = null;
-    }
-    
-  }, [hotspots, showHeatmap, showHotspotZones]);
 
-  // ── Mappls map type toggle (Satellite vs Standard) ───────────────────────
-  useEffect(() => {
-    if (!mapplsMapRef.current) return;
-    try {
-      mapplsMapRef.current.setMapFeature({ mapType: isSatellite ? "satellite" : "standard" });
-    } catch (e) {
-      console.warn('[Mappls] Failed to toggle map type', e);
+    if (showHeatmap) {
+      if (isMappls) {
+        const pts = hotspots.hotspots.map(h => ({
+          lat: h.lat, lng: h.lon,
+          weight: h.flood_probability,
+        }));
+        try {
+          heatmapRef.current = new mappls.HeatmapLayer({
+            map: map,
+            data: pts,
+            gradient: floodGradient,
+            radius: 30,
+            opacity: 0.7,
+            fitbounds: false,
+          });
+        } catch (e) { console.warn('[Mappls] HeatmapLayer error', e); }
+      } else {
+        // MapTiler/MapLibre Heatmap
+        map.addSource('flood-heatmap-source', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: hotspots.hotspots.map(h => ({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+              properties: { weight: h.flood_probability }
+            }))
+          }
+        });
+        map.addLayer({
+          id: 'flood-heatmap-layer',
+          type: 'heatmap',
+          source: 'flood-heatmap-source',
+          paint: {
+            'heatmap-weight': ['get', 'weight'],
+            'heatmap-intensity': 1,
+            'heatmap-color': [
+              'interpolate', ['linear'], ['heatmap-density'],
+              0, 'rgba(59,130,246,0)',
+              0.2, 'rgba(59,130,246,0.8)',
+              0.4, 'rgba(234,179,8,1)',
+              0.6, 'rgba(249,115,22,1)',
+              0.8, 'rgba(239,68,68,1)',
+              1, 'rgba(127,29,29,1)'
+            ],
+            'heatmap-radius': 30,
+            'heatmap-opacity': 0.7
+          }
+        });
+      }
     }
-  }, [isSatellite]);
+  }, [hotspots, showHeatmap, showHotspotZones, mapProvider]);
+
+  // ── Map type toggle (Satellite vs Standard) ─────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const map = mapRef.current;
+    try {
+      if (mapProvider === 'mappls') {
+        map.setMapFeature({ mapType: isSatellite ? "satellite" : "standard" });
+      } else {
+        // MapTiler
+        map.setStyle(isSatellite ? maptilersdk.MapStyle.SATELLITE : maptilersdk.MapStyle.STREETS);
+      }
+    } catch (e) {
+      console.warn(`[Map] ${mapProvider} style toggle error`, e);
+    }
+  }, [isSatellite, mapProvider]);
 
   // ── Cleanup Mappls map when component unmounts ───────────────────────────
   useEffect(() => {
