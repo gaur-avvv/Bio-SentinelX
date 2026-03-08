@@ -15,8 +15,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { WeatherData } from '../types';
 
-// Leaflet global (loaded via CDN in index.html)
-declare const L: any;
+// Mappls (MapmyIndia) SDK global — loaded via CDN in index.html
+declare const mappls: any;
 import {
   fetchFloodData,
   computeFloodRisk,
@@ -140,11 +140,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [hotspotsLoading, setHotspotsLoading] = useState(false);
   const [hotspotsError,   setHotspotsError]   = useState('');
 
-  // ── Ward map (Leaflet) refs ──────────────────────────────────────────────────
-  const wardMapContainerRef = useRef<HTMLDivElement | null>(null);
-  const leafletMapRef       = useRef<any>(null);
-  const leafletMarkersRef   = useRef<any[]>([]);
-  const leafletCirclesRef   = useRef<any[]>([]);
+  // ── Mappls map refs ─────────────────────────────────────────────────────────
+  const wardMapContainerRef  = useRef<HTMLDivElement | null>(null);
+  const mapplsMapRef         = useRef<any>(null);      // mappls.Map instance
+  const mapplsMarkersRef     = useRef<any[]>([]);      // ward marker instances
+  const mapplsCirclesRef     = useRef<any[]>([]);      // hotspot circle instances
+  const mapplsHeatmapRef     = useRef<any>(null);      // mappls.HeatmapLayer instance
+  // Keep legacy alias names so later JSX refs still compile
+  const leafletMapRef        = mapplsMapRef;
+  const leafletMarkersRef    = mapplsMarkersRef;
+  const leafletCirclesRef    = mapplsCirclesRef;
 
   // ── Geocoding loading state ─────────────────────────────────────────────
   const [geocoding, setGeocoding] = useState(false);
@@ -163,180 +168,192 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   useEffect(() => stopStatusPolling, [stopStatusPolling]);
 
-  // ── Leaflet unified map: ward pins + hotspot circles ──────────────────────
+  // ── Mappls: init map + ward markers whenever wardReadiness changes ───────────
   useEffect(() => {
-    if (!wardReadiness || wardReadiness.length === 0) return;
-    if (!wardMapContainerRef.current) return;
-    if (typeof L === 'undefined') return;
+    if (!wardReadiness?.length || !wardMapContainerRef.current) return;
+    if (typeof mappls === 'undefined') return;
 
-    // Grade colours
     const gradeColor: Record<string, string> = {
       A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
     };
-    // Hotspot risk level colours (probability-based)
-    const hotspotColor = (prob: number) =>
-      prob >= 0.85 ? '#dc2626' : prob >= 0.65 ? '#f97316' : prob >= 0.40 ? '#eab308' : '#3b82f6';
 
-    const makeWardIcon = (grade: string) =>
-      L.divIcon({
-        className: '',
-        html: `<div style="
-          width:32px;height:32px;border-radius:50%;display:flex;
-          align-items:center;justify-content:center;
-          background:${gradeColor[grade] ?? '#94a3b8'};
-          color:#fff;font-weight:900;font-size:12px;
-          border:3px solid rgba(255,255,255,0.9);
-          box-shadow:0 3px 12px rgba(0,0,0,0.3);
-          font-family:Inter,sans-serif;letter-spacing:-0.5px;
-        ">${grade}</div>`,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
-        popupAnchor: [0, -20],
+    /** Build a data-URI SVG circle used as the ward pin icon */
+    const makeSvgUrl = (grade: string) => {
+      const col  = gradeColor[grade] ?? '#94a3b8';
+      const svg  = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="34"><circle cx="17" cy="17" r="15" fill="${col}" stroke="white" stroke-width="3"/><text x="17" y="22" text-anchor="middle" font-size="13" font-weight="900" font-family="Inter,sans-serif" fill="white">${grade}</text></svg>`;
+      return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+    };
+
+    // ─ Init map once ──────────────────────────────────────────────────────────
+    const renderWards = () => {
+      // Clear previous markers
+      mapplsMarkersRef.current.forEach(m => { try { m.remove(); } catch { try { m.setMap(null); } catch {} } });
+      mapplsMarkersRef.current = [];
+
+      wardReadiness.forEach(w => {
+        if (!w.lat || !w.lon) return;
+        const col      = gradeColor[w.readiness_grade] ?? '#94a3b8';
+        const prob     = w.flood_probability;
+        const riskLabel = prob >= 0.80 ? 'CRITICAL' : prob >= 0.60 ? 'HIGH' : prob >= 0.35 ? 'MEDIUM' : prob >= 0.15 ? 'LOW' : 'SAFE';
+
+        const popupHtml = `
+          <div style="font-family:Inter,system-ui,sans-serif;min-width:220px;max-width:280px;padding:2px">
+            <div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:6px">${w.ward_name ?? w.ward_id}</div>
+            <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+              <span style="background:${col};color:#fff;padding:3px 10px;border-radius:9999px;font-size:10px;font-weight:800">Grade ${w.readiness_grade}</span>
+              <span style="border:1.5px solid ${col};color:${col};padding:3px 8px;border-radius:9999px;font-size:10px;font-weight:800">${riskLabel}</span>
+            </div>
+            <div style="background:#f8fafc;border-radius:10px;padding:8px;font-size:11px">
+              <table style="width:100%;border-collapse:collapse">
+                <tr><td style="color:#64748b;padding:3px 0">Flood Risk</td><td style="font-weight:900;text-align:right;color:${col}">${(prob * 100).toFixed(1)}%</td></tr>
+                <tr><td style="color:#64748b;padding:3px 0">Risk Score</td><td style="font-weight:900;text-align:right">${w.risk_score?.toFixed(1) ?? '—'}/100</td></tr>
+                <tr><td style="color:#64748b;padding:3px 0">Inundation Risk</td><td style="font-weight:900;text-align:right">${w.inundation_risk_score?.toFixed(1) ?? '—'}</td></tr>
+                <tr><td style="color:#64748b;padding:3px 0">Drainage Health</td><td style="font-weight:900;text-align:right">${w.drainage_health_score?.toFixed(1) ?? '—'}</td></tr>
+                <tr><td style="color:#64748b;padding:3px 0">Hotspots in Ward</td><td style="font-weight:900;text-align:right">${w.hotspot_count_in_ward}</td></tr>
+              </table>
+            </div>
+            ${w.recommended_actions?.length ? `
+              <div style="font-size:10px;font-weight:800;color:#374151;margin-top:8px;margin-bottom:3px">Recommended Actions:</div>
+              <ul style="margin:0 0 0 14px;padding:0;font-size:10px;color:#475569;line-height:1.7">${w.recommended_actions.slice(0, 4).map(a => `<li>${a}</li>`).join('')}</ul>` : ''}
+            <div style="font-size:9px;color:#94a3b8;margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0">${w.readiness_description}</div>
+          </div>`;
+
+        try {
+          const marker = new mappls.Marker({
+            map: mapplsMapRef.current,
+            position: { lat: w.lat, lng: w.lon },
+            icon: {
+              url: makeSvgUrl(w.readiness_grade),
+              size: { width: 34, height: 34 },
+              anchor: { x: 17, y: 17 },
+            },
+            htmlPopup: popupHtml,
+          });
+          mapplsMarkersRef.current.push(marker);
+        } catch (e) {
+          console.warn('[Mappls] Marker creation error', e);
+        }
       });
 
-    // Init map once
-    if (!leafletMapRef.current) {
-      leafletMapRef.current = L.map(wardMapContainerRef.current, {
-        attributionControl: true,
-        zoomControl: true,
-      });
-      // OpenStreetMap tiles (Carto light for cleaner look)
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/">CARTO</a>',
-        subdomains: 'abcd',
-        maxZoom: 19,
-      }).addTo(leafletMapRef.current);
+      // Fit map to all ward coords
+      const validWards = wardReadiness.filter(w => w.lat && w.lon);
+      if (validWards.length > 0) {
+        try {
+          const lats = validWards.map(w => w.lat);
+          const lons = validWards.map(w => w.lon);
+          const swLat = Math.min(...lats); const neLat = Math.max(...lats);
+          const swLon = Math.min(...lons); const neLon = Math.max(...lons);
+          mapplsMapRef.current.fitBounds([[swLon, swLat], [neLon, neLat]], { padding: { top: 40, bottom: 40, left: 40, right: 40 }, maxZoom: 14 });
+        } catch {
+          try {
+            const c = validWards[0];
+            mapplsMapRef.current.setCenter({ lat: c.lat, lng: c.lon }); mapplsMapRef.current.setZoom(11);
+          } catch {}
+        }
+      }
+    };
+
+    if (!mapplsMapRef.current) {
+      try {
+        mapplsMapRef.current = new mappls.Map(wardMapContainerRef.current, {
+          center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
+          zoom: 11,
+          zoomControl: true,
+        });
+        mapplsMapRef.current.on('load', renderWards);
+      } catch (e) {
+        console.error('[Mappls] Map init error', e);
+      }
+    } else {
+      renderWards();
     }
+  }, [wardReadiness, weather?.lat, weather?.lon]);
 
-    // Clear existing markers and circles
-    leafletMarkersRef.current.forEach(m => m.remove());
-    leafletMarkersRef.current = [];
-    leafletCirclesRef.current.forEach(c => c.remove());
-    leafletCirclesRef.current = [];
-
-    const bounds: [number, number][] = [];
-
-    // ─ Ward pins ─────────────────────────────────────────────────────────────
-    wardReadiness.forEach(w => {
-      if (!w.lat || !w.lon) return;
-      const col = gradeColor[w.readiness_grade] ?? '#94a3b8';
-      const riskLabel =
-        w.flood_probability >= 0.80 ? 'CRITICAL' :
-        w.flood_probability >= 0.60 ? 'HIGH' :
-        w.flood_probability >= 0.35 ? 'MEDIUM' :
-        w.flood_probability >= 0.15 ? 'LOW' : 'SAFE';
-      const riskBg =
-        w.flood_probability >= 0.80 ? '#fef2f2' :
-        w.flood_probability >= 0.60 ? '#fff7ed' :
-        w.flood_probability >= 0.35 ? '#fefce8' : '#f0fdf4';
-
-      const popupHtml = `
-        <div style="font-family:Inter,system-ui,sans-serif;min-width:220px;max-width:280px">
-          <div style="font-size:13px;font-weight:900;color:#0f172a;margin-bottom:6px;line-height:1.3">
-            ${w.ward_name ?? w.ward_id}
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
-            <span style="background:${col};color:#fff;padding:3px 10px;border-radius:9999px;font-size:10px;font-weight:800;letter-spacing:0.5px">Grade ${w.readiness_grade}</span>
-            <span style="background:${riskBg};color:${col};border:1px solid ${col}30;padding:3px 8px;border-radius:9999px;font-size:10px;font-weight:800">${riskLabel}</span>
-          </div>
-          <div style="background:#f8fafc;border-radius:10px;padding:8px;margin-bottom:8px">
-            <table style="font-size:11px;width:100%;border-collapse:collapse">
-              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Flood Risk</td><td style="font-weight:900;text-align:right;color:${col}">${(w.flood_probability * 100).toFixed(1)}%</td></tr>
-              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Risk Score</td><td style="font-weight:900;text-align:right">${w.risk_score?.toFixed(1) ?? '—'}<span style="font-weight:500;color:#94a3b8">/100</span></td></tr>
-              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Inundation Risk</td><td style="font-weight:900;text-align:right">${w.inundation_risk_score?.toFixed(1) ?? '—'}</td></tr>
-              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Drainage Health</td><td style="font-weight:900;text-align:right">${w.drainage_health_score?.toFixed(1) ?? '—'}</td></tr>
-              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Infra Exposure</td><td style="font-weight:900;text-align:right">${w.infrastructure_exposure_score?.toFixed(1) ?? '—'}</td></tr>
-              <tr><td style="color:#64748b;padding:3px 0;font-weight:600">Hotspots</td><td style="font-weight:900;text-align:right">${w.hotspot_count_in_ward}</td></tr>
-            </table>
-          </div>
-          ${w.recommended_actions?.length ? `
-            <div style="font-size:10px;font-weight:800;color:#374151;margin-bottom:4px">Recommended Actions:</div>
-            <ul style="margin:0 0 0 14px;padding:0;font-size:10px;color:#475569;line-height:1.6">
-              ${w.recommended_actions.slice(0, 4).map(a => `<li>${a}</li>`).join('')}
-            </ul>` : ''}
-          ${w.pre_position_resources?.length ? `
-            <div style="font-size:10px;font-weight:800;color:#374151;margin-top:6px;margin-bottom:3px">Pre-position Resources:</div>
-            <ul style="margin:0 0 0 14px;padding:0;font-size:10px;color:#64748b;line-height:1.6">
-              ${w.pre_position_resources.slice(0, 3).map(r => `<li>${r}</li>`).join('')}
-            </ul>` : ''}
-          <div style="font-size:9px;color:#94a3b8;margin-top:8px;padding-top:6px;border-top:1px solid #e2e8f0">
-            ${w.readiness_description}
-          </div>
-        </div>`;
-
-      const marker = L.marker([w.lat, w.lon], { icon: makeWardIcon(w.readiness_grade) })
-        .bindPopup(popupHtml, { maxWidth: 300, className: 'ward-popup' })
-        .addTo(leafletMapRef.current);
-      leafletMarkersRef.current.push(marker);
-      bounds.push([w.lat, w.lon]);
-    });
-
-    // ─ Hotspot circles (if loaded) ─────────────────────────────────────────
-    // hotspots is in outer scope via closure
-
-    if (bounds.length > 0) {
-      leafletMapRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
-    }
-    setTimeout(() => leafletMapRef.current?.invalidateSize(), 150);
-  }, [wardReadiness]);  // re-run when wardReadiness changes
-
-  // Re-draw hotspot circles whenever hotspots load (layered over existing ward map)
+  // ── Mappls: hotspot circles + heatmap whenever hotspots data changes ────────
   useEffect(() => {
-    if (!leafletMapRef.current) return;
-    if (typeof L === 'undefined') return;
+    if (typeof mappls === 'undefined' || !mapplsMapRef.current) return;
 
     // Clear old circles
-    leafletCirclesRef.current.forEach(c => c.remove());
-    leafletCirclesRef.current = [];
+    mapplsCirclesRef.current.forEach(c => { try { c.remove(); } catch { try { c.setMap(null); } catch {} } });
+    mapplsCirclesRef.current = [];
+
+    // Clear old heatmap
+    if (mapplsHeatmapRef.current) {
+      try { mapplsHeatmapRef.current.remove(); } catch {}
+      mapplsHeatmapRef.current = null;
+    }
 
     if (!hotspots?.hotspots?.length) return;
 
-    const hotspotColor = (prob: number) =>
-      prob >= 0.85 ? '#dc2626' : prob >= 0.65 ? '#f97316' : prob >= 0.40 ? '#eab308' : '#3b82f6';
-    const hotspotRiskLabel = (prob: number) =>
-      prob >= 0.85 ? 'CRITICAL' : prob >= 0.65 ? 'HIGH' : prob >= 0.40 ? 'MEDIUM' : 'LOW';
+    const hotspotColor = (p: number) =>
+      p >= 0.85 ? '#dc2626' : p >= 0.65 ? '#f97316' : p >= 0.40 ? '#eab308' : '#3b82f6';
+    const riskLabel    = (p: number) =>
+      p >= 0.85 ? 'CRITICAL' : p >= 0.65 ? 'HIGH' : p >= 0.40 ? 'MEDIUM' : 'LOW';
 
+    // ─ Transparent flood-risk circles (one per hotspot cell) ───────────────────
     hotspots.hotspots.forEach(h => {
-      const col = hotspotColor(h.flood_probability);
-      const radiusM = Math.sqrt(h.area_km2 * 1_000_000 / Math.PI);
-
+      const col      = hotspotColor(h.flood_probability);
+      const radiusM  = Math.max(Math.sqrt(h.area_km2 * 1_000_000 / Math.PI), 400);
       const popupHtml = `
         <div style="font-family:Inter,system-ui,sans-serif;min-width:180px">
           <div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:6px">
             Flood Hotspot
-            <span style="background:${col};color:#fff;padding:2px 8px;border-radius:9999px;font-size:9px;font-weight:800;margin-left:6px">${hotspotRiskLabel(h.flood_probability)}</span>
+            <span style="background:${col};color:#fff;padding:2px 8px;border-radius:9999px;font-size:9px;font-weight:800;margin-left:6px">${riskLabel(h.flood_probability)}</span>
           </div>
           <table style="font-size:10px;width:100%;border-collapse:collapse">
             <tr><td style="color:#64748b;padding:2px 0">Flood Probability</td><td style="font-weight:900;color:${col};text-align:right">${(h.flood_probability*100).toFixed(1)}%</td></tr>
             <tr><td style="color:#64748b;padding:2px 0">Inundation Depth</td><td style="font-weight:800;text-align:right">${h.inundation_depth_m.toFixed(2)} m</td></tr>
             <tr><td style="color:#64748b;padding:2px 0">Area</td><td style="font-weight:800;text-align:right">${h.area_km2.toFixed(2)} km²</td></tr>
             <tr><td style="color:#64748b;padding:2px 0">Dominant Factor</td><td style="font-weight:800;text-align:right">${h.dominant_factor.replace(/_/g,' ')}</td></tr>
-            <tr><td style="color:#64748b;padding:2px 0">Co-ordinates</td><td style="font-weight:700;text-align:right">${h.lat.toFixed(4)}, ${h.lon.toFixed(4)}</td></tr>
           </table>
         </div>`;
-
-      const circle = L.circle([h.lat, h.lon], {
-        radius: Math.max(radiusM, 400),
-        color: col,
-        fillColor: col,
-        fillOpacity: 0.25,
-        weight: 2,
-        opacity: 0.7,
-      })
-        .bindPopup(popupHtml, { maxWidth: 260 })
-        .addTo(leafletMapRef.current);
-      leafletCirclesRef.current.push(circle);
+      try {
+        const circle = new mappls.Circle({
+          map: mapplsMapRef.current,
+          center: { lat: h.lat, lng: h.lon },
+          radius: radiusM,
+          fillColor: col,
+          fillOpacity: 0.22,
+          strokeColor: col,
+          strokeOpacity: 0.8,
+          strokeWidth: 2,
+          htmlPopup: popupHtml,
+        });
+        mapplsCirclesRef.current.push(circle);
+      } catch (e) { console.warn('[Mappls] Circle error', e); }
     });
 
-    setTimeout(() => leafletMapRef.current?.invalidateSize(), 100);
+    // ─ Heatmap layer (flood probability intensity) ─────────────────────────
+    const pts = hotspots.hotspots.map(h => ({
+      lat: h.lat, lng: h.lon,
+      weight: h.flood_probability,
+    }));
+    const floodGradient = [
+      'rgba(59,130,246,0)',    // transparent (low risk)
+      'rgba(59,130,246,0.8)',  // blue
+      'rgba(234,179,8,1)',     // yellow
+      'rgba(249,115,22,1)',    // orange
+      'rgba(239,68,68,1)',     // red
+      'rgba(127,29,29,1)',     // dark-red (extreme)
+    ];
+    try {
+      mapplsHeatmapRef.current = new mappls.HeatmapLayer({
+        map: mapplsMapRef.current,
+        data: pts,
+        gradient: floodGradient,
+        radius: 30,
+        opacity: 0.7,
+        fitbounds: false,
+      });
+    } catch (e) { console.warn('[Mappls] HeatmapLayer error', e); }
   }, [hotspots]);
 
-  // Cleanup Leaflet map when component unmounts
+  // ── Cleanup Mappls map when component unmounts ───────────────────────────
   useEffect(() => {
     return () => {
-      if (leafletMapRef.current) {
-        leafletMapRef.current.remove();
-        leafletMapRef.current = null;
+      if (mapplsMapRef.current) {
+        try { mapplsMapRef.current.remove(); } catch {}
+        mapplsMapRef.current = null;
       }
     };
   }, []);
