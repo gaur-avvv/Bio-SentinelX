@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactDOM from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -344,23 +345,26 @@ export const AlertNotificationPanel: React.FC<AlertNotificationPanelProps> = ({
 
   return (
     <>
-      {/* Staggered toast stack — bottom right */}
-      <div className="fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom)+var(--vv-bottom,0px))] right-[calc(0.75rem+env(safe-area-inset-right))] sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom)+var(--vv-bottom,0px))] sm:right-[calc(1.5rem+env(safe-area-inset-right))] z-[9999] w-80 max-w-[calc(100vw-1.5rem)] pointer-events-none">
-        <div className="pointer-events-auto flex flex-col gap-2.5 max-h-[70vh] overflow-y-auto pr-1 scrollbar-thin">
-          {visibleToasts.map(t => (
-            <div key={t.id}>
-              <Toast alert={t} onAutoClose={handleAutoClose} onManualClose={handleManualClose} />
-            </div>
-          ))}
-        </div>
-        {toastQueue.length > 0 && (
-          <div className="pointer-events-none flex justify-end">
-            <span className="text-[9px] font-black bg-slate-800/80 text-slate-300 px-2 py-1 rounded-full">
-              +{toastQueue.length} queued
-            </span>
+      {/* Staggered toast stack — bottom right, rendered via portal to escape header stacking context */}
+      {ReactDOM.createPortal(
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[99999] w-80 max-w-[calc(100vw-2rem)] pointer-events-none">
+          <div className="pointer-events-auto flex flex-col gap-2.5 max-h-[70vh] overflow-y-auto pr-1 scrollbar-thin">
+            {visibleToasts.map(t => (
+              <div key={t.id}>
+                <Toast alert={t} onAutoClose={handleAutoClose} onManualClose={handleManualClose} />
+              </div>
+            ))}
           </div>
-        )}
-      </div>
+          {toastQueue.length > 0 && (
+            <div className="pointer-events-none flex justify-end mt-1">
+              <span className="text-[9px] font-black bg-slate-800/80 text-slate-300 px-2 py-1 rounded-full">
+                +{toastQueue.length} queued
+              </span>
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
 
       {/* Bell + dropdown */}
       <div className="relative" ref={panelRef}>
