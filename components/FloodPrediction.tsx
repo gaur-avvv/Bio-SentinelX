@@ -55,7 +55,7 @@ interface FloodPredictionProps {
   aiProvider?: string;
   aiModel?: string;
   aiKey?: string;
-  mapProvider?: 'mappls' | 'maptiler' | 'mapbox' | 'osm';
+  mapProvider?: 'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis';
   mapplsToken?: string;
   mapTilerKey?: string;
   mapboxToken?: string;
@@ -198,7 +198,7 @@ function computeGiStar(
 
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
-  mapProvider = 'osm', mapplsToken, mapTilerKey, mapboxToken,
+  mapProvider = 'arcgis', mapplsToken, mapTilerKey, mapboxToken,
 }) => {
   // ── Cache ───────────────────────────────────────────────────────────────────
   const { flood: floodCache, setFlood } = useDataCache();
@@ -302,6 +302,8 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   // ── Mappls: init map + ward markers whenever wardReadiness changes ───────────
   useEffect(() => {
+    // ArcGIS embedded map handles its own rendering via web component
+    if (mapProvider === 'arcgis') return;
     if (!wardReadiness?.length || !wardMapContainerRef.current) return;
     const isMappls = mapProvider === 'mappls';
     const isMapbox = mapProvider === 'mapbox';
@@ -2097,12 +2099,29 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             <p className="text-[10px] font-bold text-slate-400 mb-3">
               Click any pin for ward details — risk score, flood probability, drainage health, and recommended actions.
             </p>
-            {/* Leaflet map container */}
-            <div
-              ref={wardMapContainerRef}
-              style={{ height: '420px', borderRadius: '1rem', overflow: 'hidden', zIndex: 0 }}
-              className="w-full border border-slate-100 dark:border-slate-700"
-            />
+            {/* Map container rendering: Custom Web Component for ArcGIS, or a div for SDK-based maps */}
+            {mapProvider === 'arcgis' ? (
+              // @ts-ignore: ArcGIS custom web component loaded via script tag
+              <arcgis-embedded-map
+                class="w-full border border-slate-100 dark:border-slate-700"
+                style={{ height: '480px', borderRadius: '1rem', overflow: 'hidden', zIndex: 0 }}
+                item-id="0f338911b5a44c07817b1e0db50ec69f"
+                theme="dark"
+                legend-enabled="true"
+                share-enabled="true"
+                basemap-gallery-enabled="true"
+                time-zone-label-enabled="true"
+                center={`${weather?.lon ?? 78.9629},${weather?.lat ?? 20.5937}`}
+                scale="500000"
+                portal-url="https://biosentinel.maps.arcgis.com"
+              ></arcgis-embedded-map>
+            ) : (
+              <div
+                ref={wardMapContainerRef}
+                style={{ height: '440px', borderRadius: '1rem', overflow: 'hidden', zIndex: 0 }}
+                className="w-full border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900"
+              />
+            )}
             {/* Map Interactive Layer Toggles */}
             <div className="mt-4 flex flex-wrap gap-2">
               <button

@@ -57,8 +57,8 @@ export interface SettingsPageProps {
   setMlApiKey: (key: string) => void;
   mapplsToken: string;
   setMapplsToken: (key: string) => void;
-  mapProvider: 'mappls' | 'maptiler' | 'mapbox' | 'osm';
-  setMapProvider: (p: 'mappls' | 'maptiler' | 'mapbox' | 'osm') => void;
+  mapProvider: 'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis';
+  setMapProvider: (p: 'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis') => void;
   mapTilerKey: string;
   setMapTilerKey: (key: string) => void;
   mapboxToken: string;
@@ -505,7 +505,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="space-y-1.5">
                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Map Provider</span>
                 <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl flex-wrap">
-                  {(['osm', 'mappls', 'maptiler', 'mapbox'] as const).map(p => (
+                  {(['arcgis', 'osm', 'mappls', 'maptiler', 'mapbox'] as const).map(p => (
                     <button
                       key={p}
                       onClick={() => setMapProvider(p)}
@@ -515,12 +515,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
                       }`}
                     >
-                      {p === 'osm' ? '🌍 Free' : p === 'mappls' ? 'Mappls' : p === 'maptiler' ? 'MapTiler' : 'Mapbox'}
+                      {p === 'arcgis' ? '🌏 ArcGIS' : p === 'osm' ? '🌍 Free' : p === 'mappls' ? 'Mappls' : p === 'maptiler' ? 'MapTiler' : 'Mapbox'}
                     </button>
                   ))}
                 </div>
               </div>
-              {mapProvider === 'osm' ? (
+              {mapProvider === 'arcgis' ? (
+                <div className="animate-fade-in p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-blue-600 dark:text-blue-400 text-lg">🌏</span>
+                    <span className="text-xs font-black text-blue-800 dark:text-blue-300 uppercase tracking-tight">BioSentinel ArcGIS Portal</span>
+                  </div>
+                  <p className="text-[10px] font-bold text-blue-700 dark:text-blue-400 leading-relaxed">
+                    Uses the official <strong>BioSentinel ArcGIS</strong> web map from <code className="text-[9px] bg-blue-100 dark:bg-blue-900/50 px-1 py-0.5 rounded">biosentinel.maps.arcgis.com</code>. No API key required — powered by ArcGIS Maps SDK 5.0 Embedded Component with India Ward Boundaries and flood layers.
+                  </p>
+                </div>
+              ) : mapProvider === 'osm' ? (
                 <div className="animate-fade-in p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="text-emerald-600 dark:text-emerald-400 text-lg">✅</span>
