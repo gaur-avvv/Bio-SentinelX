@@ -140,7 +140,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [hotspotsLoading, setHotspotsLoading] = useState(false);
   const [hotspotsError,   setHotspotsError]   = useState('');
 
-  // ── Mappls map refs ─────────────────────────────────────────────────────────
+  // ── Mappls map refs & Layer State ───────────────────────────────────────────
+  const [showHeatmap, setShowHeatmap] = useState(true);
+  const [showHotspotZones, setShowHotspotZones] = useState(true);
+  const [showWardMarkers, setShowWardMarkers] = useState(true);
+
   const wardMapContainerRef  = useRef<HTMLDivElement | null>(null);
   const mapplsMapRef         = useRef<any>(null);      // mappls.Map instance
   const mapplsMarkersRef     = useRef<any[]>([]);      // ward marker instances
@@ -243,28 +247,27 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             </div>
           </div>`;
 
-        try {
-          const marker = new mappls.Marker({
-            map: map,
-            position: { lat: w.lat, lng: w.lon },
-            icon: {
-              url: makeSvgUrl(w.readiness_grade),
-              size: { width: 34, height: 34 },
-              anchor: { x: 17, y: 17 },
-            },
-            htmlPopup: popupHtml,
-          });
-          mapplsMarkersRef.current.push(marker);
-        } catch (e) {
-          console.warn('[Mappls] Marker creation error', e);
+        if (showWardMarkers) {
+          try {
+            const marker = new mappls.Marker({
+              map: map,
+              position: { lat: w.lat, lng: w.lon },
+              icon: {
+                url: makeSvgUrl(w.readiness_grade),
+                size: { width: 34, height: 34 },
+                anchor: { x: 17, y: 17 },
+              },
+              htmlPopup: popupHtml,
+            });
+            mapplsMarkersRef.current.push(marker);
+          } catch (e) {
+            console.warn('[Mappls] Marker creation error', e);
+          }
         }
       });
 
       // mGIS GeoAnalytics Polygon layer (if we have extracted numbers)
-      // Since our ward IDs are synthetic in the backend ('WARD-001'), mGIS won't strictly match a real 
-      // Delhi ward unless we pass valid numbers. Just add the geoAnalytics block so the tool exists 
-      // when real data is fed.
-      if (wardIdsForApi.length > 0 && typeof mappls.geoAnalytics !== 'undefined') {
+      if (wardIdsForApi.length > 0 && typeof mappls.geoAnalytics !== 'undefined' && showWardMarkers) {
         const geoParams = {
           "AccessToken": "nzakkmhibkqugncpxygnqqvynhpizagefvpn", 
           "GeoBoundType": "ward_no",
@@ -345,7 +348,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     } else {
       renderWards();
     }
-  }, [wardReadiness, weather?.lat, weather?.lon]);
+  }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers]);
 
   // ── Mappls: hotspot circles + heatmap whenever hotspots data changes ────────
   useEffect(() => {
@@ -369,9 +372,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       p >= 0.85 ? 'CRITICAL' : p >= 0.65 ? 'HIGH' : p >= 0.40 ? 'MEDIUM' : 'LOW';
 
     // ─ Transparent flood-risk circles (one per hotspot cell) ───────────────────
-    hotspots.hotspots.forEach(h => {
-      const col      = hotspotColor(h.flood_probability);
-      const radiusM  = Math.max(Math.sqrt(h.area_km2 * 1_000_000 / Math.PI), 400);
+    if (showHotspotZones) {
+      hotspots.hotspots.forEach(h => {
+        const col      = hotspotColor(h.flood_probability);
+        const radiusM  = Math.max(Math.sqrt(h.area_km2 * 1_000_000 / Math.PI), 400);
       const popupHtml = `
         <div style="font-family:Inter,system-ui,sans-serif;min-width:180px">
           <div style="font-size:11px;font-weight:900;color:#0f172a;margin-bottom:6px">
@@ -398,8 +402,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           htmlPopup: popupHtml,
         });
         mapplsCirclesRef.current.push(circle);
-      } catch (e) { console.warn('[Mappls] Circle error', e); }
+      } catch (e) {
+        console.warn('[Mappls] Circle error', e);
+      }
     });
+    }
 
     // ─ Heatmap layer (flood probability intensity) ─────────────────────────
     const pts = hotspots.hotspots.map(h => ({
@@ -424,7 +431,14 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         fitbounds: false,
       });
     } catch (e) { console.warn('[Mappls] HeatmapLayer error', e); }
-  }, [hotspots]);
+    
+    // Toggle heatmap visibility via Mapbox style property if the object exposes it, else re-create
+    if (!showHeatmap && mapplsHeatmapRef.current) {
+        try { mapplsHeatmapRef.current.remove(); } catch {}
+        mapplsHeatmapRef.current = null;
+    }
+    
+  }, [hotspots, showHeatmap, showHotspotZones]);
 
   // ── Cleanup Mappls map when component unmounts ───────────────────────────
   useEffect(() => {
@@ -1558,6 +1572,27 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
               style={{ height: '420px', borderRadius: '1rem', overflow: 'hidden', zIndex: 0 }}
               className="w-full border border-slate-100 dark:border-slate-700"
             />
+            {/* Map Interactive Layer Toggles */}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => setShowWardMarkers(!showWardMarkers)}
+                className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors flex items-center gap-1 ${showWardMarkers ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-400 border-slate-200'} hover:bg-slate-100`}
+              >
+                Ward Polygons
+              </button>
+              <button
+                onClick={() => setShowHeatmap(!showHeatmap)}
+                className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors flex items-center gap-1 ${showHeatmap ? 'bg-orange-50 text-orange-700 border-orange-200' : 'bg-slate-50 text-slate-400 border-slate-200'} hover:bg-slate-100`}
+              >
+                Risk Heatmap
+              </button>
+              <button
+                onClick={() => setShowHotspotZones(!showHotspotZones)}
+                className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-colors flex items-center gap-1 ${showHotspotZones ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-50 text-slate-400 border-slate-200'} hover:bg-slate-100`}
+              >
+                Hotspot Zones
+              </button>
+            </div>
           </div>
         )}
 

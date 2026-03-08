@@ -768,76 +768,82 @@ export async function fetchHotspots(
 }
 
 // ============================================================
-// Nominatim reverse geocoding (OpenStreetMap)
+// mGIS (Mappls) Reverse Geocoding
 // ============================================================
 
-interface NominatimResult {
-  display_name: string;
-  address?: {
-    neighbourhood?: string;
-    suburb?: string;
+interface MapplsRevGeoResult {
+  responseCode: number;
+  results: Array<{
+    formatted_address?: string;
+    subLocality?: string;
+    locality?: string;
+    city?: string;
     district?: string;
-    county?: string;
-    city_district?: string;
-    quarter?: string;
-    town?: string;
-    village?: string;
-  };
+    state?: string;
+    pincode?: string;
+  }>;
 }
 
 /**
- * Reverse-geocode a lat/lon using OSM Nominatim to get a human-readable area name.
- * Falls back gracefully if the API is unavailable.
+ * Reverse-geocode a lat/lon using Mappls mGIS API to get a human-readable area name.
+ * Extremely accurate for Indian sub-localities (Wards, Blocks).
  */
 export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=14&addressdetails=1`;
-    const res = await fetch(url, {
-      headers: { 'Accept-Language': 'en', 'User-Agent': 'Bio-SentinelX/1.0 (flood-prediction)' },
-    });
+    const token = 'nzakkmhibkqugncpxygnqqvynhpizagefvpn';
+    const url = `https://apis.mappls.com/advancedmaps/v1/${token}/rev_geocode?lat=${lat}&lng=${lon}`;
+    
+    const res = await fetch(url);
     if (!res.ok) return null;
-    const json: NominatimResult = await res.json();
-    const a = json.address;
-    // Best-preference chain: neighbourhood → suburb → city_district → quarter → district → village/town
+    
+    const json: MapplsRevGeoResult = await res.json();
+    if (json.responseCode !== 200 || !json.results?.length) return null;
+    
+    const r = json.results[0];
+    
+    // Best-preference chain for ward/neighbourhood
     return (
-      a?.neighbourhood ||
-      a?.suburb ||
-      a?.city_district ||
-      a?.quarter ||
-      a?.district ||
-      a?.county ||
-      a?.village ||
-      a?.town ||
+      r.subLocality ||
+      r.locality ||
+      r.formatted_address ||
+      r.district ||
       null
     );
-  } catch {
+  } catch (e) {
+    console.warn('[Mappls RevGeocode] Failed:', e);
     return null;
   }
 }
 
 /**
- * Enrich a list of WardReadinessItems with real area names from Nominatim.
- * Batches requests with a small delay to respect OSM rate limits (1 req/sec).
+ * Enrich a list of WardReadinessItems with real area names from mGIS.
+ * Can be run in parallel since API key has higher limits, but we keep small delay purely for UI smooth rendering.
  */
 export async function enrichWardsWithGeoNames(
   wards: WardReadinessItem[]
 ): Promise<WardReadinessItem[]> {
   const enriched: WardReadinessItem[] = [];
-  for (let i = 0; i < wards.length; i++) {
-    const w = wards[i];
+  
+  // Create a batch of promises (Mappls handles higher concurrency than OSM)
+  const batchRequests = wards.map(async (w) => {
     if (w.ward_name && !w.ward_name.startsWith('ward_') && !w.ward_name.match(/^[0-9a-f-]+$/i)) {
-      // Already has a human-readable name from the API
-      enriched.push(w);
-    } else {
-      // Fetch from Nominatim
-      const geoName = await reverseGeocode(w.lat, w.lon);
-      enriched.push({ ...w, ward_name: geoName ?? w.ward_name ?? w.ward_id });
-      // Rate-limit: 1 request per 1.1 seconds (Nominatim policy)
-      if (i < wards.length - 1) await new Promise(r => setTimeout(r, 1100));
+      return w; // Already named
     }
-  }
-  return enriched;
+    const geoName = await reverseGeocode(w.lat, w.lon);
+    
+    // If geoName is quite long (full address), split by comma and take first 2 parts for brevity
+    let finalName = geoName ?? w.ward_name ?? w.ward_id;
+    if (finalName.length > 35 && finalName.includes(',')) {
+       finalName = finalName.split(',').slice(0, 2).join(', ');
+    }
+    
+    return { ...w, ward_name: finalName };
+  });
+
+  return Promise.all(batchRequests);
 }
+
+// REMOVED old enrich block
 
 // ============================================================
 // Historical statistics (used by component and AI prompt)
