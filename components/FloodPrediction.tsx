@@ -375,10 +375,15 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
              } catch {}
           }
           
-          map.fitBounds([[swLon, swLat], [neLon, neLat]], { padding: { top: 40, bottom: 40, left: 40, right: 40 } });
+          map.fitBounds([[swLon, swLat], [neLon, neLat]], { padding: { top: 60, bottom: 60, left: 60, right: 60 }, maxZoom: 14 });
         } catch {
           const c = validWards[0];
-          map.setCenter({ lat: c.lat, lng: c.lon }); map.setZoom(11);
+          // Mappls setCenter expects lat/lon object; MapTiler/Mapbox expects [lon, lat] array
+          try {
+            if (isMappls) map.setCenter([c.lat, c.lon]);
+            else map.setCenter([c.lon, c.lat]);
+          } catch {}
+          map.setZoom(12);
         }
       }
     };
@@ -386,31 +391,32 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     if (!mapRef.current) {
       try {
         if (mapProvider === 'mappls') {
+          // Mappls expects [lat, lon] for center — note reversed from GeoJSON
           mapRef.current = new mappls.Map(wardMapContainerRef.current, {
-            center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
-            zoom: 11,
+            center: [weather?.lat ?? 20.5937, weather?.lon ?? 78.9629],
+            zoom: 12,
             zoomControl: true,
             mapType: isSatellite ? "satellite" : undefined,
           });
           mapRef.current.on('load', renderWards);
         } else if (mapProvider === 'maptiler') {
-          // Initialize MapTiler SDK (which uses MapLibre under the hood)
+          // Initialize MapTiler SDK — zoom 12 for tighter neighbourhood-level focus
           maptilersdk.config.apiKey = mapTilerKey;
           mapRef.current = new maptilersdk.Map({
             container: wardMapContainerRef.current,
             style: isSatellite ? maptilersdk.MapStyle.SATELLITE : maptilersdk.MapStyle.STREETS,
             center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
-            zoom: 11,
+            zoom: 12,
           });
           mapRef.current.on('load', renderWards);
         } else if (mapProvider === 'mapbox') {
-          // Initialize Mapbox SDK
+          // Initialize Mapbox SDK — zoom 12 for tighter neighbourhood focus
           mapboxgl.accessToken = mapboxToken;
           mapRef.current = new mapboxgl.Map({
             container: wardMapContainerRef.current,
             style: isSatellite ? 'mapbox://styles/mapbox/satellite-v9' : 'mapbox://styles/mapbox/streets-v11',
             center: [weather?.lon ?? 78.9629, weather?.lat ?? 20.5937],
-            zoom: 11,
+            zoom: 12,
           });
           mapRef.current.on('load', renderWards);
         }
@@ -484,20 +490,26 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           } catch (e) { console.warn('[Mappls] Circle error', e); }
         });
       } else {
-        // MapTiler/MapLibre circles via GeoJSON
+        // MapTiler/Mapbox circles via GeoJSON — risk-proportional size
+        // Clean up previous layers first
+        try { if (map.getLayer('hotspot-circles-layer')) map.removeLayer('hotspot-circles-layer'); } catch {}
+        try { if (map.getSource('hotspot-circles-source')) map.removeSource('hotspot-circles-source'); } catch {}
+
         const features = hotspots.hotspots.map(h => {
           const col = hotspotColor(h.flood_probability);
+          // Scale radius between 12 (medium) and 30 (critical) based on probability
+          const pixelRadius = Math.round(12 + (h.flood_probability - 0.4) * 30);
           return {
             type: 'Feature' as const,
             geometry: { type: 'Point' as const, coordinates: [h.lon, h.lat] },
             properties: {
               color: col,
-              radius: 20, // Pixel radius for MapLibre circle layer
+              radius: Math.max(12, Math.min(30, pixelRadius)),
               popup: makeHotspotPopup(h, col),
             }
           };
         });
-        
+
         map.addSource('hotspot-circles-source', {
           type: 'geojson',
           data: { type: 'FeatureCollection', features }
@@ -509,16 +521,17 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           paint: {
             'circle-radius': ['get', 'radius'],
             'circle-color': ['get', 'color'],
-            'circle-opacity': 0.25,
-            'circle-stroke-width': 2,
-            'circle-stroke-color': ['get', 'color']
+            'circle-opacity': 0.35,
+            'circle-stroke-width': 2.5,
+            'circle-stroke-color': ['get', 'color'],
+            'circle-stroke-opacity': 0.9,
           }
         });
-        
-        // Add click listener for popups
+
+        // Click listener for popups
         map.on('click', 'hotspot-circles-layer', (e: any) => {
           const PopupClass = mapProvider === 'maptiler' ? maptilersdk.Popup : mapboxgl.Popup;
-          new PopupClass()
+          new PopupClass({ maxWidth: '260px' })
             .setLngLat(e.lngLat)
             .setHTML(e.features[0].properties.popup)
             .addTo(map);
@@ -555,7 +568,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           });
         } catch (e) { console.warn('[Mappls] HeatmapLayer error', e); }
       } else {
-        // MapTiler/MapLibre Heatmap
+        // MapTiler/Mapbox Heatmap — clean up previous first
+        try { if (map.getLayer('flood-heatmap-layer')) map.removeLayer('flood-heatmap-layer'); } catch {}
+        try { if (map.getSource('flood-heatmap-source')) map.removeSource('flood-heatmap-source'); } catch {}
+
         map.addSource('flood-heatmap-source', {
           type: 'geojson',
           data: {
@@ -572,19 +588,19 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           type: 'heatmap',
           source: 'flood-heatmap-source',
           paint: {
-            'heatmap-weight': ['get', 'weight'],
-            'heatmap-intensity': 1,
+            'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0.4, 0, 1, 1],
+            'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 3],
             'heatmap-color': [
               'interpolate', ['linear'], ['heatmap-density'],
-              0, 'rgba(59,130,246,0)',
-              0.2, 'rgba(59,130,246,0.8)',
-              0.4, 'rgba(234,179,8,1)',
+              0,   'rgba(59,130,246,0)',
+              0.2, 'rgba(59,130,246,0.6)',
+              0.4, 'rgba(234,179,8,0.8)',
               0.6, 'rgba(249,115,22,1)',
               0.8, 'rgba(239,68,68,1)',
-              1, 'rgba(127,29,29,1)'
+              1,   'rgba(127,29,29,1)'
             ],
-            'heatmap-radius': 30,
-            'heatmap-opacity': 0.7
+            'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 10, 25, 14, 60],
+            'heatmap-opacity': 0.75,
           }
         });
       }
@@ -881,11 +897,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     setHotspotsError('');
     try {
       const res = await fetchHotspots(mlApiUrl, weather.lat, weather.lon, {
-        radiusKm: 10,
-        gridSizeKm: 1.0,
-        minRisk: 0.5,
+        radiusKm: 15,      // Wider scan area
+        gridSizeKm: 2.5,   // Coarser grid → fewer, more meaningful hotspots
+        minRisk: 0.65,     // Only fetch genuinely high-risk cells
       });
-      setHotspots(res);
+      // Sort by flood_probability descending and cap at top 25 hotspots for readability
+      const sorted = [...(res.hotspots ?? [])].sort((a, b) => b.flood_probability - a.flood_probability).slice(0, 25);
+      setHotspots({ ...res, hotspots: sorted });
     } catch (err) {
       setHotspots(null);
       setHotspotsError(err instanceof Error ? err.message : 'Failed to load hotspots.');
