@@ -305,9 +305,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     if (!wardReadiness?.length || !wardMapContainerRef.current) return;
     const isMappls = mapProvider === 'mappls';
     const isMapbox = mapProvider === 'mapbox';
+    // Guard: ensure required SDK is loaded for the selected provider
     if (isMappls && typeof mappls === 'undefined') return;
-    if (!isMappls && mapProvider === 'maptiler' && typeof maptilersdk === 'undefined') return;
+    if (mapProvider === 'maptiler' && typeof maptilersdk === 'undefined') return;
     if (isMapbox && typeof mapboxgl === 'undefined') return;
+    if (mapProvider === 'osm' && typeof maplibregl === 'undefined') return;
 
     const gradeColor: Record<string, string> = {
       A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
@@ -668,7 +670,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         // Click for ward popup
         map.on('click', 'india-wards-fill', (e: any) => {
           const props = e.features[0].properties;
-          const PopupClass = mapProvider === 'maptiler' ? maptilersdk.Popup : mapboxgl.Popup;
+          const PopupClass =
+            mapProvider === 'maptiler' ? maptilersdk.Popup
+            : mapProvider === 'mapbox' ? mapboxgl.Popup
+            : maplibregl.Popup; // 'osm' uses plain MapLibre
+
           new PopupClass({ maxWidth: '260px' })
             .setLngLat(e.lngLat)
             .setHTML(`
@@ -937,16 +943,30 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     try {
       if (mapProvider === 'mappls') {
         map.setMapFeature({ mapType: isSatellite ? "satellite" : "standard" });
+      } else if (mapProvider === 'osm') {
+        // CartoDB: Positron (light) ↔ Dark Matter
+        map.setStyle(
+          isSatellite
+            ? 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json'
+            : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+        );
+        // Re-render overlays after style change
+        map.once('styledata', () => setMapReady(true));
       } else if (mapProvider === 'maptiler') {
+        setMapReady(false);
         map.setStyle(isSatellite ? maptilersdk.MapStyle.SATELLITE : maptilersdk.MapStyle.STREETS);
+        map.once('load', () => setMapReady(true));
       } else {
         // Mapbox
+        setMapReady(false);
         map.setStyle(isSatellite ? 'mapbox://styles/mapbox/satellite-v9' : 'mapbox://styles/mapbox/streets-v11');
+        map.once('load', () => setMapReady(true));
       }
     } catch (e) {
       console.warn(`[Map] ${mapProvider} style toggle error`, e);
     }
   }, [isSatellite, mapProvider]);
+
 
   // ── Cleanup Mappls map when component unmounts ───────────────────────────
   useEffect(() => {
