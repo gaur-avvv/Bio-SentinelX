@@ -46,6 +46,13 @@ class PredictionRequest(BaseModel):
     antecedent_precip_index: float = Field(
         0.0, ge=0, description="API: weighted sum of prior-day rainfall"
     )
+    # ─ River discharge (GloFAS) ───────────────────────────────────────────
+    river_discharge_m3s: float = Field(
+        0.0, ge=0, description="Observed/forecast GloFAS river discharge (m³/s)"
+    )
+    discharge_anomaly_ratio: float = Field(
+        0.0, ge=0, description="Discharge / historical P50 (>1=above median, >4=extreme)"
+    )
 
     # Terrain
     elevation_m: float = Field(0.0, description="DEM elevation in metres")

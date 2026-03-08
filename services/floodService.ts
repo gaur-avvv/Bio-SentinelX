@@ -537,7 +537,12 @@ export interface MLPredictionRequest {
   impervious_surface_pct?: number;
   drainage_capacity_pct?: number;
   soil_moisture_pct?: number;
-  // river discharge fed as antecedent precipitation proxy
+  // ─ River discharge (GloFAS) ───────────────────────────────────────────
+  /** Raw GloFAS observed or forecast median discharge in m³/s */
+  river_discharge_m3s?: number;
+  /** Discharge normalised by historical P50 (>1 = above median; >4 = extreme) */
+  discharge_anomaly_ratio?: number;
+  // antecedent precipitation proxy (kept for backward-compat with older model)
   antecedent_precip_index?: number;
   temperature_c?: number;
   humidity_pct?: number;
@@ -640,10 +645,20 @@ export async function fetchMLPrediction(
 ): Promise<MLPredictionResult> {
   const precip = weather.precipitation ?? 0;
 
-  // Scale river discharge to an antecedent precipitation index proxy:
-  // Normalise against P50 so that 2× median ≈ 60mm antecedent rainfall
-  const api = riverDischargeToday && riverDischargeP50 > 0
-    ? Math.min((riverDischargeToday / riverDischargeP50) * 30, 150)
+  // ── River discharge features ────────────────────────────────────────────────
+  // 1. river_discharge_m3s: the raw GloFAS observed/median value (direct feature)
+  const riverDischarge = riverDischargeToday ?? 0;
+
+  // 2. discharge_anomaly_ratio: normalised against historical P50
+  //    >1 = above median flow, >2 = significant, >4 = extreme flood-level
+  const dischargeRatio = riverDischargeP50 > 0
+    ? Math.min(riverDischarge / riverDischargeP50, 10)   // cap at 10× to avoid outlier blow-up
+    : 0;
+
+  // 3. antecedent_precip_index: kept for backward-compat with older model versions
+  //    Scales the discharge ratio into a mm-equivalent so old models still work
+  const api = riverDischarge > 0 && riverDischargeP50 > 0
+    ? Math.min((riverDischarge / riverDischargeP50) * 30, 150)
     : 0;
 
   const body: MLPredictionRequest = {
@@ -655,7 +670,10 @@ export async function fetchMLPrediction(
     rainfall_24h_mm: precip * 8,
     rainfall_48h_mm: precip * 12,
     rainfall_72h_mm: precip * 15,
-    antecedent_precip_index: api,
+    // ─ River discharge (explicit GloFAS features) ──────────────────────────
+    river_discharge_m3s: riverDischarge,
+    discharge_anomaly_ratio: dischargeRatio,
+    antecedent_precip_index: api,   // backward compat
     temperature_c: weather.temp,
     humidity_pct: weather.humidity,
     pressure_hpa: weather.pressure ?? 1013,

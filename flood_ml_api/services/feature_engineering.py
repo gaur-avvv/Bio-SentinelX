@@ -52,6 +52,9 @@ def build_feature_vector(req: PredictionRequest) -> pd.DataFrame:
         "rainfall_72h_mm": req.rainfall_72h_mm,
         "rainfall_intensity": req.rainfall_intensity,
         "antecedent_precip_index": req.antecedent_precip_index,
+        # River discharge (GloFAS direct features)
+        "river_discharge_m3s": req.river_discharge_m3s,
+        "discharge_anomaly_ratio": req.discharge_anomaly_ratio,
         "elevation_m": req.elevation_m,
         "slope_degrees": req.slope_degrees,
         "aspect_degrees": req.aspect_degrees,
@@ -165,5 +168,11 @@ def engineer_training_features(df: pd.DataFrame) -> pd.DataFrame:
         0.10 * (df["impervious_surface_pct"] / 100) * 10 +
         0.10 * (df["previous_flood_events_5y"] / (df["previous_flood_events_5y"] + 1)) * 10
     )
+
+    # Ensure river discharge columns exist with safe defaults if not in training data
+    if "river_discharge_m3s" not in df.columns:
+        df["river_discharge_m3s"] = 0.0
+    if "discharge_anomaly_ratio" not in df.columns:
+        df["discharge_anomaly_ratio"] = 0.0
 
     return df[FEATURE_COLUMNS]

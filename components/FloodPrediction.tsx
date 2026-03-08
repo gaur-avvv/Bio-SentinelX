@@ -9,11 +9,14 @@ import {
   Waves, Activity, AlertTriangle, BookOpen, ArrowLeft,
   RefreshCw, TrendingUp, TrendingDown, Minus, Zap, Info,
   Settings, Brain, Server, CheckCircle2, XCircle, RotateCcw,
-  Cpu, ChevronDown, ChevronUp,
+  Cpu, ChevronDown, ChevronUp, Map,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { WeatherData } from '../types';
+
+// Leaflet global (loaded via CDN in index.html)
+declare const L: any;
 import {
   fetchFloodData,
   computeFloodRisk,
@@ -136,6 +139,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [hotspotsLoading, setHotspotsLoading] = useState(false);
   const [hotspotsError,   setHotspotsError]   = useState('');
 
+  // ── Ward map (Leaflet) refs ──────────────────────────────────────────────────
+  const wardMapContainerRef = useRef<HTMLDivElement | null>(null);
+  const leafletMapRef       = useRef<any>(null);
+  const leafletMarkersRef   = useRef<any[]>([]);
+
   // ── ML training status polling (keeps UI in sync after /train) ─────────────
   const statusPollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRetrainStartRef = useRef<number | null>(null);
@@ -148,6 +156,104 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   }, []);
 
   useEffect(() => stopStatusPolling, [stopStatusPolling]);
+
+  // ── Leaflet ward map: init / refresh whenever wardReadiness changes ──────────
+  useEffect(() => {
+    if (!wardReadiness || wardReadiness.length === 0) return;
+    if (!wardMapContainerRef.current) return;
+    if (typeof L === 'undefined') return; // Leaflet not loaded yet
+
+    // Colour scale per readiness grade
+    const gradeColor: Record<string, string> = {
+      A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
+    };
+
+    const makeIcon = (grade: string) =>
+      L.divIcon({
+        className: '',
+        html: `<div style="
+          width:28px;height:28px;border-radius:50%;display:flex;
+          align-items:center;justify-content:center;
+          background:${gradeColor[grade] ?? '#94a3b8'};
+          color:#fff;font-weight:900;font-size:11px;
+          border:2.5px solid rgba(0,0,0,0.18);
+          box-shadow:0 2px 8px rgba(0,0,0,0.25);
+          font-family:Inter,sans-serif;
+        ">${grade}</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+        popupAnchor: [0, -16],
+      });
+
+    // Initialise map once
+    if (!leafletMapRef.current) {
+      leafletMapRef.current = L.map(wardMapContainerRef.current, {
+        attributionControl: true,
+        zoomControl: true,
+      });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 18,
+      }).addTo(leafletMapRef.current);
+    }
+
+    // Clear existing markers
+    leafletMarkersRef.current.forEach(m => m.remove());
+    leafletMarkersRef.current = [];
+
+    const bounds: [number, number][] = [];
+
+    wardReadiness.forEach(w => {
+      if (!w.lat || !w.lon) return;
+      const popupHtml = `
+        <div style="font-family:Inter,sans-serif;min-width:180px">
+          <div style="font-size:12px;font-weight:900;color:#1e293b;margin-bottom:4px">
+            ${w.ward_name ?? w.ward_id}
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <span style="background:${gradeColor[w.readiness_grade] ?? '#94a3b8'};color:#fff;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:800">
+              Grade ${w.readiness_grade}
+            </span>
+            <span style="font-size:10px;color:#64748b;font-weight:700">${w.readiness_description}</span>
+          </div>
+          <table style="font-size:10px;width:100%;border-collapse:collapse">
+            <tr><td style="color:#64748b;padding:2px 0">Risk Score</td><td style="font-weight:800;text-align:right">${w.risk_score?.toFixed(1) ?? '—'}/100</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Flood Probability</td><td style="font-weight:800;text-align:right">${(w.flood_probability * 100).toFixed(1)}%</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Inundation Risk</td><td style="font-weight:800;text-align:right">${w.inundation_risk_score?.toFixed(1) ?? '—'}</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Drainage Health</td><td style="font-weight:800;text-align:right">${w.drainage_health_score?.toFixed(1) ?? '—'}</td></tr>
+            <tr><td style="color:#64748b;padding:2px 0">Hotspots in Ward</td><td style="font-weight:800;text-align:right">${w.hotspot_count_in_ward}</td></tr>
+          </table>
+          ${w.recommended_actions?.length ? `
+            <div style="margin-top:8px;font-size:10px;font-weight:800;color:#374151">Recommended Actions:</div>
+            <ul style="margin:4px 0 0 12px;padding:0;font-size:10px;color:#64748b">
+              ${w.recommended_actions.slice(0, 3).map(a => `<li style="margin-bottom:2px">${a}</li>`).join('')}
+            </ul>` : ''}
+        </div>`;
+
+      const marker = L.marker([w.lat, w.lon], { icon: makeIcon(w.readiness_grade) })
+        .bindPopup(popupHtml, { maxWidth: 260, className: 'ward-popup' })
+        .addTo(leafletMapRef.current);
+      leafletMarkersRef.current.push(marker);
+      bounds.push([w.lat, w.lon]);
+    });
+
+    if (bounds.length > 0) {
+      leafletMapRef.current.fitBounds(bounds, { padding: [32, 32], maxZoom: 13 });
+    }
+
+    // Force map to use its container size after React render
+    setTimeout(() => leafletMapRef.current?.invalidateSize(), 100);
+  }, [wardReadiness]);
+
+  // Cleanup Leaflet map when component unmounts
+  useEffect(() => {
+    return () => {
+      if (leafletMapRef.current) {
+        leafletMapRef.current.remove();
+        leafletMapRef.current = null;
+      }
+    };
+  }, []);
 
   const refreshMlStatus = useCallback(async (): Promise<MLTrainingStatus | null> => {
     if (!mlApiUrl) return null;
@@ -1135,23 +1241,31 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 {[...wardReadiness]
                   .sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0))
                   .slice(0, 8)
-                  .map(w => (
-                    <div key={w.ward_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
-                            {w.ward_name ? w.ward_name : w.ward_id}
-                          </p>
-                          <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">
-                            Risk {fmt(w.risk_score, 1)} / 100 · Flood {(w.flood_probability * 100).toFixed(1)}%
-                          </p>
+                  .map(w => {
+                    const gradeColor =
+                      w.readiness_grade === 'A' ? 'bg-green-100 text-green-800 border-green-200' :
+                      w.readiness_grade === 'B' ? 'bg-lime-100 text-lime-800 border-lime-200' :
+                      w.readiness_grade === 'C' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                      w.readiness_grade === 'D' ? 'bg-orange-100 text-orange-800 border-orange-200' :
+                                                  'bg-red-100 text-red-800 border-red-200';
+                    return (
+                      <div key={w.ward_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/30">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-black text-slate-800 dark:text-slate-100 truncate">
+                              {w.ward_name ? w.ward_name : w.ward_id}
+                            </p>
+                            <p className="text-[10px] font-bold text-slate-400 mt-0.5 truncate">
+                              Risk {fmt(w.risk_score, 1)} / 100 · Flood {(w.flood_probability * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border flex-shrink-0 ${gradeColor}`}>
+                            {w.readiness_grade}
+                          </span>
                         </div>
-                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 flex-shrink-0">
-                          {w.readiness_grade}
-                        </span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             </div>
           )}
@@ -1160,6 +1274,39 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             <p className="text-xs font-bold text-slate-400">No ward results returned.</p>
           )}
         </div>
+
+        {/* ── Ward Map (shown full-width below when wards are loaded) ────────── */}
+        {wardReadiness && wardReadiness.length > 0 && (
+          <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700 col-span-full">
+            <div className="flex items-center gap-2 mb-3">
+              <Map className="w-4 h-4 text-emerald-500" />
+              <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+                Ward Risk Map — {wardReadiness.length} Wards Loaded
+              </h3>
+              <span className="ml-auto flex items-center gap-3 text-[9px] font-black uppercase tracking-widest">
+                {(['A','B','C','D','F'] as const).map(g => {
+                  const col = g === 'A' ? '#22c55e' : g === 'B' ? '#84cc16' : g === 'C' ? '#eab308' : g === 'D' ? '#f97316' : '#dc2626';
+                  const lbl = g === 'A' ? 'Safe' : g === 'B' ? 'Low' : g === 'C' ? 'Medium' : g === 'D' ? 'High' : 'Critical';
+                  return (
+                    <span key={g} className="flex items-center gap-1">
+                      <span style={{ background: col }} className="inline-block w-4 h-4 rounded-full shadow-sm" />
+                      <span className="text-slate-500 dark:text-slate-300">{g} — {lbl}</span>
+                    </span>
+                  );
+                })}
+              </span>
+            </div>
+            <p className="text-[10px] font-bold text-slate-400 mb-3">
+              Click any pin for ward details — risk score, flood probability, drainage health, and recommended actions.
+            </p>
+            {/* Leaflet map container */}
+            <div
+              ref={wardMapContainerRef}
+              style={{ height: '420px', borderRadius: '1rem', overflow: 'hidden', zIndex: 0 }}
+              className="w-full border border-slate-100 dark:border-slate-700"
+            />
+          </div>
+        )}
 
         <div className="bg-white dark:bg-slate-800 p-6 sm:p-8 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700">
           <div className="flex items-start justify-between gap-4 mb-4">

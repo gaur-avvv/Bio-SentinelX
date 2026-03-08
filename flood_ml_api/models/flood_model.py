@@ -68,6 +68,13 @@ FEATURE_COLUMNS = [
     "rainfall_1h_mm", "rainfall_3h_mm", "rainfall_6h_mm",
     "rainfall_24h_mm", "rainfall_48h_mm", "rainfall_72h_mm",
     "rainfall_intensity", "antecedent_precip_index",
+    # ── River discharge (GloFAS ensemble) ────────────────────────────────────
+    # river_discharge_m3s : raw observed/forecast median discharge (m³/s)
+    # discharge_anomaly_ratio : discharge / historical_p50. >1 = above median,
+    #                           >2 = significant, >4 = extreme.
+    # These two features provide the model with real hydrograph state,
+    # dramatically improving flood detection in catchment-driven events.
+    "river_discharge_m3s", "discharge_anomaly_ratio",
     "elevation_m", "slope_degrees", "aspect_degrees", "curvature",
     "flow_accumulation", "stream_distance_m", "water_body_distance_m",
     "soil_type_code", "soil_moisture_pct", "lulc_code",
