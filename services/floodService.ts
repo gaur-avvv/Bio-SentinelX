@@ -961,15 +961,28 @@ export async function fetchIndiaWardBoundaries(
   const json = await res.json() as { features?: Array<{ geometry: any; properties: any }> };
   if (!json.features?.length) return [];
 
-  return json.features
-      return {
-        wardId, wardName, cityName, stateName,
-        lat, lon,
-        geometry: f.geometry,
-        properties: props,
-      } satisfies IndiaWardFeature;
-    })
-    .filter(w => w.lat !== 0 && w.lon !== 0);
+  return json.features.map(f => {
+    const props = f.properties ?? {};
+    const wardId = props.ward_id || props.OBJECTID || '';
+    const wardName = props.ward_name || props.WARD_NAME || '';
+    const cityName = props.city_name || props.CITY_NAME || '';
+    const stateName = props.state_name || props.STATE_NAME || '';
+
+    let lat = 0; let lon = 0;
+    if (f.geometry?.type === 'Polygon' && f.geometry.coordinates?.[0]) {
+      [lon, lat] = ringCentroidWgs84(f.geometry.coordinates[0], true);
+    } else if (f.geometry?.type === 'MultiPolygon' && f.geometry.coordinates?.[0]?.[0]) {
+      [lon, lat] = ringCentroidWgs84(f.geometry.coordinates[0][0], true);
+    }
+
+    return {
+      wardId, wardName, cityName, stateName,
+      lat, lon,
+      geometry: f.geometry,
+      properties: props,
+    } satisfies IndiaWardFeature;
+  })
+  .filter(w => w.lat !== 0 && w.lon !== 0);
 }
 
 /**
