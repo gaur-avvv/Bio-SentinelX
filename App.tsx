@@ -251,6 +251,7 @@ const AppInner: React.FC = () => {
   useEffect(() => { localStorage.setItem('biosentinel_map_provider', mapProvider); }, [mapProvider]);
   useEffect(() => { localStorage.setItem('biosentinel_maptiler_key', mapTilerKey); }, [mapTilerKey]);
   useEffect(() => { localStorage.setItem('biosentinel_mapbox_token', mapboxToken); }, [mapboxToken]);
+  useEffect(() => { localStorage.setItem('biosentinel_arcgis_key', arcGisKey); }, [arcGisKey]);
 
   useEffect(() => {
     // Remove existing map SDK scripts to swap providers cleanly

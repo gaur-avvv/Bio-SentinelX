@@ -153,6 +153,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   mlApiKey, setMlApiKey, mapplsToken, setMapplsToken,
   mapProvider, setMapProvider, mapTilerKey, setMapTilerKey,
   mapboxToken, setMapboxToken,
+  arcGisKey, setArcGisKey,
   notificationSettings, setNotificationSettings,
   emailAlertSettings, setEmailAlertSettings, weather,
 }) => {
