@@ -142,6 +142,9 @@ const AppInner: React.FC = () => {
   const [mapboxToken, setMapboxToken] = useState<string>(
     () => localStorage.getItem('biosentinel_mapbox_token') || ''
   );
+  const [arcGisKey, setArcGisKey] = useState<string>(
+    () => localStorage.getItem('biosentinel_arcgis_key') || ''
+  );
 
   // ── Notification Settings ──────────────────────────────────────────────────
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => {
@@ -639,6 +642,7 @@ const AppInner: React.FC = () => {
                 mapplsToken={mapplsToken}
                 mapTilerKey={mapTilerKey}
                 mapboxToken={mapboxToken}
+                arcGisKey={arcGisKey}
               />
             ) : view === 'assistant' ? (
               <BioXAssistant
@@ -694,6 +698,8 @@ const AppInner: React.FC = () => {
                 setMapTilerKey={setMapTilerKey}
                 mapboxToken={mapboxToken}
                 setMapboxToken={setMapboxToken}
+                arcGisKey={arcGisKey}
+                setArcGisKey={setArcGisKey}
                 notificationSettings={notificationSettings}
                 setNotificationSettings={setNotificationSettings}
                 emailAlertSettings={emailAlertSettings}

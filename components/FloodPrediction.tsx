@@ -59,6 +59,7 @@ interface FloodPredictionProps {
   mapplsToken?: string;
   mapTilerKey?: string;
   mapboxToken?: string;
+  arcGisKey?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -198,7 +199,7 @@ function computeGiStar(
 
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
-  mapProvider = 'arcgis', mapplsToken, mapTilerKey, mapboxToken,
+  mapProvider = 'arcgis', mapplsToken, mapTilerKey, mapboxToken, arcGisKey,
 }) => {
   // ── Cache ───────────────────────────────────────────────────────────────────
   const { flood: floodCache, setFlood } = useDataCache();
@@ -2105,7 +2106,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
               <arcgis-embedded-map
                 class="w-full border border-slate-100 dark:border-slate-700"
                 style={{ height: '480px', borderRadius: '1rem', overflow: 'hidden', zIndex: 0 }}
-                item-id="0f338911b5a44c07817b1e0db50ec69f"
+                item-id="3b74e184127f46618ed3d50f464a8447"
                 theme="dark"
                 legend-enabled="true"
                 share-enabled="true"
@@ -2114,6 +2115,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 center={`${weather?.lon ?? 78.9629},${weather?.lat ?? 20.5937}`}
                 scale="500000"
                 portal-url="https://biosentinel.maps.arcgis.com"
+                {...(arcGisKey ? { "api-key": arcGisKey } : {})}
               ></arcgis-embedded-map>
             ) : (
               <div

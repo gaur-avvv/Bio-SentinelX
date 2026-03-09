@@ -63,6 +63,8 @@ export interface SettingsPageProps {
   setMapTilerKey: (key: string) => void;
   mapboxToken: string;
   setMapboxToken: (key: string) => void;
+  arcGisKey: string;
+  setArcGisKey: (key: string) => void;
   notificationSettings: NotificationSettings;
   setNotificationSettings: (s: NotificationSettings) => void;
   emailAlertSettings: EmailAlertSettings;
@@ -521,14 +523,24 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
               </div>
               {mapProvider === 'arcgis' ? (
-                <div className="animate-fade-in p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-blue-600 dark:text-blue-400 text-lg">🌏</span>
-                    <span className="text-xs font-black text-blue-800 dark:text-blue-300 uppercase tracking-tight">BioSentinel ArcGIS Portal</span>
+                <div className="animate-fade-in space-y-3">
+                  <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-blue-600 dark:text-blue-400 text-lg">🌏</span>
+                      <span className="text-xs font-black text-blue-800 dark:text-blue-300 uppercase tracking-tight">BioSentinel ArcGIS Portal</span>
+                    </div>
+                    <p className="text-[10px] font-bold text-blue-700 dark:text-blue-400 leading-relaxed mb-3">
+                      Powered by ArcGIS Maps SDK 5.0 with India Ward Boundaries and flood layers. Using a secure map from <code className="text-[9px] bg-blue-100 dark:bg-blue-900/50 px-1 py-0.5 rounded">biosentinel.maps.arcgis.com</code> requires an API Key.
+                    </p>
+                    <KeyInput
+                      label="ArcGIS Location Services API Key"
+                      value={arcGisKey}
+                      onChange={setArcGisKey}
+                      placeholder="Enter ArcGIS API Key..."
+                      getKeyUrl="https://developers.arcgis.com/dashboard/"
+                      note="Create an API key credentials item in your ArcGIS portal to access secure maps."
+                    />
                   </div>
-                  <p className="text-[10px] font-bold text-blue-700 dark:text-blue-400 leading-relaxed">
-                    Uses the official <strong>BioSentinel ArcGIS</strong> web map from <code className="text-[9px] bg-blue-100 dark:bg-blue-900/50 px-1 py-0.5 rounded">biosentinel.maps.arcgis.com</code>. No API key required — powered by ArcGIS Maps SDK 5.0 Embedded Component with India Ward Boundaries and flood layers.
-                  </p>
                 </div>
               ) : mapProvider === 'osm' ? (
                 <div className="animate-fade-in p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
