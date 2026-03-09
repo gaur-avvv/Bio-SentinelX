@@ -245,6 +245,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [indiaWards,       setIndiaWards]       = useState<IndiaWardFeature[]>([]);
   const [indiaWardsLoading, setIndiaWardsLoading] = useState(false);
   const [indiaWardsError,  setIndiaWardsError]  = useState('');
+  const [indiaWardsSource, setIndiaWardsSource] = useState<'esri' | 'overpass'>('esri');
+  const [overpassWaterways, setOverpassWaterways] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [queryingOverpass, setQueryingOverpass] = useState(false);
   const [showWardPolygons, setShowWardPolygons] = useState(true);
 
   // ── Map style ready gate — prevents 'Style is not done loading' crashes ──────
@@ -561,23 +564,48 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   }, [wardReadiness, weather?.lat, weather?.lon, showWardMarkers, mapProvider, mapTilerKey, mapboxToken]);
 
 
-  // ── Auto-fetch India Ward Boundaries when location changes ─────────────────
+  // ── Auto-fetch India Ward Boundaries (ESRI or Overpass) ─────────────────
   useEffect(() => {
     if (!weather?.lat || !weather?.lon) return;
-    setIndiaWardsLoading(true);
-    setIndiaWardsError('');
-    fetchIndiaWardBoundaries(weather.lat, weather.lon, 15)
-      .then(wards => {
-        setIndiaWards(wards);
+    
+    const fetchWards = async () => {
+      setIndiaWardsLoading(true);
+      setIndiaWardsError('');
+      setQueryingOverpass(mapProvider === 'osm');
+      
+      try {
+        if (mapProvider === 'osm') {
+          setIndiaWardsSource('overpass');
+          const [wards, waterways] = await Promise.all([
+            fetchOverpassWards(weather.lat, weather.lon, 15),
+            fetchOverpassWaterways(weather.lat, weather.lon, 10).catch(() => null)
+          ]);
+          setIndiaWards(wards);
+          setOverpassWaterways(waterways);
+        } else {
+          setIndiaWardsSource('esri');
+          const wards = await fetchIndiaWardBoundaries(weather.lat, weather.lon, 15);
+          setIndiaWards(wards);
+        }
+      } catch (err) {
+        console.warn('[Ward Boundaries]', err);
+        setIndiaWardsError(err instanceof Error ? err.message : 'Failed to load ward boundaries');
+        // Fallback to Overpass if ESRI fails and we haven't tried it yet
+        if (mapProvider !== 'osm') {
+           try {
+             setIndiaWardsSource('overpass');
+             const wards = await fetchOverpassWards(weather.lat, weather.lon, 15);
+             setIndiaWards(wards);
+           } catch {}
+        }
+      } finally {
         setIndiaWardsLoading(false);
-      })
-      .catch(err => {
-        // ESRI service may be unavailable or require auth — fail silently
-        console.warn('[India Ward Boundaries]', err?.message ?? err);
-        setIndiaWardsError(err?.message ?? 'Failed to load ward boundaries');
-        setIndiaWardsLoading(false);
-      });
-  }, [weather?.lat, weather?.lon]);
+        setQueryingOverpass(false);
+      }
+    };
+
+    fetchWards();
+  }, [weather?.lat, weather?.lon, mapProvider]);
 
   // ── India Ward Polygons overlay on MapTiler/Mapbox ──────────────────────────
   useEffect(() => {
@@ -585,18 +613,18 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     const isMappls = mapProvider === 'mappls';
     const map = mapRef.current;
 
-    // Clean up previous ward polygon layers
-    ['india-wards-fill', 'india-wards-stroke', 'india-wards-label'].forEach(id => {
+    // Clean up previous ward polygon and waterway layers
+    ['india-wards-fill', 'india-wards-stroke', 'india-wards-label', 'waterways-stroke', 'waterways-glow'].forEach(id => {
       try { if (map.getLayer?.(id)) map.removeLayer(id); } catch {}
     });
-    ['india-wards-source'].forEach(id => {
+    ['india-wards-source', 'waterways-source'].forEach(id => {
       try { if (map.getSource?.(id)) map.removeSource(id); } catch {}
     });
 
     if (!showWardPolygons) return;
 
     if (!isMappls) {
-      // Build GeoJSON FeatureCollection from India ward features
+      // 1. Wards Layer
       const geojsonFeatures = indiaWards
         .filter(w => w.geometry)
         .map(w => {
@@ -604,7 +632,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           const mlWard = wardReadiness?.find(m =>
             Math.abs(m.lat - w.lat) < 0.008 && Math.abs(m.lon - w.lon) < 0.008
           );
-          const grade = mlWard?.grade ?? 'C';
+          const grade = mlWard?.readiness_grade ?? 'C';
           const gradeColors: Record<string, string> = {
             A: '#22c55e', B: '#84cc16', C: '#eab308', D: '#f97316', F: '#dc2626',
           };
@@ -619,6 +647,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
               grade,
               fillColor,
               floodProbability: mlWard?.flood_probability ?? 0,
+              source:   indiaWardsSource,
             }
           };
         });
@@ -629,7 +658,6 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           data: { type: 'FeatureCollection', features: geojsonFeatures }
         });
 
-        // Fill layer — semi-transparent risk color
         map.addLayer({
           id: 'india-wards-fill',
           type: 'fill',
@@ -640,7 +668,6 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           }
         });
 
-        // Stroke layer
         map.addLayer({
           id: 'india-wards-stroke',
           type: 'line',
@@ -652,7 +679,6 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           }
         });
 
-        // Ward name labels
         map.addLayer({
           id: 'india-wards-label',
           type: 'symbol',
@@ -664,11 +690,42 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             'text-ignore-placement': false,
           },
           paint: {
-            'text-color': '#1e293b',
-            'text-halo-color': '#ffffff',
+            'text-color': '#dadada',
+            'text-halo-color': '#0f172a',
             'text-halo-width': 1.5,
           }
         });
+
+        // 2. Waterways Highlight
+        if (overpassWaterways) {
+          map.addSource('waterways-source', {
+            type: 'geojson',
+            data: overpassWaterways
+          });
+          
+          map.addLayer({
+            id: 'waterways-glow',
+            type: 'line',
+            source: 'waterways-source',
+            paint: {
+              'line-color': '#3b82f6',
+              'line-width': 10,
+              'line-opacity': 0.25,
+              'line-blur': 8
+            }
+          });
+
+          map.addLayer({
+            id: 'waterways-stroke',
+            type: 'line',
+            source: 'waterways-source',
+            paint: {
+              'line-color': '#60a5fa',
+              'line-width': 2.5,
+              'line-opacity': 0.8
+            }
+          });
+        }
 
         // Click for ward popup
         map.on('click', 'india-wards-fill', (e: any) => {
@@ -676,19 +733,19 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           const PopupClass =
             mapProvider === 'maptiler' ? maptilersdk.Popup
             : mapProvider === 'mapbox' ? mapboxgl.Popup
-            : maplibregl.Popup; // 'osm' uses plain MapLibre
+            : maplibregl.Popup;
 
           new PopupClass({ maxWidth: '260px' })
             .setLngLat(e.lngLat)
             .setHTML(`
               <div style="font-family:Inter,system-ui,sans-serif;padding:4px">
                 <div style="font-weight:900;font-size:12px;color:#0f172a;margin-bottom:4px">${props.wardName}</div>
-                <div style="font-size:10px;color:#64748b;margin-bottom:6px">${props.cityName}</div>
+                <div style="font-size:10px;color:#64748b;margin-bottom:6px">${props.cityName || ''}</div>
                 <div style="display:flex;gap:6px;align-items:center">
                   <span style="background:${props.fillColor};color:#fff;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:800">Grade ${props.grade}</span>
                   <span style="font-size:10px;color:#64748b">Flood Risk: ${(props.floodProbability * 100).toFixed(1)}%</span>
                 </div>
-                <div style="margin-top:4px;font-size:9px;color:#94a3b8">India Ward Boundaries · ESRI Living Atlas</div>
+                <div style="margin-top:4px;font-size:9px;color:#94a3b8">Source: ${props.source === 'overpass' ? 'OpenStreetMap (Overpass)' : 'ESRI Living Atlas'}</div>
               </div>
             `)
             .addTo(map);
@@ -696,10 +753,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         map.on('mouseenter', 'india-wards-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
         map.on('mouseleave', 'india-wards-fill', () => { map.getCanvas().style.cursor = ''; });
       } catch (e) {
-        console.warn('[India Wards] Layer error', e);
+        console.warn('[Ward/Waterway Layers] Error', e);
       }
     }
-  }, [indiaWards, showWardPolygons, mapProvider, wardReadiness, mapReady]);
+  }, [indiaWards, overpassWaterways, showWardPolygons, mapProvider, wardReadiness, mapReady, indiaWardsSource]);
 
   // ── Getis-Ord Gi* computation whenever ward data or India ward boundaries change ─
   useEffect(() => {
@@ -2079,11 +2136,17 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         {/* ── Ward Map (shown full-width below when wards are loaded) ────────── */}
         {wardReadiness && wardReadiness.length > 0 && (
           <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-[2rem] shadow-xl border border-slate-100 dark:border-slate-700 col-span-full">
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-3 mb-3">
               <Map className="w-4 h-4 text-emerald-500" />
               <h3 className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">
-                Ward Risk Map — {wardReadiness.length} Wards Loaded
+                Ward Risk Map — {wardReadiness?.length ?? indiaWards.length} Wards Loaded
               </h3>
+              {queryingOverpass && (
+                <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-700 rounded-full animate-pulse">
+                  <Activity className="w-3 h-3 text-blue-500 animate-spin" />
+                  <span className="text-[9px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest">Querying Overpass...</span>
+                </div>
+              )}
               <span className="ml-auto flex items-center gap-3 text-[9px] font-black uppercase tracking-widest">
                 {(['A','B','C','D','F'] as const).map(g => {
                   const col = g === 'A' ? '#22c55e' : g === 'B' ? '#84cc16' : g === 'C' ? '#eab308' : g === 'D' ? '#f97316' : '#dc2626';

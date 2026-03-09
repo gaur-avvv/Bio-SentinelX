@@ -962,29 +962,6 @@ export async function fetchIndiaWardBoundaries(
   if (!json.features?.length) return [];
 
   return json.features
-    .filter(f => f.geometry && f.properties)
-    .map(f => {
-      const props = f.properties as Record<string, unknown>;
-
-      // Try multiple possible field names for ward/city/state across ESRI schema versions
-      const wardId   = String(props['WARD_NO']    ?? props['Ward_No']    ?? props['OBJECTID']  ?? '');
-      const wardName = String(props['WARD_NAME']  ?? props['Ward_Name']  ?? props['WardName']  ?? props['NAME'] ?? `Ward ${wardId}`);
-      const cityName = String(props['CITY_NAME']  ?? props['City_Name']  ?? props['CITY']      ?? props['ULB_NAME'] ?? '');
-      const stateName= String(props['STATE_NAME'] ?? props['State_Name'] ?? props['STATE']     ?? '');
-
-      // Compute centroid from first polygon ring (geometry is already in WGS84)
-      let lon = 0, lat = 0;
-      try {
-        const geom = f.geometry;
-        if (geom.type === 'Polygon' && geom.coordinates?.[0]) {
-          [lon, lat] = ringCentroidWgs84(geom.coordinates[0], true);
-        } else if (geom.type === 'MultiPolygon' && geom.coordinates?.[0]?.[0]) {
-          [lon, lat] = ringCentroidWgs84(geom.coordinates[0][0], true);
-        } else if (geom.type === 'Point') {
-          [lon, lat] = [geom.coordinates[0], geom.coordinates[1]];
-        }
-      } catch {}
-
       return {
         wardId, wardName, cityName, stateName,
         lat, lon,
@@ -994,4 +971,125 @@ export async function fetchIndiaWardBoundaries(
     })
     .filter(w => w.lat !== 0 && w.lon !== 0);
 }
+
+/**
+ * Fetch ward-level administrative boundaries (admin_level 9 and 10) 
+ * from OpenStreetMap via Overpass API.
+ */
+export async function fetchOverpassWards(
+  lat: number,
+  lon: number,
+  radiusKm = 10
+): Promise<IndiaWardFeature[]> {
+  const radius = radiusKm * 1000;
+  
+  // Query for relations and ways with admin_level 9 or 10
+  const query = `
+    [out:json][timeout:25];
+    (
+      rel["admin_level"~"9|10"](around:${radius},${lat},${lon});
+      way["admin_level"~"9|10"](around:${radius},${lat},${lon});
+    );
+    out geom;
+  `;
+
+  const res = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: `data=${encodeURIComponent(query)}`,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+
+  if (!res.ok) throw new Error('Overpass API error');
+  
+  const data = await res.json();
+  if (!data.elements) return [];
+
+  return data.elements.map((el: any) => {
+    // Convert Overpass geometry to GeoJSON
+    let geometry: any;
+    let centroid: [number, number] = [0, 0];
+
+    if (el.type === 'way' && el.geometry) {
+      geometry = {
+        type: 'Polygon',
+        coordinates: [el.geometry.map((p: any) => [p.lon, p.lat])]
+      };
+      // Simple centroid
+      const lons = el.geometry.map((p: any) => p.lon);
+      const lats = el.geometry.map((p: any) => p.lat);
+      centroid = [
+        lons.reduce((a: any, b: any) => a + b) / lons.length,
+        lats.reduce((a: any, b: any) => a + b) / lats.length
+      ];
+    } else if (el.type === 'relation' && el.members) {
+      // For relations, we take the first way member's geometry as a fallback or out geom provides coords
+      const outer = el.members.find((m: any) => m.role === 'outer' || !m.role);
+      if (outer && outer.geometry) {
+        geometry = {
+          type: 'Polygon',
+          coordinates: [outer.geometry.map((p: any) => [p.lon, p.lat])]
+        };
+        centroid = [
+          outer.geometry.reduce((acc: any, p: any) => acc + p.lon, 0) / outer.geometry.length,
+          outer.geometry.reduce((acc: any, p: any) => acc + p.lat, 0) / outer.geometry.length
+        ];
+      }
+    }
+
+    const props = el.tags || {};
+    return {
+      wardId: String(el.id),
+      wardName: props.name || props['name:en'] || `Ward ${el.id}`,
+      cityName: props['addr:city'] || '',
+      stateName: props['addr:state'] || '',
+      lat: centroid[1],
+      lon: centroid[0],
+      geometry: geometry || { type: 'Point', coordinates: [centroid[0], centroid[1]] },
+      properties: props
+    };
+  }).filter((w: any) => w.geometry && w.lat !== 0);
+}
+
+/**
+ * Fetch rivers and streams from OSM to identify flood zones near center.
+ */
+export async function fetchOverpassWaterways(
+  lat: number,
+  lon: number,
+  radiusKm = 5
+): Promise<GeoJSON.FeatureCollection> {
+  const radius = radiusKm * 1000;
+  const query = `
+    [out:json][timeout:25];
+    (
+      way["waterway"~"river|stream"](around:${radius},${lat},${lon});
+      rel["waterway"~"river|stream"](around:${radius},${lat},${lon});
+    );
+    out geom;
+  `;
+
+  const res = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: `data=${encodeURIComponent(query)}`,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+
+  if (!res.ok) throw new Error('Overpass API error');
+  const data = await res.json();
+  
+  const features = (data.elements || []).map((el: any) => ({
+    type: 'Feature',
+    properties: el.tags,
+    geometry: el.type === 'way' ? {
+      type: 'LineString',
+      coordinates: el.geometry.map((p: any) => [p.lon, p.lat])
+    } : null
+  })).filter((f: any) => f.geometry);
+
+  return {
+    type: 'FeatureCollection',
+    features
+  };
+}
+
 

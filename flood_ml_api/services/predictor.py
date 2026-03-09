@@ -148,10 +148,10 @@ def _contributing_factors(X_row: pd.Series) -> dict:
 
     factors["rainfall_24h"] = round(min(r24 / 100, 1.0) * 0.35, 3)
     factors["drainage_deficit"] = round((1 - drain / 100) * 0.25, 3)
-    factors["soil_saturation"] = round(sm / 100 * 0.20, 3)
-    factors["low_elevation"] = round(max(0, (20 - elev) / 20) * 0.12, 3)
-    factors["imperviousness"] = round(imp / 100 * 0.08, 3)
-    factors["river_discharge"] = round(min(river / 500, 1.0) * 0.15, 3)
+    factors["soil_saturation"] = round(sm / 100 * 0.15, 3)
+    factors["low_elevation"] = round(max(0, (25 - elev) / 25) * 0.25, 3)  # Increased weight and threshold
+    factors["imperviousness"] = round(imp / 100 * 0.05, 3)
+    factors["river_discharge"] = round(min(river / 400, 1.0) * 0.20, 3)  # Increased weight, lower threshold for high impact
     return {k: v for k, v in sorted(factors.items(), key=lambda x: -x[1])}
 
 
@@ -328,8 +328,12 @@ class FloodPredictor:
             spatial_pattern = math.sin(wlat * 50) * math.cos(wlon * 50)
             dist_from_center = math.sqrt((wlat - lat)**2 + (wlon - lon)**2) * 111.32
             
-            rain_base = 100 + spatial_pattern * 40
-            elev = max(1.0, 12 + spatial_pattern * 8 + dist_from_center * 0.5)
+            rain_base = 120 + spatial_pattern * 50  # More volatile rainfall
+            # Area near center or certain spatial patterns considered "near river" or "low-lying basin"
+            elev = max(0.5, 10 + spatial_pattern * 12 + dist_from_center * 0.3)
+            
+            # Simulated river discharge impact for the ward
+            ward_river_impact = max(0.0, 100.0 + spatial_pattern * 200.0) if dist_from_center < 5 else 0.0
 
             req = PredictionRequest(
                 latitude=wlat,
@@ -340,6 +344,7 @@ class FloodPredictor:
                 rainfall_3h_mm=float(np.clip(rain_base * 0.35, 0, 200)),
                 rainfall_48h_mm=float(np.clip(rain_base * 1.5, 0, 500)),
                 elevation_m=float(elev),
+                river_discharge_m3s=float(ward_river_impact),
                 slope_degrees=float(np.clip(1.5 + spatial_pattern * 1.0, 0.1, 89)),
                 impervious_surface_pct=float(np.clip(65 - dist_from_center * 2 + spatial_pattern * 10, 0, 100)),
                 drainage_capacity_pct=float(np.clip(55 + spatial_pattern * 20, 0, 100)),
