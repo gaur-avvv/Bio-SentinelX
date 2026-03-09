@@ -11,8 +11,10 @@ import math
 from datetime import datetime, timezone
 from typing import List, Dict, Any
 
+import httpx
 import numpy as np
 import pandas as pd
+import os
 
 from models.flood_model import get_model
 from models.schemas import (
@@ -142,12 +144,14 @@ def _contributing_factors(X_row: pd.Series) -> dict:
     sm = X_row.get("soil_moisture_pct", 30)
     elev = X_row.get("elevation_m", 15)
     imp = X_row.get("impervious_surface_pct", 50)
+    river = X_row.get("river_discharge_m3s", 0)
 
     factors["rainfall_24h"] = round(min(r24 / 100, 1.0) * 0.35, 3)
     factors["drainage_deficit"] = round((1 - drain / 100) * 0.25, 3)
     factors["soil_saturation"] = round(sm / 100 * 0.20, 3)
     factors["low_elevation"] = round(max(0, (20 - elev) / 20) * 0.12, 3)
     factors["imperviousness"] = round(imp / 100 * 0.08, 3)
+    factors["river_discharge"] = round(min(river / 500, 1.0) * 0.15, 3)
     return {k: v for k, v in sorted(factors.items(), key=lambda x: -x[1])}
 
 
@@ -314,7 +318,7 @@ class FloodPredictor:
         Simulate ward-level analysis.
         In production: query ward polygon geometries from PostGIS.
         """
-        wards = self._generate_ward_grid(lat, lon, radius_km)
+        wards = await self._generate_ward_grid(lat, lon, radius_km)
         results = []
 
         for ward in wards:
@@ -381,13 +385,43 @@ class FloodPredictor:
         results.sort(key=lambda x: -x.risk_score)
         return results
 
-    def _generate_ward_grid(
+    async def _generate_ward_grid(
         self, lat: float, lon: float, radius_km: float
     ) -> List[tuple]:
-        """Generate synthetic ward centres (replace with real ward polygons)."""
+        """Generate synthetic ward centres or real wards from india_wards.csv if town matches."""
         ward_spacing_km = max(2.0, radius_km / 5)
         delta = ward_spacing_km / 111.32
         wards = []
+        
+        # 1. Reverse geocode to find city/town
+        town_name = None
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(
+                    f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}",
+                    headers={"User-Agent": "BioSentinelX-App"},
+                    timeout=5.0
+                )
+                if res.status_code == 200:
+                    address = res.json().get("address", {})
+                    town_name = address.get("city") or address.get("town") or address.get("village") or address.get("state_district")
+        except Exception as e:
+            logger.warning("Reverse geocoding failed: %s", e)
+        
+        # 2. Try matching the town in india_wards.csv
+        csv_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "india_wards.csv")
+        csv_path = os.path.abspath(csv_path)
+        real_wards = []
+        if town_name and os.path.exists(csv_path):
+            try:
+                df_wards = pd.read_csv(csv_path)
+                match = df_wards[df_wards["town"].str.lower() == town_name.lower()]
+                if not match.empty:
+                    real_wards = match.to_dict("records")
+            except Exception as e:
+                logger.warning("Failed to read india_wards.csv: %s", e)
+        
+        # 3. Generate wards (using real names from CSV if available, distributing them in a grid)
         idx = 1
         for i in range(-3, 4):
             for j in range(-3, 4):
@@ -395,7 +429,12 @@ class FloodPredictor:
                 wlon = round(lon + j * delta, 5)
                 dist = math.sqrt((i * ward_spacing_km) ** 2 + (j * ward_spacing_km) ** 2)
                 if dist <= radius_km:
-                    wards.append((wlat, wlon, f"WARD-{idx:03d}", f"Ward {idx}"))
+                    ward_name = f"Ward {idx}"
+                    ward_id = f"WARD-{idx:03d}"
+                    if real_wards and idx - 1 < len(real_wards):
+                        ward_name = real_wards[idx - 1].get("name", ward_name)
+                        ward_id = str(real_wards[idx - 1].get("code", ward_id))
+                    wards.append((wlat, wlon, ward_id, ward_name))
                     idx += 1
         return wards
 

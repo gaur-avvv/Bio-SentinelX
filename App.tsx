@@ -133,7 +133,7 @@ const AppInner: React.FC = () => {
   const [mapProvider, setMapProvider] = useState<'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis'>(
     () => {
       const stored = localStorage.getItem('biosentinel_map_provider') as 'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis';
-      return ['mappls', 'maptiler', 'mapbox', 'osm', 'arcgis'].includes(stored) ? stored : 'arcgis';
+      return ['mappls', 'maptiler', 'mapbox', 'osm', 'arcgis'].includes(stored) ? stored : 'osm'; // Default to osm, as arcgis requires login
     }
   );
   const [mapTilerKey, setMapTilerKey] = useState<string>(
