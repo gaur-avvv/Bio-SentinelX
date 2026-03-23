@@ -875,8 +875,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Alert Destination Email</span>
-                <a href="https://app.smtp.dev" target="_blank" rel="noopener noreferrer"
-                  className="text-[9px] font-black text-rose-600 hover:underline">Get smtp.dev inbox ↗</a>
               </div>
               <div className="relative group">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-rose-500 transition-colors" />
@@ -891,21 +889,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <p className="text-[9px] font-bold text-slate-400 leading-relaxed">
                 📧 Only used for severe weather alerts. No spam. No data sharing. Stored locally only.
               </p>
-            </div>
-
-            {/* smtp.dev API Key */}
-            <div className="space-y-1.5">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">smtp.dev API Key</span>
-              <div className="relative group">
-                <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-rose-500 transition-colors" />
-                <input
-                  type="password"
-                  value={emailAlertSettings.smtpDevApiKey}
-                  onChange={e => setEmailAlertSettings({ smtpDevApiKey: e.target.value })}
-                  placeholder="smtplabs_…"
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-rose-500 focus:bg-white dark:focus:bg-slate-700 transition-all"
-                />
-              </div>
             </div>
 
             {/* Lead time */}
@@ -962,27 +945,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </span>
             </label>
 
-            {/* Sender info (if provisioned) */}
-            {emailAlertSettings.senderEmail && (
-              <div className="flex items-center gap-2 p-2.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-800 rounded-xl">
-                <MailCheck className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                <p className="text-[9px] font-bold text-slate-500 dark:text-slate-400">
-                  Sender: <span className="text-emerald-600 font-black">{emailAlertSettings.senderEmail}</span>
-                </p>
-              </div>
-            )}
-
             {/* Test email button */}
             <button
               disabled={!emailAlertSettings.recipientEmail || emailTestStatus === 'loading'}
               onClick={async () => {
                 setEmailTestStatus('loading');
                 setEmailTestMsg('');
-                const result = await sendTestEmail(
-                  weather ?? null,
-                  emailAlertSettings,
-                  (patch) => setEmailAlertSettings(patch)
-                );
+                const result = await sendTestEmail(weather ?? null, emailAlertSettings);
                 setEmailTestStatus(result.ok ? 'ok' : 'err');
                 setEmailTestMsg(result.message);
                 setTimeout(() => setEmailTestStatus('idle'), 6000);

@@ -4,25 +4,11 @@
  * Architecture:
  *  1. Multi-factor algorithmic scoring engine with uncertainty reduction
  *  2. Scans future dailyForecast + advancedData to detect high-risk windows
- *  3. Auto-provisions smtp.dev sender account via REST API
- *  4. Sends richly-formatted HTML alert emails via smtpjs (browser SMTP)
- *  5. Strict deduplication so the same event never triggers twice
+ *  3. Sends richly-formatted HTML alert emails via Resend API (server-side)
+ *  4. Strict deduplication so the same event never triggers twice
  */
 
 import { WeatherData, DailyForecastItem, EmailAlertSettings } from '../types';
-
-declare const Email: {
-  send(config: {
-    Host?: string;
-    Username?: string;
-    Password?: string;
-    Port?: number;
-    To: string;
-    From: string;
-    Subject: string;
-    Body: string;
-  }): Promise<string>;
-};
 
 // ─── Scored forecast candidate ─────────────────────────────────────────────────
 export interface ForecastAlertCandidate {
@@ -41,71 +27,6 @@ export interface ForecastAlertCandidate {
   summary: string;              // human-readable one-liner
 }
 
-// ─── SMTP.DEV API helpers ──────────────────────────────────────────────────────
-const SMTP_API_BASE = 'https://api.smtp.dev';
-const SMTP_SEND_HOST = 'send.smtp.dev';
-
-/** Generate a cryptographically-adequate random password */
-function randomPassword(len = 20): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$';
-  let out = '';
-  const arr = new Uint8Array(len);
-  crypto.getRandomValues(arr);
-  arr.forEach(b => { out += chars[b % chars.length]; });
-  return out;
-}
-
-/**
- * Provisions (or re-uses) a smtp.dev sender account.
- * Returns { email, password } to use with smtpjs.
- * Stores credentials in the passed settings object (caller must persist).
- */
-export async function provisionSenderAccount(
-  settings: EmailAlertSettings
-): Promise<{ email: string; password: string } | null> {
-  // Already provisioned — reuse
-  if (settings.senderEmail && settings.senderPassword) {
-    return { email: settings.senderEmail, password: settings.senderPassword };
-  }
-
-  if (!settings.smtpDevApiKey) {
-    console.warn('[ForecastEmail] No smtp.dev API key — cannot provision sender.');
-    return null;
-  }
-
-  try {
-    // 1. Get first available active domain
-    const domainsRes = await fetch(`${SMTP_API_BASE}/domains?isActive=true&page=1`, {
-      headers: { 'X-API-KEY': settings.smtpDevApiKey, 'Accept': 'application/json' },
-    });
-    if (!domainsRes.ok) throw new Error(`Domains fetch failed: ${domainsRes.status}`);
-    const domainsData = await domainsRes.json() as any;
-    const domain: string | undefined = domainsData?.member?.[0]?.domain;
-    if (!domain) throw new Error('No active domains found on smtp.dev account.');
-
-    // 2. Create a unique sender account
-    const senderAddress = `biosentinel-alerts-${Date.now()}@${domain}`;
-    const senderPassword = randomPassword();
-
-    const createRes = await fetch(`${SMTP_API_BASE}/accounts`, {
-      method: 'POST',
-      headers: {
-        'X-API-KEY': settings.smtpDevApiKey,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify({ address: senderAddress, password: senderPassword }),
-    });
-    if (!createRes.ok) throw new Error(`Account creation failed: ${createRes.status}`);
-
-    console.log('[ForecastEmail] Sender account provisioned:', senderAddress);
-    return { email: senderAddress, password: senderPassword };
-  } catch (err) {
-    console.error('[ForecastEmail] Sender provisioning error:', err);
-    return null;
-  }
-}
-
 // ─── ALGORITHMIC MULTI-FACTOR SCORING ENGINE ───────────────────────────────────
 /**
  * DOMAIN 1 — Thermal Stress Score (0–25)
@@ -115,11 +36,6 @@ export async function provisionSenderAccount(
 function thermalStressScore(day: DailyForecastItem): { score: number; label: string } {
   const maxT = day.maxTemp;
   const minT = day.minTemp;
-
-  // Wet-bulb approximation (simplified Stull formula)
-  // WBT ≈ T * atan(0.151977*(RH+8.313659)^0.5) + atan(T+RH) - atan(RH-1.676331) + 0.00391838*(RH^1.5)*atan(0.023101*RH) - 4.686035
-  // We don't have RH per day in forecast, so use maxTemp directly with a mortality model:
-  // MMT (Minimum Mortality Temperature) for tropical: ~28–30°C. Excess risk above 35°C.
 
   let score = 0;
   let label = '';
@@ -141,7 +57,6 @@ function thermalStressScore(day: DailyForecastItem): { score: number; label: str
 /**
  * DOMAIN 2 — Storm/Atmospheric Instability Score (0–25)
  * Uses description text keywords as a heuristic proxy for CAPE-like instability
- * (forecast data doesn't include per-day CAPE, so we use description + pop to infer).
  */
 function stormInstabilityScore(day: DailyForecastItem): { score: number; label: string } {
   const desc = day.description.toLowerCase();
@@ -150,14 +65,12 @@ function stormInstabilityScore(day: DailyForecastItem): { score: number; label: 
   let score = 0;
   let label = '';
 
-  // Identify storm/convective keywords
   const extremeStorm = /(thunder|storm|tornado|cyclone|hurricane|typhoon|hail|blizzard)/i.test(desc);
   const severeWeather = /(heavy|severe|violent|extreme|squall)/i.test(desc);
   const moderateWeather = /(shower|overcast|rain|snow|sleet|fog|freezing rain)/i.test(desc);
 
   if (extremeStorm) {
-    // Log-scaled precipitation probability amplifier (Bayesian: both cues raise confidence)
-    const popAmp = 1 + Math.log1p(pop * 5) * 0.5;  // 1.0 → ~1.9 amplifier
+    const popAmp = 1 + Math.log1p(pop * 5) * 0.5;
     score = Math.min(25, Math.round(22 * popAmp));
     label = `Storm/convective event (${desc.slice(0,40)})`;
   } else if (severeWeather) {
@@ -175,7 +88,6 @@ function stormInstabilityScore(day: DailyForecastItem): { score: number; label: 
 /**
  * DOMAIN 3 — Flood/Precipitation Risk Score (0–20)
  * Bayesian combination of pop (probability) × precipitationSum (magnitude).
- * Sigmoid-like curve — exponential increase above flood threshold.
  */
 function floodRiskScore(day: DailyForecastItem): { score: number; label: string } {
   const precip = day.precipitationSum ?? 0;
@@ -183,11 +95,8 @@ function floodRiskScore(day: DailyForecastItem): { score: number; label: string 
 
   if (precip === 0 && pop < 0.4) return { score: 0, label: '' };
 
-  // Bayesian expected precipitation: E[P] = pop × precipitationSum
-  // This reduces uncertainty: high pop + high precip = high confidence
   const expectedPrecip = pop * precip;
 
-  // Sigmoid-like score: rapid increase above 25mm (flash flood threshold)
   let score = 0;
   let label = '';
 
@@ -210,7 +119,6 @@ function floodRiskScore(day: DailyForecastItem): { score: number; label: string 
 
 /**
  * DOMAIN 4 — Wind/Mechanical Damage Score (0–20)
- * Derived from description text since dailyForecast doesn't carry gusts per day.
  */
 function windDamageScore(day: DailyForecastItem): { score: number; label: string } {
   const desc = day.description.toLowerCase();
@@ -229,32 +137,23 @@ function windDamageScore(day: DailyForecastItem): { score: number; label: string
 
 /**
  * DOMAIN 5 — Synergy/Compounding Bonus (0–10)
- * When multiple domains fire together, the combined physiological burden is
- * non-linearly greater than individual risks.
  */
 function synergyBonus(
   thermalS: number, stormS: number, floodS: number, windS: number
 ): number {
   const activeFactors = [thermalS > 8, stormS > 8, floodS > 8, windS > 8].filter(Boolean).length;
-  if (activeFactors >= 3) return 10;  // 3+ simultaneous hazards
-  if (activeFactors === 2) return 5;  // 2 simultaneous hazards
+  if (activeFactors >= 3) return 10;
+  if (activeFactors === 2) return 5;
   return 0;
 }
 
 /**
  * DOMAIN 6 — Epistemic Uncertainty Penalty (0–10)
- * Forecast skill degrades with lead time. Apply a penalty that scales with
- * how far in the future the event is, reducing false alarms and over-alerting.
- *
- * Based on NWP ensemble spread research:
- * 0–2 days:  high confidence → penalty 0–2
- * 3–4 days:  moderate → penalty 3–5
- * 5–7 days:  lower confidence → penalty 6–10
  */
 function uncertaintyPenalty(hoursUntil: number): number {
-  if (hoursUntil <= 48)  return Math.floor(hoursUntil / 24) * 1;   // 0–2
-  if (hoursUntil <= 96)  return 3 + Math.floor((hoursUntil - 48) / 24) * 1;  // 3–4
-  return Math.min(10, 5 + Math.floor((hoursUntil - 96) / 24) * 1.5); // 5–7d
+  if (hoursUntil <= 48)  return Math.floor(hoursUntil / 24) * 1;
+  if (hoursUntil <= 96)  return 3 + Math.floor((hoursUntil - 48) / 24) * 1;
+  return Math.min(10, 5 + Math.floor((hoursUntil - 96) / 24) * 1.5);
 }
 
 // ─── MAIN ANALYSIS FUNCTION ────────────────────────────────────────────────────
@@ -273,10 +172,8 @@ export function analyseForecastWindow(
     const eventMs = day.dt * 1000;
     const hoursUntil = (eventMs - nowMs) / 3_600_000;
 
-    // Skip past events and beyond lead-time window
     if (hoursUntil < 1 || hoursUntil > leadTimeHours) continue;
 
-    // Run all scoring domains
     const { score: thermalScore, label: thermalLabel }  = thermalStressScore(day);
     const { score: stormScore,  label: stormLabel }     = stormInstabilityScore(day);
     const { score: floodScore,  label: floodLabel }     = floodRiskScore(day);
@@ -287,9 +184,8 @@ export function analyseForecastWindow(
     const rawScore = thermalScore + stormScore + floodScore + windScore + synergy;
     const totalScore = Math.max(0, Math.min(100, rawScore - uncertainty));
 
-    if (totalScore < 30) continue; // Skip genuinely low-risk days early
+    if (totalScore < 30) continue;
 
-    // Determine primary factor and summary
     const factors = [
       { score: thermalScore, label: thermalLabel, name: 'Thermal Stress' },
       { score: stormScore,   label: stormLabel,   name: 'Storm Risk' },
@@ -323,7 +219,6 @@ export function analyseForecastWindow(
     });
   }
 
-  // Sort highest score first
   return candidates.sort((a, b) => b.totalScore - a.totalScore);
 }
 
@@ -340,7 +235,7 @@ function buildEmailHtml(
     top.severityLabel === 'CRITICAL' ? '#fef2f2' :
     top.severityLabel === 'HIGH'     ? '#fffbeb' : '#f0fdfa';
 
-  const subject = `🚨 BioSentinel: ${top.severityLabel} Weather Alert — ${weather.city} in ~${top.hoursUntil}h`;
+  const subject = `BioSentinel: ${top.severityLabel} Weather Alert — ${weather.city} in ~${top.hoursUntil}h`;
 
   const rows = candidates.slice(0, 5).map(c => `
     <tr style="border-bottom:1px solid #e2e8f0;">
@@ -358,12 +253,12 @@ function buildEmailHtml(
 
   const factorTable = (c: ForecastAlertCandidate) => `
     <table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:13px;">
-      ${c.thermalScore > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;width:160px;">🌡 Thermal Stress</td><td style="padding:6px 8px;font-weight:700;">${c.thermalScore}/25</td></tr>` : ''}
-      ${c.stormScore  > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">⛈ Storm Instability</td><td style="padding:6px 8px;font-weight:700;">${c.stormScore}/25</td></tr>` : ''}
-      ${c.floodScore  > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">🌊 Flood Risk</td><td style="padding:6px 8px;font-weight:700;">${c.floodScore}/20</td></tr>` : ''}
-      ${c.windScore   > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">💨 Wind Damage</td><td style="padding:6px 8px;font-weight:700;">${c.windScore}/20</td></tr>` : ''}
-      ${c.synergy     > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">⚡ Synergy Bonus</td><td style="padding:6px 8px;font-weight:700;">+${c.synergy}</td></tr>` : ''}
-      <tr style="border-top:1px solid #e2e8f0;"><td style="padding:6px 8px;color:#64748b;">📊 Uncertainty Penalty</td><td style="padding:6px 8px;font-weight:700;color:#dc2626;">-${c.uncertaintyPenalty}</td></tr>
+      ${c.thermalScore > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;width:160px;">Thermal Stress</td><td style="padding:6px 8px;font-weight:700;">${c.thermalScore}/25</td></tr>` : ''}
+      ${c.stormScore  > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">Storm Instability</td><td style="padding:6px 8px;font-weight:700;">${c.stormScore}/25</td></tr>` : ''}
+      ${c.floodScore  > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">Flood Risk</td><td style="padding:6px 8px;font-weight:700;">${c.floodScore}/20</td></tr>` : ''}
+      ${c.windScore   > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">Wind Damage</td><td style="padding:6px 8px;font-weight:700;">${c.windScore}/20</td></tr>` : ''}
+      ${c.synergy     > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">Synergy Bonus</td><td style="padding:6px 8px;font-weight:700;">+${c.synergy}</td></tr>` : ''}
+      <tr style="border-top:1px solid #e2e8f0;"><td style="padding:6px 8px;color:#64748b;">Uncertainty Penalty</td><td style="padding:6px 8px;font-weight:700;color:#dc2626;">-${c.uncertaintyPenalty}</td></tr>
     </table>`;
 
   const html = `
@@ -391,7 +286,7 @@ function buildEmailHtml(
     <!-- ALERT BANNER -->
     <tr><td style="background:${severityBg};border-left:4px solid ${severityColour};padding:20px 32px;">
       <div style="font-size:14px;font-weight:900;color:${severityColour};text-transform:uppercase;letter-spacing:.05em;">
-        ⚠ Severe Weather Forecast — Action Required
+        Severe Weather Forecast — Action Required
       </div>
       <div style="font-size:24px;font-weight:800;color:#1e293b;margin-top:8px;">${weather.city}</div>
       <div style="font-size:14px;color:#64748b;margin-top:4px;">
@@ -437,29 +332,29 @@ function buildEmailHtml(
         </div>
         ${top.severityLabel === 'CRITICAL' ? `
         <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-          <span style="color:#dc2626;font-size:16px;flex-shrink:0;">🚨</span>
+          <span style="color:#dc2626;font-size:16px;flex-shrink:0;">*</span>
           <span style="font-size:13px;color:#374151;">Monitor official emergency broadcasts continuously. Prepare emergency kit and evacuation plan.</span>
         </div>
         <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-          <span style="color:#dc2626;font-size:16px;flex-shrink:0;">🏥</span>
+          <span style="color:#dc2626;font-size:16px;flex-shrink:0;">*</span>
           <span style="font-size:13px;color:#374151;">Identify nearest medical facility and keep emergency contacts accessible.</span>
         </div>` : ''}
         <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-          <span style="font-size:16px;flex-shrink:0;">📦</span>
+          <span style="font-size:16px;flex-shrink:0;">*</span>
           <span style="font-size:13px;color:#374151;">Stock at least 72h of water, food, medications, and essential supplies.</span>
         </div>
         <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-          <span style="font-size:16px;flex-shrink:0;">📱</span>
+          <span style="font-size:16px;flex-shrink:0;">*</span>
           <span style="font-size:13px;color:#374151;">Keep all devices charged. Enable location sharing with trusted contacts.</span>
         </div>
         ${top.floodScore > 10 ? `
         <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-          <span style="font-size:16px;flex-shrink:0;">🌊</span>
+          <span style="font-size:16px;flex-shrink:0;">*</span>
           <span style="font-size:13px;color:#374151;">Avoid low-lying areas, underpasses, and flood-prone zones. Move valuables to higher ground.</span>
         </div>` : ''}
         ${top.thermalScore > 14 ? `
         <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start;">
-          <span style="font-size:16px;flex-shrink:0;">🌡</span>
+          <span style="font-size:16px;flex-shrink:0;">*</span>
           <span style="font-size:13px;color:#374151;">Ensure access to cooling. Check on elderly neighbours and those without air conditioning.</span>
         </div>` : ''}
       </div>
@@ -487,35 +382,49 @@ function buildEmailHtml(
   return { subject, html };
 }
 
-// ─── SEND EMAIL VIA SMTPJS ────────────────────────────────────────────────────
-async function sendViaSmtpJs(
-  to: string,
-  from: string,
-  password: string,
+// ─── SEND EMAIL VIA RESEND API ────────────────────────────────────────────────
+async function sendViaResendApi(
+  recipientEmail: string,
   subject: string,
-  html: string
-): Promise<boolean> {
-  if (typeof Email === 'undefined') {
-    console.error('[ForecastEmail] smtpjs library not loaded. Check index.html script tag.');
-    return false;
-  }
+  htmlContent: string,
+  alertKey: string,
+  candidate: ForecastAlertCandidate,
+  city: string,
+  userId?: string
+): Promise<{ success: boolean; duplicate?: boolean; messageId?: string }> {
   try {
-    const result = await Email.send({
-      Host: SMTP_SEND_HOST,
-      Username: from,
-      Password: password,
-      Port: 587,
-      To: to,
-      From: from,
-      Subject: subject,
-      Body: html,
+    const response = await fetch('/api/send-alert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: userId || null,
+        recipientEmail,
+        subject,
+        htmlContent,
+        alertKey,
+        severity: candidate.severityLabel,
+        totalScore: candidate.totalScore,
+        city,
+        eventDate: candidate.day.date,
+        primaryFactor: candidate.primaryFactor,
+      }),
     });
-    const ok = result === 'OK';
-    if (!ok) console.warn('[ForecastEmail] smtpjs send result:', result);
-    return ok;
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      console.error('[ForecastEmail] API error:', result.error);
+      return { success: false };
+    }
+
+    return { 
+      success: result.success, 
+      duplicate: result.duplicate,
+      messageId: result.messageId 
+    };
   } catch (err) {
-    console.error('[ForecastEmail] smtpjs error:', err);
-    return false;
+    console.error('[ForecastEmail] Send error:', err);
+    return { success: false };
   }
 }
 
@@ -523,14 +432,15 @@ async function sendViaSmtpJs(
 /**
  * Call this after every weather refresh.
  * Analyses the forecast, filters actionable candidates, deduplicates,
- * provisions the smtp.dev sender if needed, and fires emails.
+ * and sends emails via Resend API.
  *
  * Returns updated sentAlertKeys (caller must persist to settings).
  */
 export async function checkAndSendForecastEmails(
   weather: WeatherData,
   settings: EmailAlertSettings,
-  onSettingsUpdate: (patch: Partial<EmailAlertSettings>) => void
+  onSettingsUpdate: (patch: Partial<EmailAlertSettings>) => void,
+  userId?: string
 ): Promise<void> {
   if (!settings.enabled) return;
   if (!settings.recipientEmail) return;
@@ -557,7 +467,7 @@ export async function checkAndSendForecastEmails(
     return;
   }
 
-  // --- 3. Deduplicate ---
+  // --- 3. Deduplicate (local cache) ---
   const alreadySent = new Set(settings.sentAlertKeys);
   const fresh = filtered.filter(c => !alreadySent.has(c.alertKey));
 
@@ -566,96 +476,73 @@ export async function checkAndSendForecastEmails(
     return;
   }
 
-  // --- 4. Provision sender account (if not yet done) ---
-  let senderEmail = settings.senderEmail;
-  let senderPassword = settings.senderPassword;
-
-  if (!senderEmail || !senderPassword) {
-    const creds = await provisionSenderAccount(settings);
-    if (!creds) {
-      console.error('[ForecastEmail] Could not provision sender — aborting.');
-      return;
-    }
-    senderEmail = creds.email;
-    senderPassword = creds.password;
-    onSettingsUpdate({ senderEmail, senderPassword });
-  }
-
-  // --- 5. Build and send email ---
+  // --- 4. Build and send email ---
   const { subject, html } = buildEmailHtml(fresh, weather);
 
   console.log(`[ForecastEmail] Sending alert to ${settings.recipientEmail} — ${fresh.length} event(s), top score ${fresh[0].totalScore}`);
 
-  const sent = await sendViaSmtpJs(
+  const result = await sendViaResendApi(
     settings.recipientEmail,
-    senderEmail,
-    senderPassword,
     subject,
-    html
+    html,
+    fresh[0].alertKey,
+    fresh[0],
+    weather.city,
+    userId
   );
 
-  if (sent) {
+  if (result.success && !result.duplicate) {
     const newKeys = [...settings.sentAlertKeys, ...fresh.map(c => c.alertKey)];
     onSettingsUpdate({ sentAlertKeys: newKeys });
     console.log('[ForecastEmail] Email sent successfully. Keys recorded:', fresh.map(c => c.alertKey));
+  } else if (result.duplicate) {
+    // Server confirmed duplicate - add to local cache too
+    const newKeys = [...settings.sentAlertKeys, ...fresh.map(c => c.alertKey)];
+    onSettingsUpdate({ sentAlertKeys: newKeys });
+    console.log('[ForecastEmail] Server detected duplicate - keys synced.');
   }
 }
 
 /** Send a test email immediately (ignores dedup, uses low score threshold) */
 export async function sendTestEmail(
   weather: WeatherData | null,
-  settings: EmailAlertSettings,
-  onSettingsUpdate: (patch: Partial<EmailAlertSettings>) => void
+  settings: EmailAlertSettings
 ): Promise<{ ok: boolean; message: string }> {
-  if (!settings.recipientEmail) return { ok: false, message: 'Please enter a recipient email address.' };
-
-  // Provision sender
-  let senderEmail = settings.senderEmail;
-  let senderPassword = settings.senderPassword;
-  if (!senderEmail || !senderPassword) {
-    const creds = await provisionSenderAccount(settings);
-    if (!creds) return { ok: false, message: 'Failed to create smtp.dev sender account. Check your API key.' };
-    senderEmail = creds.email;
-    senderPassword = creds.password;
-    onSettingsUpdate({ senderEmail, senderPassword });
+  if (!settings.recipientEmail) {
+    return { ok: false, message: 'Please enter a recipient email address.' };
   }
 
-  // Build test email (use real forecast if available, otherwise placeholder)
-  let subject = '🧪 BioSentinel Test — Email Alert System Active';
-  let html: string;
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(settings.recipientEmail)) {
+    return { ok: false, message: 'Please enter a valid email address.' };
+  }
 
-  if (weather && weather.dailyForecast.length > 0) {
-    const candidates = analyseForecastWindow(weather, 168); // 7 days for test
-    if (candidates.length > 0) {
-      const built = buildEmailHtml(candidates.slice(0, 3), weather);
-      subject = `🧪 TEST: ${built.subject}`;
-      html = built.html;
-    } else {
-      html = testPlaceholderHtml(settings.recipientEmail);
+  try {
+    const response = await fetch('/api/send-test-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipientEmail: settings.recipientEmail }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      return { 
+        ok: false, 
+        message: result.error || 'Failed to send test email. Please try again.' 
+      };
     }
-  } else {
-    html = testPlaceholderHtml(settings.recipientEmail);
+
+    return { 
+      ok: true, 
+      message: `Test email sent to ${settings.recipientEmail}! Check your inbox.` 
+    };
+  } catch (err) {
+    console.error('[ForecastEmail] Test email error:', err);
+    return { 
+      ok: false, 
+      message: 'Network error. Please check your connection and try again.' 
+    };
   }
-
-  const sent = await sendViaSmtpJs(settings.recipientEmail, senderEmail, senderPassword, subject, html);
-  return sent
-    ? { ok: true, message: `Test email sent to ${settings.recipientEmail}! Check your inbox.` }
-    : { ok: false, message: 'SMTP send failed. Ensure the recipient is a valid smtp.dev address.' };
-}
-
-function testPlaceholderHtml(recipientEmail: string): string {
-  return `
-    <div style="font-family:Inter,Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#0f172a;border-radius:20px;color:#e2e8f0;">
-      <div style="font-size:11px;font-weight:800;letter-spacing:.15em;color:#14b8a6;text-transform:uppercase;">BioSentinel</div>
-      <div style="font-size:22px;font-weight:900;margin:8px 0 20px;color:#fff;">Email Alert System Active ✅</div>
-      <p style="color:#94a3b8;font-size:14px;line-height:1.6;">
-        This test confirms that BioSentinel can successfully send severe weather alerts to
-        <strong style="color:#14b8a6;">${recipientEmail}</strong>.<br><br>
-        When severe conditions are detected in your forecast, a detailed alert will be sent here
-        automatically — before the weather arrives.
-      </p>
-      <div style="margin-top:20px;padding:14px 18px;background:#1e293b;border-radius:12px;font-size:12px;color:#64748b;">
-        Your email is used exclusively for severe weather alerts. No spam, no data sharing.
-      </div>
-    </div>`;
 }
