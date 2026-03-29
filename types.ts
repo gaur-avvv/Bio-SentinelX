@@ -171,7 +171,7 @@ export interface RiskItem {
   description: string;
 }
 
-export type AiProvider = 'gemini' | 'groq' | 'pollinations' | 'openrouter' | 'siliconflow' | 'cerebras' | 'huggingface';
+export type AiProvider = 'gemini' | 'groq' | 'pollinations' | 'openrouter' | 'siliconflow' | 'cerebras' | 'ollama';
 
 export const AI_MODELS: Record<AiProvider, Array<{ value: string; label: string }>> = {
   gemini: [
@@ -250,10 +250,15 @@ export const AI_MODELS: Record<AiProvider, Array<{ value: string; label: string 
     { value: 'Qwen/Qwen3-VL-235B-A22B-Instruct',           label: 'Qwen3 VL 235B — Vision Flagship ($1.5/M)' },
     { value: 'Qwen/Qwen3-VL-32B-Instruct',                 label: 'Qwen3 VL 32B — Vision ($0.6/M)' },
   ],
-  huggingface: [
-    { value: 'smalllm-1.7b',  label: 'SmallLM 1.7B — Health Triage & Alerts (Ultra Low Cost)' },
-    { value: 'smalllm-135m',  label: 'SmallLM 135M — Keyword Extraction (Fastest)' },
-    { value: 'qwen-1.5b',     label: 'Qwen 2.5 1.5B — Structured Analysis & Compliance' },
+  ollama: [
+    { value: 'smollm2-135m',   label: 'SmolLM2 135M — Keyword Extraction (Fastest)' },
+    { value: 'smollm2-1.7b',   label: 'SmolLM2 1.7B — Health Triage & Alerts' },
+    { value: 'qwen2.5-1.5b',   label: 'Qwen 2.5 1.5B — Structured Analysis & Compliance' },
+    { value: 'qwen2.5-3b',     label: 'Qwen 2.5 3B — Advanced Reasoning & Reports' },
+    { value: 'llama3.2-1b',    label: 'Llama 3.2 1B — Fast Triage & Classification' },
+    { value: 'llama3.2-3b',    label: 'Llama 3.2 3B — Balanced Health Assessment' },
+    { value: 'phi3-mini',      label: 'Phi-3 Mini 3.8B — Medical Reasoning' },
+    { value: 'medllama2',      label: 'MedLlama2 7B — Medical Domain Specialist' },
   ],
 };
 
