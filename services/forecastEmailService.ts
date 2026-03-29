@@ -573,8 +573,8 @@ async function sendEmail(
   subject: string,
   html: string,
   settings: EmailAlertSettings,
-  senderEmail: string,
-  senderPassword: string
+  senderEmail?: string,
+  senderPassword?: string
 ): Promise<boolean> {
   // Try EmailJS first (works with any email address)
   if (settings.emailJsPublicKey && settings.emailJsServiceId && settings.emailJsTemplateId) {
@@ -586,8 +586,11 @@ async function sendEmail(
     }
     console.warn('[ForecastEmail] EmailJS failed, falling back to smtpjs...');
   }
-  // Fallback to smtpjs
-  return sendViaSmtpJs(to, senderEmail, senderPassword, subject, html);
+  // Fallback to smtpjs (only if credentials are available)
+  if (senderEmail && senderPassword) {
+    return sendViaSmtpJs(to, senderEmail, senderPassword, subject, html);
+  }
+  return false;
 }
 
 // ─── PUBLIC ENTRY POINT ────────────────────────────────────────────────────────
@@ -637,14 +640,17 @@ export async function checkAndSendForecastEmails(
     return;
   }
 
-  // --- 4. Provision sender account (if not yet done) ---
-  let senderEmail = settings.senderEmail;
-  let senderPassword = settings.senderPassword;
+  // --- 4. Check if EmailJS is configured (primary path) ---
+  const hasEmailJs = !!(settings.emailJsPublicKey && settings.emailJsServiceId && settings.emailJsTemplateId);
 
-  if (!senderEmail || !senderPassword) {
+  // --- 5. Provision smtp.dev sender only if EmailJS is NOT configured ---
+  let senderEmail: string | undefined = settings.senderEmail || undefined;
+  let senderPassword: string | undefined = settings.senderPassword || undefined;
+
+  if (!hasEmailJs && (!senderEmail || !senderPassword)) {
     const creds = await provisionSenderAccount(settings);
     if (!creds) {
-      console.error('[ForecastEmail] Could not provision sender — aborting.');
+      console.error('[ForecastEmail] No EmailJS configured and could not provision smtp.dev sender — aborting.');
       return;
     }
     senderEmail = creds.email;
@@ -652,7 +658,7 @@ export async function checkAndSendForecastEmails(
     onSettingsUpdate({ senderEmail, senderPassword });
   }
 
-  // --- 5. Build and send email ---
+  // --- 6. Build and send email ---
   const { subject, html } = buildEmailHtml(fresh, weather);
 
   console.log(`[ForecastEmail] Sending alert to ${settings.recipientEmail} — ${fresh.length} event(s), top score ${fresh[0].totalScore}`);
@@ -681,15 +687,21 @@ export async function sendTestEmail(
 ): Promise<{ ok: boolean; message: string }> {
   if (!settings.recipientEmail) return { ok: false, message: 'Please enter a recipient email address.' };
 
-  // Provision sender
-  let senderEmail = settings.senderEmail;
-  let senderPassword = settings.senderPassword;
-  if (!senderEmail || !senderPassword) {
-    const creds = await provisionSenderAccount(settings);
-    if (!creds) return { ok: false, message: 'Failed to create smtp.dev sender account. Check your API key.' };
-    senderEmail = creds.email;
-    senderPassword = creds.password;
-    onSettingsUpdate({ senderEmail, senderPassword });
+  // Check if EmailJS is configured (primary send method)
+  const hasEmailJs = !!(settings.emailJsPublicKey && settings.emailJsServiceId && settings.emailJsTemplateId);
+
+  // Provision smtp.dev sender only if EmailJS is NOT configured
+  let senderEmail: string | undefined = settings.senderEmail || undefined;
+  let senderPassword: string | undefined = settings.senderPassword || undefined;
+
+  if (!hasEmailJs) {
+    if (!senderEmail || !senderPassword) {
+      const creds = await provisionSenderAccount(settings);
+      if (!creds) return { ok: false, message: 'No email provider configured. Set up EmailJS (recommended) or provide a valid smtp.dev API key.' };
+      senderEmail = creds.email;
+      senderPassword = creds.password;
+      onSettingsUpdate({ senderEmail, senderPassword });
+    }
   }
 
   // Build test email (use real forecast if available, otherwise placeholder)

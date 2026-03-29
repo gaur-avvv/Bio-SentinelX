@@ -523,6 +523,18 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
+  // ---- HuggingFace (Small Models) ----
+  if (aiProvider === 'huggingface') {
+    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
+    try {
+      const { inferWithSmallModel } = await import('./smallModelService');
+      const { text } = await inferWithSmallModel(aiModel, userPrompt, systemInstruction, apiKey, 1024);
+      return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
+    } catch (error: any) {
+      throw new Error(error?.message || 'HuggingFace small model generation failed.');
+    }
+  }
+
   // ---- Gemini (default) ----
   const geminiKey = apiKey || process.env.API_KEY;
   if (!geminiKey) {
@@ -776,6 +788,14 @@ RESEARCH TASKS:
   if (aiProvider === 'cerebras') {
     if (!apiKey) throw new Error('Cerebras API key is missing. Please add it in the sidebar.');
     const text = await generateWithCerebras(systemInstruction, userPrompt, aiModel, apiKey);
+    return stripThinkingBlocks(text) || 'Research analysis unavailable.';
+  }
+
+  // ---- HuggingFace (Small Models) ----
+  if (aiProvider === 'huggingface') {
+    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
+    const { inferWithSmallModel } = await import('./smallModelService');
+    const { text } = await inferWithSmallModel(aiModel, userPrompt, systemInstruction, apiKey, 1024);
     return stripThinkingBlocks(text) || 'Research analysis unavailable.';
   }
 
@@ -1045,6 +1065,15 @@ export const chatWithWeatherAssistant = async (
       apiKey || ''
     );
     return stripThinkingBlocks(text);
+  }
+
+  // ---- HuggingFace (Small Models) ----
+  if (aiProvider === 'huggingface') {
+    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
+    const { inferWithSmallModel } = await import('./smallModelService');
+    const fullPrompt = history.map(m => `${m.role}: ${m.text}`).join('\n') + `\nuser: ${message}`;
+    const { text } = await inferWithSmallModel(aiModel, fullPrompt, oaiMessages[0].content, apiKey, 1024);
+    return stripThinkingBlocks(text || "I'm sorry, I couldn't process that request.");
   }
 
   // ---- Gemini (default) ----
@@ -1357,6 +1386,13 @@ List 5 specific numerical thresholds that should trigger escalated response (e.g
   if (aiProvider === 'siliconflow') {
     const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey || ''));
     return stripThinkingBlocks(text);
+  }
+  // ---- HuggingFace (Small Models) ----
+  if (aiProvider === 'huggingface') {
+    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
+    const { inferWithSmallModel } = await import('./smallModelService');
+    const { text } = await inferWithSmallModel(aiModel, userPrompt, systemInstruction, apiKey, 1024);
+    return stripThinkingBlocks(text) || 'Unable to generate flood analysis.';
   }
   // ---- Gemini (default) ----
   const key = apiKey || process.env.API_KEY;

@@ -113,9 +113,12 @@ const AppInner: React.FC = () => {
   const [cerebrasKey, setCerebrasKey] = useState<string>(
     () => localStorage.getItem('biosentinel_cerebras_key') || process.env.CEREBRAS_API_KEY || ''
   );
+  const [huggingfaceKey, setHuggingfaceKey] = useState<string>(
+    () => localStorage.getItem('biosentinel_huggingface_key') || process.env.HUGGINGFACE_API_KEY || ''
+  );
   const [aiProvider, setAiProvider] = useState<AiProvider>(() => {
     const p = localStorage.getItem('biosentinel_ai_provider') as AiProvider;
-    return p && ['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras'].includes(p) ? p : 'gemini';
+    return p && ['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras', 'huggingface'].includes(p) ? p : 'gemini';
   });
   const [aiModel, setAiModel] = useState<string>(() => {
     return localStorage.getItem('biosentinel_ai_model') || AI_MODELS.gemini[0].value;
@@ -238,6 +241,7 @@ const AppInner: React.FC = () => {
   useEffect(() => { if (openrouterKey)  localStorage.setItem('biosentinel_openrouter_key',  openrouterKey);  else localStorage.removeItem('biosentinel_openrouter_key');  }, [openrouterKey]);
   useEffect(() => { if (siliconflowKey) localStorage.setItem('biosentinel_siliconflow_key', siliconflowKey); else localStorage.removeItem('biosentinel_siliconflow_key'); }, [siliconflowKey]);
   useEffect(() => { if (cerebrasKey) localStorage.setItem('biosentinel_cerebras_key', cerebrasKey); else localStorage.removeItem('biosentinel_cerebras_key'); }, [cerebrasKey]);
+  useEffect(() => { if (huggingfaceKey) localStorage.setItem('biosentinel_huggingface_key', huggingfaceKey); else localStorage.removeItem('biosentinel_huggingface_key'); }, [huggingfaceKey]);
   useEffect(() => { localStorage.setItem('biosentinel_ai_provider', aiProvider); }, [aiProvider]);
   useEffect(() => { localStorage.setItem('biosentinel_ai_model', aiModel); }, [aiModel]);
   useEffect(() => { localStorage.setItem('biosentinel_use_openweather', useOpenWeather.toString()); }, [useOpenWeather]);
@@ -315,6 +319,7 @@ const AppInner: React.FC = () => {
     : aiProvider === 'openrouter' ? openrouterKey
     : aiProvider === 'siliconflow' ? siliconflowKey
     : aiProvider === 'cerebras' ? cerebrasKey
+    : aiProvider === 'huggingface' ? huggingfaceKey
     : geminiKey;
 
   const AUTO_REFRESH_MS = notificationSettings.forecastUpdatePeriodMinutes * 60 * 1000;
@@ -690,6 +695,8 @@ const AppInner: React.FC = () => {
                 setSiliconflowKey={setSiliconflowKey}
                 cerebrasKey={cerebrasKey}
                 setCerebrasKey={setCerebrasKey}
+                huggingfaceKey={huggingfaceKey}
+                setHuggingfaceKey={setHuggingfaceKey}
                 aiProvider={aiProvider}
                 setAiProvider={setAiProvider}
                 aiModel={aiModel}

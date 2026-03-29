@@ -41,6 +41,8 @@ interface ConfigSidebarProps {
   setOpenrouterKey: (key: string) => void;
   siliconflowKey: string;
   setSiliconflowKey: (key: string) => void;
+  huggingfaceKey: string;
+  setHuggingfaceKey: (key: string) => void;
   aiProvider: AiProvider;
   setAiProvider: (p: AiProvider) => void;
   aiModel: string;
@@ -58,6 +60,7 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
   location, setLocation, onFetchWeather, loadingState, hasWeatherData, detectedCity,
   geminiKey, setGeminiKey, groqKey, setGroqKey, pollinationsKey, setPollinationsKey,
   openrouterKey, setOpenrouterKey, siliconflowKey, setSiliconflowKey,
+  huggingfaceKey, setHuggingfaceKey,
   aiProvider, setAiProvider, aiModel, setAiModel,
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
   mlApiKey, setMlApiKey, onClose
@@ -457,7 +460,7 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
 
           {/* Provider Tabs */}
           <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-2xl">
-            {(['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow'] as AiProvider[]).map(p => (
+            {(['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'huggingface'] as AiProvider[]).map(p => (
               <button
                 key={p}
                 onClick={() => {
@@ -470,7 +473,7 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
                     : 'text-slate-400 hover:text-slate-600'
                 }`}
               >
-                {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'OpenRouter' : p === 'siliconflow' ? 'SiliconFlow' : p.charAt(0).toUpperCase() + p.slice(1)}
+                {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'OpenRouter' : p === 'siliconflow' ? 'SiliconFlow' : p === 'huggingface' ? 'HF Small' : p.charAt(0).toUpperCase() + p.slice(1)}
               </button>
             ))}
           </div>
@@ -545,6 +548,18 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
               <p className="text-[9px] font-bold text-slate-400 leading-tight">
                 Get a key at <a href="https://cloud.siliconflow.com/account/ak" target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:underline">cloud.siliconflow.com</a>. Affordable pay-per-use access to top open-source models including DeepSeek, Qwen3, Kimi and MiniMax.
               </p>
+            </div>
+          ) : aiProvider === 'huggingface' ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">HuggingFace API Key</span>
+                <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-[9px] font-black text-teal-600 hover:underline">Get Key</a>
+              </div>
+              <div className="relative group">
+                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-teal-500 transition-colors" />
+                <input type="password" value={huggingfaceKey} onChange={e => setHuggingfaceKey(e.target.value)} placeholder="hf_..." className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500 focus:bg-white dark:focus:bg-slate-700" />
+              </div>
+              <p className="text-[9px] font-bold text-slate-400">Free tier. Ultra-low-cost small models with self-learning intelligence.</p>
             </div>
           ) : (
             <div className="space-y-1.5">
