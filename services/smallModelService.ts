@@ -922,7 +922,9 @@ export async function runSmallModelPipeline(
   weatherContext: string,
   healthQuery: string,
   _apiKey: string, // kept for API compatibility; Ollama needs no key
-  domain: string = 'general'
+  domain: string = 'general',
+  maxTokens: number = 1024,
+  systemPromptOverride?: string
 ): Promise<{
   result: string;
   guardrails: GuardrailResult;
@@ -938,7 +940,9 @@ export async function runSmallModelPipeline(
   // Step 2: Build context-enriched prompt
   const domainContext = getDomainMemoryContext(domain);
   const adaptiveContext = getAdaptivePromptContext(domain);
-  const systemPrompt = `You are BioSentinel, a specialized health-weather intelligence assistant.
+  const systemPrompt = systemPromptOverride
+    ? `${systemPromptOverride}\n${domainContext}\n${adaptiveContext}`
+    : `You are BioSentinel, a specialized health-weather intelligence assistant.
 Analyze weather conditions and their health impacts. Be concise and actionable.
 ${domainContext}
 ${adaptiveContext}
@@ -952,7 +956,7 @@ Focus on: ${model.specialization}`;
     fullPrompt,
     systemPrompt,
     '',
-    512
+    maxTokens
   );
 
   // Step 4: Apply guardrails

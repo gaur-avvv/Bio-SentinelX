@@ -628,7 +628,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
         {/* 6. API Keys ────────────────────────────────────────────────── */}
         <Card icon={<Lock className="w-5 h-5" />} title="API Keys" subtitle="Provider credentials"
-          badge={geminiKey || groqKey || pollinationsKey || openrouterKey || siliconflowKey || cerebrasKey || ollamaEndpoint ? 'Configured' : 'Not set'}
+          badge={geminiKey || groqKey || pollinationsKey || openrouterKey || siliconflowKey || cerebrasKey ? 'Configured' : 'Not set'}
           accent="rose">
           <div className="space-y-4">
             {aiProvider === 'pollinations' && (

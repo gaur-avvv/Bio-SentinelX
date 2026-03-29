@@ -527,7 +527,7 @@ export const generateHealthRiskAssessment = async (
   if (aiProvider === 'ollama') {
     try {
       const { runSmallModelPipeline } = await import('./smallModelService');
-      const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Generate health risk assessment', '', 'health_assessment');
+      const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Generate health risk assessment', '', 'health_assessment', 1024, systemInstruction);
       return { markdown: stripThinkingBlocks(result) || 'Analysis unavailable.', groundingChunks: [] };
     } catch (error: any) {
       throw new Error(error?.message || 'Ollama small model generation failed.');
@@ -793,7 +793,7 @@ RESEARCH TASKS:
   // ---- Ollama (Small Models) ----
   if (aiProvider === 'ollama') {
     const { runSmallModelPipeline } = await import('./smallModelService');
-    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze historical climate health data', '', 'historical_research');
+    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze historical climate health data', '', 'historical_research', 1024, systemInstruction);
     return stripThinkingBlocks(result) || 'Research analysis unavailable.';
   }
 
@@ -1390,7 +1390,7 @@ List 5 specific numerical thresholds that should trigger escalated response (e.g
   // ---- Ollama (Small Models) ----
   if (aiProvider === 'ollama') {
     const { runSmallModelPipeline } = await import('./smallModelService');
-    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze flood risk', '', 'flood_analysis');
+    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze flood risk', '', 'flood_analysis', 1024, systemInstruction);
     return stripThinkingBlocks(result) || 'Unable to generate flood analysis.';
   }
   // ---- Gemini (default) ----
