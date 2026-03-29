@@ -523,15 +523,14 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
-  // ---- HuggingFace (Small Models) ----
-  if (aiProvider === 'huggingface') {
-    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
+  // ---- Ollama (Small Models) ----
+  if (aiProvider === 'ollama') {
     try {
-      const { inferWithSmallModel } = await import('./smallModelService');
-      const { text } = await inferWithSmallModel(aiModel, userPrompt, systemInstruction, apiKey, 1024);
-      return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
+      const { runSmallModelPipeline } = await import('./smallModelService');
+      const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Generate health risk assessment', '', 'health_assessment');
+      return { markdown: stripThinkingBlocks(result) || 'Analysis unavailable.', groundingChunks: [] };
     } catch (error: any) {
-      throw new Error(error?.message || 'HuggingFace small model generation failed.');
+      throw new Error(error?.message || 'Ollama small model generation failed.');
     }
   }
 
@@ -791,12 +790,11 @@ RESEARCH TASKS:
     return stripThinkingBlocks(text) || 'Research analysis unavailable.';
   }
 
-  // ---- HuggingFace (Small Models) ----
-  if (aiProvider === 'huggingface') {
-    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
-    const { inferWithSmallModel } = await import('./smallModelService');
-    const { text } = await inferWithSmallModel(aiModel, userPrompt, systemInstruction, apiKey, 1024);
-    return stripThinkingBlocks(text) || 'Research analysis unavailable.';
+  // ---- Ollama (Small Models) ----
+  if (aiProvider === 'ollama') {
+    const { runSmallModelPipeline } = await import('./smallModelService');
+    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze historical climate health data', '', 'historical_research');
+    return stripThinkingBlocks(result) || 'Research analysis unavailable.';
   }
 
   // ---- Gemini (default, with Google Search grounding) ----
@@ -1067,13 +1065,15 @@ export const chatWithWeatherAssistant = async (
     return stripThinkingBlocks(text);
   }
 
-  // ---- HuggingFace (Small Models) ----
-  if (aiProvider === 'huggingface') {
-    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
-    const { inferWithSmallModel } = await import('./smallModelService');
-    const fullPrompt = history.map(m => `${m.role}: ${m.text}`).join('\n') + `\nuser: ${message}`;
-    const { text } = await inferWithSmallModel(aiModel, fullPrompt, oaiMessages[0].content, apiKey, 1024);
-    return stripThinkingBlocks(text || "I'm sorry, I couldn't process that request.");
+  // ---- Ollama (Small Models) ----
+  if (aiProvider === 'ollama') {
+    const { chatWithOllama } = await import('./smallModelService');
+    const text = await chatWithOllama(
+      oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+      aiModel,
+      1024
+    );
+    return stripThinkingBlocks(text);
   }
 
   // ---- Gemini (default) ----
@@ -1387,12 +1387,11 @@ List 5 specific numerical thresholds that should trigger escalated response (e.g
     const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey || ''));
     return stripThinkingBlocks(text);
   }
-  // ---- HuggingFace (Small Models) ----
-  if (aiProvider === 'huggingface') {
-    if (!apiKey) throw new Error('HuggingFace API key is missing. Get a free key at huggingface.co/settings/tokens');
-    const { inferWithSmallModel } = await import('./smallModelService');
-    const { text } = await inferWithSmallModel(aiModel, userPrompt, systemInstruction, apiKey, 1024);
-    return stripThinkingBlocks(text) || 'Unable to generate flood analysis.';
+  // ---- Ollama (Small Models) ----
+  if (aiProvider === 'ollama') {
+    const { runSmallModelPipeline } = await import('./smallModelService');
+    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze flood risk', '', 'flood_analysis');
+    return stripThinkingBlocks(result) || 'Unable to generate flood analysis.';
   }
   // ---- Gemini (default) ----
   const key = apiKey || process.env.API_KEY;

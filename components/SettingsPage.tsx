@@ -45,8 +45,8 @@ export interface SettingsPageProps {
   setSiliconflowKey: (key: string) => void;
   cerebrasKey: string;
   setCerebrasKey: (key: string) => void;
-  huggingfaceKey: string;
-  setHuggingfaceKey: (key: string) => void;
+  ollamaEndpoint: string;
+  setOllamaEndpoint: (endpoint: string) => void;
   aiProvider: AiProvider;
   setAiProvider: (p: AiProvider) => void;
   aiModel: string;
@@ -150,7 +150,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   location, setLocation, onFetchWeather, loadingState, hasWeatherData, detectedCity,
   geminiKey, setGeminiKey, groqKey, setGroqKey, pollinationsKey, setPollinationsKey,
   openrouterKey, setOpenrouterKey, siliconflowKey, setSiliconflowKey, cerebrasKey, setCerebrasKey,
-  huggingfaceKey, setHuggingfaceKey,
+  ollamaEndpoint, setOllamaEndpoint,
   aiProvider, setAiProvider, aiModel, setAiModel,
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
   mlApiKey, setMlApiKey, mapplsToken, setMapplsToken,
@@ -600,13 +600,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           accent="violet">
           {/* Provider tabs */}
           <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-            {(['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras', 'huggingface'] as AiProvider[]).map(p => (
+            {(['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras', 'ollama'] as AiProvider[]).map(p => (
               <button key={p}
                 onClick={() => { setAiProvider(p); setAiModel(AI_MODELS[p][0].value); }}
                 className={`py-2 px-1 rounded-xl text-[8px] font-black uppercase tracking-wide transition-all ${
                   aiProvider === p ? 'bg-white dark:bg-slate-700 text-violet-600 dark:text-violet-300 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
                 }`}>
-                {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'Router' : p === 'siliconflow' ? 'Silicon' : p === 'cerebras' ? 'Cerebras' : p === 'huggingface' ? 'HF Small' : p.charAt(0).toUpperCase() + p.slice(1)}
+                {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'Router' : p === 'siliconflow' ? 'Silicon' : p === 'cerebras' ? 'Cerebras' : p === 'ollama' ? 'Ollama' : p.charAt(0).toUpperCase() + p.slice(1)}
               </button>
             ))}
           </div>
@@ -628,7 +628,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
         {/* 6. API Keys ────────────────────────────────────────────────── */}
         <Card icon={<Lock className="w-5 h-5" />} title="API Keys" subtitle="Provider credentials"
-          badge={geminiKey || groqKey || pollinationsKey || openrouterKey || siliconflowKey || cerebrasKey || huggingfaceKey ? 'Configured' : 'Not set'}
+          badge={geminiKey || groqKey || pollinationsKey || openrouterKey || siliconflowKey || cerebrasKey || ollamaEndpoint ? 'Configured' : 'Not set'}
           accent="rose">
           <div className="space-y-4">
             {aiProvider === 'pollinations' && (
@@ -660,10 +660,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 placeholder="csk-…" getKeyUrl="https://cloud.cerebras.ai"
                 note="Get a free API key at cloud.cerebras.ai. World's fastest inference — ~3000 tok/s with GPT OSS 120B." />
             )}
-            {aiProvider === 'huggingface' && (
-              <KeyInput label="HuggingFace API Key" value={huggingfaceKey} onChange={setHuggingfaceKey}
-                placeholder="hf_…" getKeyUrl="https://huggingface.co/settings/tokens"
-                note="Free tier available. Ultra-low-cost small models (SmallLM, Qwen 1.5B) with self-learning intelligence and compliance guardrails." />
+            {aiProvider === 'ollama' && (
+              <KeyInput label="Ollama Endpoint" value={ollamaEndpoint} onChange={setOllamaEndpoint}
+                placeholder="http://localhost:11434" getKeyUrl="https://ollama.com"
+                note="Local inference — no API key needed. Install Ollama and pull models (e.g. ollama pull qwen2.5:1.5b) to get started." />
             )}
 
             {/* Always show all keys section (collapsed/separated) */}
@@ -679,7 +679,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <KeyInput label="OpenRouter" value={openrouterKey} onChange={setOpenrouterKey} placeholder="sk-or-…" getKeyUrl="https://openrouter.ai/keys" />
                 <KeyInput label="SiliconFlow" value={siliconflowKey} onChange={setSiliconflowKey} placeholder="sk-…" getKeyUrl="https://cloud.siliconflow.com/account/ak" />
                 <KeyInput label="Cerebras" value={cerebrasKey} onChange={setCerebrasKey} placeholder="csk-…" getKeyUrl="https://cloud.cerebras.ai" />
-                <KeyInput label="HuggingFace" value={huggingfaceKey} onChange={setHuggingfaceKey} placeholder="hf_…" getKeyUrl="https://huggingface.co/settings/tokens" />
+                <KeyInput label="Ollama Endpoint" value={ollamaEndpoint} onChange={setOllamaEndpoint} placeholder="http://localhost:11434" getKeyUrl="https://ollama.com" />
               </div>
             </details>
           </div>

@@ -1,57 +1,116 @@
 /**
- * BioSentinelX — Small Model Intelligence Service
+ * BioSentinelX — Small Model Intelligence Service (Ollama Edition)
  *
  * Provides:
- *  1. SmallLM & Qwen 1.5B integration via HuggingFace Inference API
- *  2. Self-Learning Intelligence with feedback loops
+ *  1. SmolLM, Qwen 1.5B & other small models via Ollama local inference
+ *  2. Adaptive Learning with feedback-driven model selection & prompt refinement
  *  3. Long-Term Memory for domain-specific context retention
  *  4. Synthetic Data generation + Guardrails for compliance
- *  5. Distilled model cost tracking for lower inference costs
+ *  5. Inference cost tracking for local models
  *
- * All models run through the HuggingFace Inference API (free tier available).
+ * All models run locally through Ollama (no API key required).
  */
 
 import { WeatherData } from '../types';
+
+// ─── Default Ollama Endpoint ────────────────────────────────────────────────
+
+const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
+
+export function getOllamaEndpoint(): string {
+  try {
+    return localStorage.getItem('biosentinel_ollama_endpoint') || DEFAULT_OLLAMA_ENDPOINT;
+  } catch { return DEFAULT_OLLAMA_ENDPOINT; }
+}
+
+export function setOllamaEndpoint(endpoint: string): void {
+  try { localStorage.setItem('biosentinel_ollama_endpoint', endpoint); } catch { /* quota */ }
+}
 
 // ─── Model Definitions ──────────────────────────────────────────────────────
 
 export interface SmallModelDef {
   id: string;
   name: string;
-  provider: 'huggingface';
-  endpoint: string;
+  provider: 'ollama';
+  ollamaModel: string;       // Ollama model tag (e.g. 'qwen2.5:1.5b')
   maxTokens: number;
-  costPer1kTokens: number; // USD
+  costPer1kTokens: number;   // USD — effectively 0 for local inference
   specialization: string;
 }
 
 export const SMALL_MODELS: SmallModelDef[] = [
   {
-    id: 'smalllm-135m',
-    name: 'SmallLM 135M',
-    provider: 'huggingface',
-    endpoint: 'https://api-inference.huggingface.co/models/HuggingFaceTB/SmolLM2-135M-Instruct',
+    id: 'smollm2-135m',
+    name: 'SmolLM2 135M',
+    provider: 'ollama',
+    ollamaModel: 'smollm2:135m',
     maxTokens: 2048,
-    costPer1kTokens: 0.0001,
+    costPer1kTokens: 0,
     specialization: 'Ultra-lightweight triage, fast health keyword extraction',
   },
   {
-    id: 'smalllm-1.7b',
-    name: 'SmallLM 1.7B',
-    provider: 'huggingface',
-    endpoint: 'https://api-inference.huggingface.co/models/HuggingFaceTB/SmolLM2-1.7B-Instruct',
+    id: 'smollm2-1.7b',
+    name: 'SmolLM2 1.7B',
+    provider: 'ollama',
+    ollamaModel: 'smollm2:1.7b',
     maxTokens: 4096,
-    costPer1kTokens: 0.0003,
+    costPer1kTokens: 0,
     specialization: 'Health risk triage, symptom classification, alert summarization',
   },
   {
-    id: 'qwen-1.5b',
+    id: 'qwen2.5-1.5b',
     name: 'Qwen 2.5 1.5B',
-    provider: 'huggingface',
-    endpoint: 'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct',
-    maxTokens: 4096,
-    costPer1kTokens: 0.0002,
+    provider: 'ollama',
+    ollamaModel: 'qwen2.5:1.5b',
+    maxTokens: 8192,
+    costPer1kTokens: 0,
     specialization: 'Structured health analysis, multi-lingual support, compliance checks',
+  },
+  {
+    id: 'qwen2.5-3b',
+    name: 'Qwen 2.5 3B',
+    provider: 'ollama',
+    ollamaModel: 'qwen2.5:3b',
+    maxTokens: 8192,
+    costPer1kTokens: 0,
+    specialization: 'Advanced reasoning, medical report generation, research synthesis',
+  },
+  {
+    id: 'llama3.2-1b',
+    name: 'Llama 3.2 1B',
+    provider: 'ollama',
+    ollamaModel: 'llama3.2:1b',
+    maxTokens: 4096,
+    costPer1kTokens: 0,
+    specialization: 'Fast triage, lightweight classification, quick summaries',
+  },
+  {
+    id: 'llama3.2-3b',
+    name: 'Llama 3.2 3B',
+    provider: 'ollama',
+    ollamaModel: 'llama3.2:3b',
+    maxTokens: 8192,
+    costPer1kTokens: 0,
+    specialization: 'Balanced reasoning, health risk assessment, contextual analysis',
+  },
+  {
+    id: 'phi3-mini',
+    name: 'Phi-3 Mini 3.8B',
+    provider: 'ollama',
+    ollamaModel: 'phi3:mini',
+    maxTokens: 4096,
+    costPer1kTokens: 0,
+    specialization: 'Medical reasoning, structured output, clinical guidelines',
+  },
+  {
+    id: 'medllama2',
+    name: 'MedLlama2 7B',
+    provider: 'ollama',
+    ollamaModel: 'medllama2',
+    maxTokens: 4096,
+    costPer1kTokens: 0,
+    specialization: 'Medical domain specialist, clinical QA, health knowledge',
   },
 ];
 
@@ -59,34 +118,64 @@ export function getSmallModel(id: string): SmallModelDef | undefined {
   return SMALL_MODELS.find(m => m.id === id);
 }
 
-// ─── HuggingFace Inference ──────────────────────────────────────────────────
+// ─── Ollama Inference ───────────────────────────────────────────────────────
 
+/**
+ * Check if Ollama is reachable at the configured endpoint.
+ */
+export async function checkOllamaHealth(endpoint?: string): Promise<boolean> {
+  const base = endpoint || getOllamaEndpoint();
+  try {
+    const res = await fetch(base, { method: 'GET', signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch { return false; }
+}
+
+/**
+ * List models available in the local Ollama instance.
+ */
+export async function listOllamaModels(endpoint?: string): Promise<string[]> {
+  const base = endpoint || getOllamaEndpoint();
+  try {
+    const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return [];
+    const data = await res.json() as { models?: Array<{ name: string }> };
+    return (data.models || []).map(m => m.name);
+  } catch { return []; }
+}
+
+/**
+ * Run inference through Ollama's OpenAI-compatible chat API.
+ */
 export async function inferWithSmallModel(
   modelId: string,
   prompt: string,
   systemPrompt: string,
-  apiKey: string,
+  _apiKey: string, // kept for API compatibility; Ollama needs no key
   maxTokens = 512
 ): Promise<{ text: string; tokensUsed: number; latencyMs: number }> {
   const model = getSmallModel(modelId);
   if (!model) throw new Error(`Unknown small model: ${modelId}`);
 
+  const base = getOllamaEndpoint();
   const start = performance.now();
 
-  const response = await fetch(model.endpoint, {
+  // Use adaptive temperature if available
+  const adaptiveTemp = getAdaptiveTemperature(modelId);
+
+  const response = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      inputs: `<|system|>\n${systemPrompt}\n<|user|>\n${prompt}\n<|assistant|>\n`,
-      parameters: {
-        max_new_tokens: Math.min(maxTokens, model.maxTokens),
-        temperature: 0.4,
-        top_p: 0.9,
-        return_full_text: false,
-      },
+      model: model.ollamaModel,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: Math.min(maxTokens, model.maxTokens),
+      temperature: adaptiveTemp,
+      top_p: 0.9,
+      stream: false,
     }),
   });
 
@@ -94,17 +183,66 @@ export async function inferWithSmallModel(
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({})) as Record<string, unknown>;
-    const msg = (err?.error as string) || `HuggingFace API error ${response.status}`;
-    if (response.status === 401) throw new Error('Invalid HuggingFace API key. Get a free key at huggingface.co/settings/tokens');
-    if (response.status === 503) throw new Error(`Model ${model.name} is loading. Please retry in 20-30 seconds.`);
-    throw new Error(msg);
+    const errMsg = (err?.error as Record<string, unknown>)?.message as string
+      || (err?.error as string)
+      || `Ollama API error ${response.status}`;
+    if (response.status === 404) {
+      throw new Error(`Model "${model.ollamaModel}" not found. Run: ollama pull ${model.ollamaModel}`);
+    }
+    throw new Error(errMsg);
   }
 
-  const data = await response.json() as Array<{ generated_text: string }>;
-  const text = data?.[0]?.generated_text?.trim() || '';
-  const tokensUsed = Math.ceil(text.length / 4); // rough estimate
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number };
+  };
+  const text = data?.choices?.[0]?.message?.content?.trim() || '';
+  const tokensUsed = data?.usage?.total_tokens || Math.ceil(text.length / 4);
 
   return { text, tokensUsed, latencyMs };
+}
+
+/**
+ * Run chat inference through Ollama (multi-turn conversation).
+ */
+export async function chatWithOllama(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  modelId: string,
+  maxTokens = 1024
+): Promise<string> {
+  const model = getSmallModel(modelId);
+  if (!model) throw new Error(`Unknown small model: ${modelId}`);
+
+  const base = getOllamaEndpoint();
+  const adaptiveTemp = getAdaptiveTemperature(modelId);
+
+  const response = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: model.ollamaModel,
+      messages,
+      max_tokens: Math.min(maxTokens, model.maxTokens),
+      temperature: adaptiveTemp,
+      stream: false,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({})) as Record<string, unknown>;
+    const errMsg = (err?.error as Record<string, unknown>)?.message as string
+      || (err?.error as string)
+      || `Ollama API error ${response.status}`;
+    if (response.status === 404) {
+      throw new Error(`Model "${model.ollamaModel}" not found. Run: ollama pull ${model.ollamaModel}`);
+    }
+    throw new Error(errMsg);
+  }
+
+  const data = await response.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data?.choices?.[0]?.message?.content?.trim() || "I'm sorry, I couldn't process that request.";
 }
 
 // ─── Self-Learning Intelligence ─────────────────────────────────────────────
@@ -150,8 +288,8 @@ function loadLearningEntries(): LearningEntry[] {
 }
 
 function saveLearningEntries(entries: LearningEntry[]): void {
-  // Keep last 200 entries
-  const trimmed = entries.slice(-200);
+  // Keep last 500 entries for richer adaptive learning
+  const trimmed = entries.slice(-500);
   try { localStorage.setItem(LEARNING_STORE_KEY, JSON.stringify(trimmed)); } catch { /* quota */ }
 }
 
@@ -163,7 +301,7 @@ function loadFeedbackEntries(): FeedbackEntry[] {
 }
 
 function saveFeedbackEntries(entries: FeedbackEntry[]): void {
-  const trimmed = entries.slice(-500);
+  const trimmed = entries.slice(-1000);
   try { localStorage.setItem(FEEDBACK_STORE_KEY, JSON.stringify(trimmed)); } catch { /* quota */ }
 }
 
@@ -192,11 +330,14 @@ export function recordFeedback(feedback: Omit<FeedbackEntry, 'id' | 'timestamp'>
       : feedback.rating === 'incorrect' ? 'negative' : 'neutral';
     saveLearningEntries(entries);
   }
+
+  // Trigger adaptive learning updates
+  updateAdaptiveModelScores(feedback.domain);
+  refinePromptTemplates(feedback.domain);
 }
 
 export function getLearningStats(): LearningStats {
   const entries = loadLearningEntries();
-  const feedbacks = loadFeedbackEntries();
 
   const total = entries.length;
   const withFeedback = entries.filter(e => e.feedback);
@@ -250,6 +391,241 @@ export function getLearningStats(): LearningStats {
 
 export function getFeedbackLog(): FeedbackEntry[] {
   return loadFeedbackEntries().slice(-50).reverse();
+}
+
+// ─── Adaptive Learning Engine ───────────────────────────────────────────────
+
+const ADAPTIVE_SCORES_KEY = 'biosentinel_adaptive_scores_v1';
+const ADAPTIVE_PROMPTS_KEY = 'biosentinel_adaptive_prompts_v1';
+const ADAPTIVE_TEMP_KEY = 'biosentinel_adaptive_temps_v1';
+
+export interface AdaptiveModelScore {
+  modelId: string;
+  domain: string;
+  score: number;         // 0-1, higher = better for this domain
+  totalInteractions: number;
+  lastUpdated: number;
+}
+
+export interface AdaptivePromptTemplate {
+  domain: string;
+  refinements: string[];  // learned prompt additions
+  avoidPatterns: string[]; // patterns that led to negative feedback
+  lastUpdated: number;
+}
+
+function loadAdaptiveScores(): AdaptiveModelScore[] {
+  try {
+    const raw = localStorage.getItem(ADAPTIVE_SCORES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveAdaptiveScores(scores: AdaptiveModelScore[]): void {
+  try { localStorage.setItem(ADAPTIVE_SCORES_KEY, JSON.stringify(scores)); } catch { /* quota */ }
+}
+
+function loadAdaptivePrompts(): Record<string, AdaptivePromptTemplate> {
+  try {
+    const raw = localStorage.getItem(ADAPTIVE_PROMPTS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveAdaptivePrompts(prompts: Record<string, AdaptivePromptTemplate>): void {
+  try { localStorage.setItem(ADAPTIVE_PROMPTS_KEY, JSON.stringify(prompts)); } catch { /* quota */ }
+}
+
+function loadAdaptiveTemps(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(ADAPTIVE_TEMP_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveAdaptiveTemps(temps: Record<string, number>): void {
+  try { localStorage.setItem(ADAPTIVE_TEMP_KEY, JSON.stringify(temps)); } catch { /* quota */ }
+}
+
+/**
+ * Get the adaptive temperature for a model based on historical accuracy.
+ * Lower temp for high-accuracy models (more deterministic), higher for exploratory.
+ */
+function getAdaptiveTemperature(modelId: string): number {
+  const temps = loadAdaptiveTemps();
+  return temps[modelId] ?? 0.4;
+}
+
+/**
+ * Update adaptive model scores after receiving feedback for a domain.
+ * Uses exponential moving average for smooth score updates.
+ */
+function updateAdaptiveModelScores(domain: string): void {
+  const entries = loadLearningEntries();
+  const scores = loadAdaptiveScores();
+  const temps = loadAdaptiveTemps();
+
+  // Get recent entries for this domain (last 50)
+  const domainEntries = entries.filter(e => e.domain === domain).slice(-50);
+
+  // Group by model
+  const modelGroups = new Map<string, LearningEntry[]>();
+  for (const e of domainEntries) {
+    const group = modelGroups.get(e.modelId) || [];
+    group.push(e);
+    modelGroups.set(e.modelId, group);
+  }
+
+  for (const [modelId, group] of modelGroups.entries()) {
+    const withFeedback = group.filter(e => e.feedback);
+    if (withFeedback.length === 0) continue;
+
+    const positive = withFeedback.filter(e => e.feedback === 'positive').length;
+    const newScore = positive / withFeedback.length;
+
+    // Find or create the score entry
+    const scoreEntry = scores.find(s => s.modelId === modelId && s.domain === domain);
+    if (scoreEntry) {
+      // Exponential moving average (alpha=0.3)
+      scoreEntry.score = 0.7 * scoreEntry.score + 0.3 * newScore;
+      scoreEntry.totalInteractions = group.length;
+      scoreEntry.lastUpdated = Date.now();
+    } else {
+      scores.push({
+        modelId,
+        domain,
+        score: newScore,
+        totalInteractions: group.length,
+        lastUpdated: Date.now(),
+      });
+    }
+
+    // Adjust temperature based on accuracy
+    // High accuracy -> lower temp (more deterministic)
+    // Low accuracy -> slightly higher temp (more exploration)
+    const accuracy = newScore;
+    temps[modelId] = accuracy > 0.7 ? 0.3 : accuracy > 0.4 ? 0.5 : 0.7;
+  }
+
+  saveAdaptiveScores(scores);
+  saveAdaptiveTemps(temps);
+}
+
+/**
+ * Refine prompt templates based on feedback patterns.
+ * Learns what works and what to avoid for each domain.
+ */
+function refinePromptTemplates(domain: string): void {
+  const entries = loadLearningEntries().filter(e => e.domain === domain);
+  const prompts = loadAdaptivePrompts();
+
+  const template = prompts[domain] || {
+    domain,
+    refinements: [],
+    avoidPatterns: [],
+    lastUpdated: 0,
+  };
+
+  // Analyze positive feedback patterns
+  const positiveEntries = entries.filter(e => e.feedback === 'positive').slice(-20);
+  const negativeEntries = entries.filter(e => e.feedback === 'negative').slice(-10);
+
+  // Extract successful patterns from high-confidence positive results
+  for (const e of positiveEntries) {
+    if (e.confidence > 0.7 && e.prediction.length > 50) {
+      const keyPhrases = extractKeyPhrases(e.prediction);
+      for (const phrase of keyPhrases) {
+        if (!template.refinements.includes(phrase)) {
+          template.refinements.push(phrase);
+          if (template.refinements.length > 15) template.refinements.shift();
+        }
+      }
+    }
+  }
+
+  // Learn avoidance patterns from negative feedback
+  for (const e of negativeEntries) {
+    const avoidPhrases = extractKeyPhrases(e.prediction);
+    for (const phrase of avoidPhrases) {
+      if (!template.avoidPatterns.includes(phrase)) {
+        template.avoidPatterns.push(phrase);
+        if (template.avoidPatterns.length > 10) template.avoidPatterns.shift();
+      }
+    }
+  }
+
+  template.lastUpdated = Date.now();
+  prompts[domain] = template;
+  saveAdaptivePrompts(prompts);
+}
+
+/**
+ * Extract key phrases from text for learning patterns.
+ */
+function extractKeyPhrases(text: string): string[] {
+  const phrases: string[] = [];
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 20);
+  const healthKeywords = /\b(risk|prevent|monitor|recommend|avoid|protect|hydrat|respirat|cardiovascular|symptom)\b/i;
+
+  for (const sentence of sentences.slice(0, 3)) {
+    if (healthKeywords.test(sentence)) {
+      const cleaned = sentence.trim().slice(0, 80);
+      if (cleaned.length > 20) phrases.push(cleaned);
+    }
+  }
+  return phrases;
+}
+
+/**
+ * Select the best model for a given domain based on adaptive scores.
+ * Falls back to the specified model if no adaptive data exists.
+ */
+export function selectBestModel(domain: string, fallbackModelId: string): string {
+  const scores = loadAdaptiveScores();
+  const domainScores = scores
+    .filter(s => s.domain === domain && s.totalInteractions >= 3)
+    .sort((a, b) => b.score - a.score);
+
+  if (domainScores.length > 0 && domainScores[0].score > 0.5) {
+    return domainScores[0].modelId;
+  }
+  return fallbackModelId;
+}
+
+/**
+ * Get adaptive prompt context for a domain.
+ * Includes learned refinements and avoidance patterns.
+ */
+export function getAdaptivePromptContext(domain: string): string {
+  const prompts = loadAdaptivePrompts();
+  const template = prompts[domain];
+  if (!template) return '';
+
+  const parts: string[] = [];
+  if (template.refinements.length > 0) {
+    parts.push(`[Learned effective patterns for ${domain}]`);
+    parts.push(`Focus on: ${template.refinements.slice(-5).join('; ')}`);
+  }
+  if (template.avoidPatterns.length > 0) {
+    parts.push(`[Avoid these patterns]: ${template.avoidPatterns.slice(-3).join('; ')}`);
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Get all adaptive model scores for display.
+ */
+export function getAdaptiveScores(): AdaptiveModelScore[] {
+  return loadAdaptiveScores().sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Clear all adaptive learning data.
+ */
+export function clearAdaptiveLearning(): void {
+  localStorage.removeItem(ADAPTIVE_SCORES_KEY);
+  localStorage.removeItem(ADAPTIVE_PROMPTS_KEY);
+  localStorage.removeItem(ADAPTIVE_TEMP_KEY);
 }
 
 // ─── Long-Term Domain Memory ────────────────────────────────────────────────
@@ -339,7 +715,6 @@ export interface GuardrailResult {
 
 /**
  * Generate synthetic training data from weather patterns for compliance-critical learning.
- * Uses domain knowledge to create realistic weather-health correlation data points.
  */
 export function generateSyntheticData(
   weather: WeatherData,
@@ -359,7 +734,6 @@ export function generateSyntheticData(
     const aqiVar = Math.max(1, Math.min(5, baseAqi + Math.floor((Math.random() - 0.5) * 3)));
     const windVar = Math.max(0, baseWind + (Math.random() - 0.5) * 10);
 
-    // Determine health label based on synthetic conditions
     let label: string;
     let confidence: number;
 
@@ -406,13 +780,11 @@ export function generateSyntheticData(
 
 /**
  * Apply compliance guardrails to model output.
- * Ensures health advice doesn't cross medical boundaries.
  */
 export function applyGuardrails(output: string): GuardrailResult {
   const violations: string[] = [];
   let sanitizedOutput = output;
 
-  // Medical prescription guardrails
   const prescriptionPatterns = [
     /\b(prescribe|prescription|rx)\b/i,
     /\b(take|consume)\s+\d+\s*(mg|ml|tablets?|pills?|capsules?)\b/i,
@@ -426,7 +798,6 @@ export function applyGuardrails(output: string): GuardrailResult {
     }
   }
 
-  // Emergency self-treatment guardrails
   const dangerousAdvice = [
     /\b(perform\s+surgery|self-medicate)\b/i,
     /\b(stop\s+taking\s+(?:your|all)\s+medication)\b/i,
@@ -440,7 +811,6 @@ export function applyGuardrails(output: string): GuardrailResult {
     }
   }
 
-  // Disclaimer check — add if missing on health-related content
   const isHealthContent = /\b(health|risk|symptom|disease|condition|treatment|medical)\b/i.test(output);
   const hasDisclaimer = /\b(consult|professional|doctor|physician|healthcare provider|not medical advice)\b/i.test(output);
 
@@ -478,7 +848,7 @@ export interface CostSummary {
   avgLatencyMs: number;
   entriesCount: number;
   costByModel: Record<string, { cost: number; tokens: number; calls: number }>;
-  savingsVsLargeModel: number; // estimated savings compared to GPT-4o pricing
+  savingsVsLargeModel: number;
 }
 
 function loadCostEntries(): InferenceCostEntry[] {
@@ -519,7 +889,7 @@ export function getCostSummary(): CostSummary {
     costByModel[e.modelId] = model;
   }
 
-  // GPT-4o pricing: $5/1M input + $15/1M output ≈ $0.01/1K tokens average
+  // GPT-4o pricing estimate for savings comparison
   const gpt4oCostEstimate = totalTokens * 0.00001;
 
   return {
@@ -540,64 +910,70 @@ export function clearCostHistory(): void {
 
 /**
  * Run a health triage through the small model pipeline:
- * 1. Use small model for fast initial classification
- * 2. Apply guardrails to output
- * 3. Record prediction for self-learning
- * 4. Update domain memory with results
- * 5. Track inference costs
+ * 1. Select best model via adaptive learning (or use specified)
+ * 2. Enrich prompt with adaptive context and domain memory
+ * 3. Run inference through Ollama
+ * 4. Apply guardrails to output
+ * 5. Record prediction for self-learning
+ * 6. Track inference costs
  */
 export async function runSmallModelPipeline(
   modelId: string,
   weatherContext: string,
   healthQuery: string,
-  apiKey: string,
+  _apiKey: string, // kept for API compatibility; Ollama needs no key
   domain: string = 'general'
 ): Promise<{
   result: string;
   guardrails: GuardrailResult;
   predictionId: string;
   cost: { tokensUsed: number; costUsd: number; latencyMs: number };
+  adaptiveModelUsed: string;
 }> {
-  const model = getSmallModel(modelId);
-  if (!model) throw new Error(`Unknown model: ${modelId}`);
+  // Step 1: Adaptive model selection
+  const selectedModelId = selectBestModel(domain, modelId);
+  const model = getSmallModel(selectedModelId);
+  if (!model) throw new Error(`Unknown model: ${selectedModelId}`);
 
-  // Build context-enriched prompt with domain memory
+  // Step 2: Build context-enriched prompt
   const domainContext = getDomainMemoryContext(domain);
+  const adaptiveContext = getAdaptivePromptContext(domain);
   const systemPrompt = `You are BioSentinel, a specialized health-weather intelligence assistant.
 Analyze weather conditions and their health impacts. Be concise and actionable.
 ${domainContext}
+${adaptiveContext}
 Focus on: ${model.specialization}`;
 
   const fullPrompt = `${weatherContext}\n\nHealth Query: ${healthQuery}`;
 
-  // Run inference
+  // Step 3: Run inference through Ollama
   const { text, tokensUsed, latencyMs } = await inferWithSmallModel(
-    modelId,
+    selectedModelId,
     fullPrompt,
     systemPrompt,
-    apiKey,
+    '',
     512
   );
 
-  // Apply guardrails
+  // Step 4: Apply guardrails
   const guardrails = applyGuardrails(text);
   const finalOutput = guardrails.sanitizedOutput || text;
 
-  // Calculate cost
+  // Step 5: Calculate cost (effectively $0 for local models)
   const costUsd = (tokensUsed / 1000) * model.costPer1kTokens;
 
-  // Record prediction for self-learning
+  // Step 6: Record prediction for self-learning
   const predictionId = recordPrediction({
     domain,
     context: fullPrompt.slice(0, 300),
     prediction: finalOutput.slice(0, 500),
     confidence: guardrails.passed ? 0.8 : 0.5,
-    modelId,
+    modelId: selectedModelId,
   });
 
-  // Track cost
+  // Step 7: Track cost
   trackInferenceCost({
-    modelId,
+    modelId: selectedModelId,
     tokensUsed,
     costUsd,
     latencyMs,
@@ -609,5 +985,6 @@ Focus on: ${model.specialization}`;
     guardrails,
     predictionId,
     cost: { tokensUsed, costUsd, latencyMs },
+    adaptiveModelUsed: selectedModelId,
   };
 }
