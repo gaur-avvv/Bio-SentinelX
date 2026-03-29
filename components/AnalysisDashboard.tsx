@@ -9,6 +9,8 @@ import { predictBioRisks, MLPrediction, formatExplanations, submitFeedback, quic
 import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, reconstructReportContent } from '../services/memoryService';
 import { ReportRenderer } from './ReportRenderer';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
+import MLTrainingPanel from './MLTrainingPanel';
+import { isModelTrained, predictWithTrainedModel } from '../services/realtimeMLService';
 
 interface AnalysisDashboardProps {
   weather: WeatherData | null;
@@ -631,7 +633,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, boolean>>({});
   const [feedbackComments, setFeedbackComments] = useState<Record<number, string>>({});
   const [showCommentInput, setShowCommentInput] = useState<number | null>(null);
-  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'intel' | 'assistant'>('profile');
+  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'mltraining' | 'intel' | 'assistant'>('profile');
   const [addedObs, setAddedObs] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -751,9 +753,33 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       });
       setMlWarnings(check.warnings || []);
       
+      // Use locally trained model if available, otherwise call Bio-Sentinel API
+      const localModelPrediction = isModelTrained() ? (() => {
+        const weatherInput: Record<string, unknown> = {
+          temp: weather.temp, feels_like: weather.feelsLike, pressure: weather.pressure,
+          humidity: weather.humidity, wind_speed: weather.windSpeed, wind_deg: weather.windDeg,
+          clouds: weather.clouds || 50, visibility: (weather.visibility || 10000) / 1000,
+          uv_index: weather.uvIndex || 0, 'air_quality_PM2.5': weather.advancedData?.pm2_5 || 15,
+          'air_quality_PM10': weather.advancedData?.pm10 || 25, aqi: weather.aqi || 1,
+        };
+        return predictWithTrainedModel(weatherInput);
+      })() : null;
+
       // Trigger Custom ML Model Prediction alongside Gemini in parallel
       const [mlResult, geminiResult] = await Promise.allSettled([
-        predictBioRisks(weather, [], lifestyleData),
+        localModelPrediction
+          ? Promise.resolve({
+              riskScore: localModelPrediction.confidence,
+              primaryTrigger: localModelPrediction.topFactors[0]?.feature || 'Environmental Factors',
+              recommendation: `Real-time ML prediction: ${localModelPrediction.prediction} (${(localModelPrediction.confidence * 100).toFixed(1)}% confidence). Top factors: ${localModelPrediction.topFactors.map(f => f.feature).join(', ')}.`,
+              confidence: localModelPrediction.confidence,
+              disease: localModelPrediction.prediction,
+              riskLevel: (localModelPrediction.confidence > 0.7 ? 'HIGH' : localModelPrediction.confidence > 0.4 ? 'MODERATE' : 'LOW') as 'HIGH' | 'MODERATE' | 'LOW',
+              allProbabilities: localModelPrediction.probabilities,
+              topFactors: localModelPrediction.topFactors,
+              timestamp: new Date().toISOString(),
+            } as MLPrediction)
+          : predictBioRisks(weather, [], lifestyleData),
         generateHealthRiskAssessment(
           weather, 
           summary, 
@@ -984,6 +1010,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
               <div className="flex bg-slate-100 dark:bg-slate-700 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl gap-1 overflow-x-auto custom-scrollbar" role="tablist" aria-label="Input methods">
                 {[
                   { id: 'profile', label: 'Health Profile', icon: Activity },
+                  { id: 'mltraining', label: 'ML Training', icon: BrainCircuit },
                   { id: 'intel', label: 'Local Intel', icon: MessageSquarePlus },
                   { id: 'assistant', label: 'Bio-Assistant', icon: Bot }
                 ].map((tab) => (
@@ -1017,6 +1044,12 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                     </label>
                   </div>
                   <UserProfile data={lifestyleData} onChange={setLifestyleData} />
+                </div>
+              )}
+
+              {activeInputTab === 'mltraining' && (
+                <div className="space-y-6 animate-fade-in" id="panel-mltraining" role="tabpanel" aria-labelledby="tab-mltraining">
+                  <MLTrainingPanel />
                 </div>
               )}
 
