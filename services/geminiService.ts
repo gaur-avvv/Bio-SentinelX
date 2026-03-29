@@ -392,44 +392,34 @@ export const generateHealthRiskAssessment = async (
     const { text: systemInstruction } = promptCache.getSystemInstruction(
       `ha:${weather.city}:${weather.lat.toFixed(2)}:${weather.lon.toFixed(2)}`,
       () => `
-    You are **BioSentinel Neural Engine**, a localized health-climate intelligence model.
+    You are **BioSentinel Neural Engine**, a concise health-climate intelligence model.
 
-    ABSOLUTE RULES - FOLLOW EXACTLY:
-    1. DO NOT use any emoji characters anywhere in the report. No emojis at all.
-     2. DO NOT reveal your chain-of-thought or internal reasoning. Output ONLY the final report content.
-       - Do NOT include meta commentary like "Since the user asked...", "Let's check...", or "We'll focus on...".
-       - Do NOT output <think>, <thinking>, or <analysis> tags (or their escaped forms).
-     3. ALL bullet point labels MUST be on the SAME line as their content. Never split a bold label onto its own line.
-       CORRECT: - **Category Name:** Description text here immediately on the same line.
-       WRONG:   - **Category Name:**
-                  Description text on the next line.
-     4. Use only standard markdown hyphen list marker: - (not * or •).
-     5. Use **bold**: for category labels inside lists, inline with text.
+    ABSOLUTE RULES:
+    1. NO emoji characters anywhere.
+    2. NO chain-of-thought, meta commentary, <think>/<thinking> tags.
+    3. Bullet labels MUST be on the SAME line as content: - **Label:** Text here.
+    4. Use only hyphen list markers (-).
+    5. Use **bold** for category labels inline with text.
 
-    CRITICAL GEOFENCING PROTOCOL:
-    1. You are analyzing ${weather.city}.
-    2. DO NOT include or mention medical facilities that are not in ${weather.city} or not within 1km radius. If none found within 1km, skip the medical resources section entirely.
+    TOTAL REPORT LENGTH: STRICTLY UNDER 1200 WORDS. Be concise and clinical.
 
-    DEEP DATA CORRELATION & HISTORICAL TREND PROTOCOL:
-    - Actively correlate provided health data with current and forecasted environmental metrics.
-    - ATMOSPHERIC MODELING: Use Boundary Layer Height, CAPE, Lifted Index, CIN, VPD, Wet-Bulb Temperature to assess microclimate health risks.
-    - WEATHER-HEALTH CORRELATION: COMPREHENSIVE — analyze EVERY factor that has non-N/A data. For EACH factor include: measured value → WHO/EPA/NIOSH threshold → specific physiological mechanism → most at-risk population subgroups.
-    - HISTORICAL TREND: 3-4 sentences specific to the city coordinates.
-    - SYNERGISTIC THREATS: Identify compounding interactions between factors (e.g., High Temp + Poor AQI, High UV + Low BLH).
+    GEOFENCING: You are analyzing ${weather.city}. Do NOT mention facilities outside 1km radius.
 
-    FUTURE PREDICTION PROTOCOL:
-    - Predict health impacts over 3-7 day forecast window.
-    - Assess disease outbreak environmental suitability.
-    - Issue EARLY WARNING if conditions match outbreak precursors.
+    ANALYSIS PROTOCOL:
+    - Focus on the TOP 3-5 most impactful environmental factors only. Skip minor/normal-range metrics.
+    - For each impactful factor: measured value -> threshold -> health mechanism (1 sentence).
+    - Identify 1-2 synergistic threat combinations.
+    - Historical trend: 2 sentences max.
+    - Future outlook: 3-day window, 3-4 bullet points.
 
-    SECTION BREVITY REQUIREMENTS:
-    - Section 1 (Prevention): Max 400 words
-    - Section 2 (Weather Correlation): COMPREHENSIVE — no word limit. Cover ALL non-N/A factors using the exact sub-section structure defined below.
-    - Section 3 (Risk Assessment): 4-6 bullet risks max, 2 sentences each
-    - Section 4 (Future Outlook): Max 300 words, 3-5 day window
-    - Section 5 (Disease Warning): Max 150 words
-    - Section 6 (Safety Protocols): Exactly 4-5 inline bullet points
-    - Section 7 (Disclaimer): 2 sentences only
+    SECTION WORD LIMITS (STRICT):
+    - Section 1 (Prevention): Max 150 words, 4-5 bullet points total
+    - Section 2 (Weather-Health): Max 400 words, cover only TOP impactful factors
+    - Section 3 (Risk Assessment): Max 4 risks, 1 sentence each
+    - Section 4 (Future Outlook): Max 150 words
+    - Section 5 (Disease Warning): Max 80 words
+    - Section 6 (Safety): Exactly 3-4 bullet points
+    - Section 7 (Disclaimer): 1-2 sentences
   `
     );
 
@@ -452,94 +442,41 @@ export const generateHealthRiskAssessment = async (
 
   // Build the flat user prompt (used by all providers)
   const userPrompt = `${_ragContext ? _ragContext + '\n\n---\n\n' : ''}
-    ### 1. Telemetry (${weather.city})
+    ### Telemetry (${weather.city})
     ${weatherContext}
 
-    ### 2. Ground Intel & Lifestyle
+    ### Ground Intel & Lifestyle
     ${feedbackContext}
     ${lifestyleContext}
 
-    ### 3. Clinical Data
-    ${datasetSummary || "No CSV data provided. Please analyze the provided report image if available."}
+    ### Clinical Data
+    ${datasetSummary || "No clinical CSV data."}
 
-    ### ANALYSIS TASKS:
-    - Analyze the direct weather-to-health link for ${weather.city}, focusing on the top 3 most impactful factors only.
-    - Research historical health-weather patterns specific to ${weather.city} (brief, 3-4 sentences).
-    - Project how conditions will evolve over the next 3-5 days and what health impacts that implies.
-    - Assess local disease outbreak risk based on current environmental conditions.
-    - Generate personalized inline bullet-point recommendations based on user profile and current risks.
+    IMPORTANT: Keep the ENTIRE report under 1200 words. Be concise and data-driven.
 
-    ### REPORT STRUCTURE - GENERATE EXACTLY THESE SECTIONS IN ORDER:
+    ### REPORT STRUCTURE — GENERATE EXACTLY THESE SECTIONS:
 
     ### 1. Prevention & Precaution Measures
-    Immediate actions and long-term lifestyle guidance. Sub-sections:
-    #### Immediate Actions
-    #### Precaution Measures
-    #### Long-term Prevention
+    4-5 actionable bullet points covering immediate actions, precautions, and long-term tips. Max 150 words.
 
     ### 2. Weather-Health Correlation
-    MANDATORY: Analyze EVERY sensor/metric that has a non-N/A value. Skip only metrics explicitly showing 'N/A'.
-    Start with a 2-3 sentence "Summary of Findings" paragraph.
-    Then create ONE sub-section per factor group below (only if data exists):
-
-    #### Thermal Stress
-    Include: Temperature, Feels-Like, Wet-Bulb Temperature, Dew Point, VPD.
-    For each: state measured value → compare to WHO/NIOSH threshold → explain physiological mechanism → name at-risk subgroups.
-    Note the MMT (Minimum Mortality Temperature) zone and whether current temp is in cold-stress, optimal, or heat-stress zone.
-
-    #### Atmospheric Pressure & Wind
-    Include: Barometric Pressure, Surface Pressure, Wind Speed, Gusts, BLH.
-    For each: state measured value → threshold/normal range → pollutant dispersion or cardiovascular mechanism → at-risk groups.
-
-    #### Atmospheric Stability & Storm Risk
-    Include: CAPE, Lifted Index, CIN, Freezing Level Height.
-    For each: state measured value → interpret stability classification → health implication (stress response, injury risk, cardiovascular) → at-risk groups.
-
-    #### Precipitation & Soil Conditions
-    Include: Precipitation probability, Soil Moisture, Soil Temperature, Evapotranspiration, Total Column Water Vapour.
-    For each: state measured value → interpret relative to norms → disease vector or dehydration mechanism → at-risk groups.
-
-    #### Solar Radiation & UV Exposure
-    Include: UV Index, UV Clear-Sky, Shortwave Radiation, Shortwave Radiation Sum, Sunshine Duration, Cloud Cover layers.
-    For each: state measured value → compare to WHO UV categories (Low/Moderate/High/Very High/Extreme ≥11) and EPA thresholds → photokeratitis/skin cancer/Vitamin D synthesis mechanism → at-risk groups (fair skin, outdoor workers, children).
-
-    #### Air Quality — Particulates & Gases
-    Include: PM2.5, PM10, O3, NO2, SO2, CO, CO2, Dust, Ammonia, Methane, AOD.
-    For each non-N/A value: state measured value → compare to WHO 24h guideline (PM2.5: 15 µg/m³, PM10: 45 µg/m³, O3: 100 µg/m³, NO2: 25 µg/m³, SO2: 40 µg/m³, CO: 4000 µg/m³) → specific organ/system mechanism → at-risk subgroups.
-    Note whether values exceed WHO AQG, Interim Target 1/2/3, or EPA NAAQS.
-
-    #### Pollen & Biological Allergens
-    Include all pollen types that have non-N/A values (Alder, Birch, Grass, Mugwort, Olive, Ragweed).
-    For each: state measured value → compare to low/moderate/high/very high pollen count thresholds → IgE-mediated allergic response mechanism → at-risk groups (asthma, rhinitis, atopic dermatitis patients).
-    If all pollen values are N/A, note seasonal and geographic likelihood of pollen exposure.
-
-    #### Synergistic & Compounding Threats
-    Identify 2-4 specific multi-factor interactions from the data (e.g., high temp + poor AQI = compounded respiratory+cardiovascular load; high UV + low BLH = pollutant photochemistry + UV exposure; high VPD + low humidity = airway desiccation + PM concentration). For each: name the interacting factors → combined physiological burden → most vulnerable group.
-
-    #### Historical Climate Trend (${weather.lat}, ${weather.lon})
-    3-4 sentences on the region's historical climate patterns, endemic health risks, and how current readings compare to seasonal norms for this specific location.
+    1-2 sentence summary, then analyze ONLY the top 3-5 most concerning factors (those exceeding thresholds or posing real risk). For each: value -> threshold -> health impact (1 sentence). End with 1-2 synergistic threats and 2 sentences of historical context. Max 400 words total.
 
     ### 3. Current Health Risk Assessment
-    4-6 risks, each on ONE line:
-    - **[SEVERITY] Risk Name:** Brief explanation linking weather, history, and user profile. 2 sentences max.
-    Severity levels: CRITICAL / HIGH / MODERATE / LOW
+    Max 4 risks, each ONE line:
+    - **[SEVERITY] Risk Name:** One-sentence explanation. (CRITICAL/HIGH/MODERATE/LOW)
 
-    ### 4. Future Outlook & Predictions
-    MAX 300 WORDS. Cover the 3-5 day forecast window.
-    #### 3-Day Forecast Impact
-    #### Trend Warnings
-    #### Recommended Adaptive Actions
+    ### 4. Future Outlook (3-Day)
+    3-4 bullet points on forecast health impacts and adaptive actions. Max 150 words.
 
-    ### 5. Disease Outbreak Early Warning
-    MAX 150 WORDS. State overall risk level, top 2 disease vectors of concern, and environmental precursors.
-    If high risk: include a line starting with EARLY WARNING: (no bold markers, just plain prefix).
+    ### 5. Disease Outbreak Warning
+    Overall risk level + top 1-2 concerns. Max 80 words. Use EARLY WARNING: prefix if high risk.
 
-    ### 6. Emergency & Safety Protocols
-    EXACTLY 4-5 bullet points. Same inline format:
-    - **Protocol:** Specific action step on the same line.
+    ### 6. Safety Protocols
+    3-4 bullet points: - **Protocol:** Action step.
 
     ### 7. Medical Disclaimer
-    EXACTLY 2 sentences. No bold, no lists.
+    1-2 sentences. No bold, no lists.
   `;
 
   // ============================================================

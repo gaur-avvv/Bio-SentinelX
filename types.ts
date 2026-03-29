@@ -350,6 +350,9 @@ export interface EmailAlertSettings {
   smtpDevApiKey: string;       // smtp.dev API key for creating sender account
   senderEmail: string;         // auto-provisioned smtp.dev sender (stored after first run)
   senderPassword: string;      // auto-generated password for the sender smtp.dev account
+  emailJsPublicKey: string;    // EmailJS public key (free, works with any email)
+  emailJsServiceId: string;    // EmailJS service ID
+  emailJsTemplateId: string;   // EmailJS template ID
   leadTimeHours: number;       // how many hours ahead to scan forecast (1–72)
   minSeverityScore: number;    // 0–100 threshold to trigger email
   onlyCritical: boolean;       // restrict to critical-only events
@@ -362,6 +365,9 @@ export const DEFAULT_EMAIL_ALERT_SETTINGS: EmailAlertSettings = {
   smtpDevApiKey: 'smtplabs_ekcW2c4f46ie4Frwh9y3gaj4Y5Pbo18eaT9mvrRd2QAj6dLB',
   senderEmail: '',
   senderPassword: '',
+  emailJsPublicKey: '',
+  emailJsServiceId: '',
+  emailJsTemplateId: '',
   leadTimeHours: 12,
   minSeverityScore: 60,
   onlyCritical: false,
