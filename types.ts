@@ -171,7 +171,7 @@ export interface RiskItem {
   description: string;
 }
 
-export type AiProvider = 'gemini' | 'groq' | 'pollinations' | 'openrouter' | 'siliconflow' | 'cerebras';
+export type AiProvider = 'gemini' | 'groq' | 'pollinations' | 'openrouter' | 'siliconflow' | 'cerebras' | 'huggingface';
 
 export const AI_MODELS: Record<AiProvider, Array<{ value: string; label: string }>> = {
   gemini: [
@@ -249,6 +249,11 @@ export const AI_MODELS: Record<AiProvider, Array<{ value: string; label: string 
     { value: 'Qwen/Qwen3-Next-80B-A3B-Instruct',           label: 'Qwen3 Next 80B Instruct ($1.4/M)' },
     { value: 'Qwen/Qwen3-VL-235B-A22B-Instruct',           label: 'Qwen3 VL 235B — Vision Flagship ($1.5/M)' },
     { value: 'Qwen/Qwen3-VL-32B-Instruct',                 label: 'Qwen3 VL 32B — Vision ($0.6/M)' },
+  ],
+  huggingface: [
+    { value: 'smalllm-1.7b',  label: 'SmallLM 1.7B — Health Triage & Alerts (Ultra Low Cost)' },
+    { value: 'smalllm-135m',  label: 'SmallLM 135M — Keyword Extraction (Fastest)' },
+    { value: 'qwen-1.5b',     label: 'Qwen 2.5 1.5B — Structured Analysis & Compliance' },
   ],
 };
 
