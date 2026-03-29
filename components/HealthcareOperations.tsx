@@ -8,7 +8,7 @@ import React, { useState, useCallback } from 'react';
 import {
   FileText, ShieldCheck, ClipboardList, ChevronDown, ChevronRight,
   AlertTriangle, CheckCircle2, XCircle, Info, Clock, Play,
-  ArrowLeft, Search, Loader2, Trash2, History,
+  ArrowLeft, Loader2, Trash2, History,
 } from 'lucide-react';
 import type {
   AgentWorkflowTab, AuditTrail, AuditStep, ClinicalEncounter,
@@ -44,13 +44,14 @@ const statusBg = (status: string) => {
 
 // ─── Audit Trail Viewer ──────────────────────────────────────────────────────
 
-const AuditStepCard: React.FC<{ step: AuditStep; index: number }> = ({ step, index }) => {
+const AuditStepCard: React.FC<{ step: AuditStep; index: number; forceExpand?: boolean }> = ({ step, index, forceExpand }) => {
   const [expanded, setExpanded] = useState(false);
+  const isExpanded = forceExpand || expanded;
 
   return (
     <div className={`border rounded-xl p-3 ${statusBg(step.status)} transition-all`}>
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => setExpanded(!isExpanded)}
         className="w-full flex items-start gap-2 text-left"
       >
         <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 mt-0.5 w-5 flex-shrink-0">
@@ -71,12 +72,12 @@ const AuditStepCard: React.FC<{ step: AuditStep; index: number }> = ({ step, ind
             {step.output}
           </p>
         </div>
-        {expanded
+        {isExpanded
           ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
           : <ChevronRight className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />}
       </button>
 
-      {expanded && (
+      {isExpanded && (
         <div className="mt-2 ml-7 space-y-1.5 text-[11px]">
           <div>
             <span className="font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest text-[9px]">Input: </span>
@@ -132,7 +133,7 @@ const AuditTrailViewer: React.FC<{ trail: AuditTrail }> = ({ trail }) => {
 
       <div className="space-y-2">
         {trail.steps.map((step, i) => (
-          <AuditStepCard key={step.id} step={step} index={i} />
+          <AuditStepCard key={step.id} step={step} index={i} forceExpand={expandAll} />
         ))}
       </div>
     </div>
