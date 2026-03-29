@@ -36,6 +36,8 @@ import {
   fetchHotspots,
   enrichWardsWithGeoNames,
   fetchIndiaWardBoundaries,
+  fetchOverpassWards,
+  fetchOverpassWaterways,
   IndiaWardFeature,
   FloodDataPoint,
   FloodRiskScore,
@@ -246,7 +248,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [indiaWardsLoading, setIndiaWardsLoading] = useState(false);
   const [indiaWardsError,  setIndiaWardsError]  = useState('');
   const [indiaWardsSource, setIndiaWardsSource] = useState<'esri' | 'overpass'>('esri');
-  const [overpassWaterways, setOverpassWaterways] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [overpassWaterways, setOverpassWaterways] = useState<{ type: string; features: Array<{ type: string; properties: Record<string, unknown>; geometry: unknown }> } | null>(null);
   const [queryingOverpass, setQueryingOverpass] = useState(false);
   const [showWardPolygons, setShowWardPolygons] = useState(true);
 
