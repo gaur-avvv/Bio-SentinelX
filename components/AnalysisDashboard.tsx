@@ -10,7 +10,7 @@ import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, re
 import { ReportRenderer } from './ReportRenderer';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 import MLTrainingPanel from './MLTrainingPanel';
-import { isModelTrained, predictWithTrainedModel } from '../services/realtimeMLService';
+import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo } from '../services/realtimeMLService';
 
 interface AnalysisDashboardProps {
   weather: WeatherData | null;
@@ -26,6 +26,61 @@ interface UserProfileProps {
   data: LifestyleData;
   onChange: (data: LifestyleData) => void;
 }
+
+interface MLFeatureInputsProps {
+  weather: WeatherData | null;
+}
+
+const MLFeatureInputs: React.FC<MLFeatureInputsProps> = ({ weather }) => {
+  const modelInfo = getTrainedModelInfo();
+  if (!modelInfo) return null;
+
+  const getFeatureValue = (feature: string): string => {
+    if (!weather) return 'N/A';
+    const featureMap: Record<string, number | undefined> = {
+      temp: weather.temp, temperature: weather.temp,
+      feels_like: weather.feelsLike, pressure: weather.pressure,
+      humidity: weather.humidity, wind_speed: weather.windSpeed,
+      wind_deg: weather.windDeg, clouds: weather.clouds,
+      visibility: weather.visibility ? weather.visibility / 1000 : undefined,
+      uv_index: weather.uvIndex ?? undefined, aqi: weather.aqi,
+      'air_quality_PM2.5': weather.advancedData?.pm2_5,
+      'air_quality_PM10': weather.advancedData?.pm10,
+      pm2_5: weather.advancedData?.pm2_5, pm10: weather.advancedData?.pm10,
+      dew_point: weather.dewPoint ?? undefined,
+    };
+    const val = featureMap[feature] ?? featureMap[feature.toLowerCase()];
+    return val !== undefined ? val.toFixed(2) : 'N/A';
+  };
+
+  return (
+    <div className="mt-6 p-4 sm:p-6 bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-950/30 dark:to-violet-950/30 rounded-2xl border border-indigo-200 dark:border-indigo-800">
+      <div className="flex items-center gap-2 mb-4">
+        <BrainCircuit className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+        <h4 className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-widest">ML Model Features (Live)</h4>
+        <span className="ml-auto px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/50 rounded-full text-[8px] font-black text-indigo-600 dark:text-indigo-400 uppercase">
+          {modelInfo.type} Model
+        </span>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+        {modelInfo.featureNames.map((feature) => (
+          <div key={feature} className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-indigo-100 dark:border-indigo-800/50">
+            <p className="text-[8px] font-black text-indigo-500 dark:text-indigo-400 uppercase tracking-wider truncate" title={feature}>{feature.replace(/_/g, ' ')}</p>
+            <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-0.5">{getFeatureValue(feature)}</p>
+          </div>
+        ))}
+      </div>
+      {modelInfo.classNames.length > 0 && (
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <span className="text-[8px] font-black text-indigo-500 uppercase tracking-widest">Classes:</span>
+          {modelInfo.classNames.map((cls) => (
+            <span key={cls} className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 rounded-full text-[9px] font-bold text-indigo-700 dark:text-indigo-300">{cls}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
   const options = {
@@ -830,7 +885,22 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       // Append ML insights to the analysis if available
       let augmentedAnalysis = stripHiddenModelReasoning(geminiMarkdown);
       if (prediction && !geminiMarkdown.includes("Neural ML Model Insights")) {
-        augmentedAnalysis += `\n\n### 9. Neural ML Model Insights\n- **Risk Score:** ${(prediction.riskScore * 100).toFixed(0)}% probability of health impact under current conditions.\n- **Primary Trigger:** ${prediction.primaryTrigger} identified as the dominant environmental health stressor.\n- **ML Confidence:** ${(prediction.confidence * 100).toFixed(0)}% confidence based on current telemetry data.\n- **Recommendation:** ${prediction.recommendation}`;
+        const modelInfo = getTrainedModelInfo();
+        const modelType = modelInfo ? `${modelInfo.type.toUpperCase()} (${modelInfo.featureNames.length} features, ${modelInfo.numClasses} classes)` : 'Bio-Sentinel API';
+        const probSection = prediction.allProbabilities 
+          ? Object.entries(prediction.allProbabilities)
+              .sort(([,a], [,b]) => (b as number) - (a as number))
+              .slice(0, 5)
+              .map(([cls, prob]) => `  - ${cls}: ${(prob as number).toFixed(1)}%`)
+              .join('\n')
+          : '';
+        const factorsSection = prediction.topFactors && prediction.topFactors.length > 0
+          ? prediction.topFactors.slice(0, 5).map(f => `  - **${f.feature}:** ${f.value?.toFixed(2) ?? 'N/A'} (${f.impact} risk, importance: ${(f.importance * 100).toFixed(0)}%)`).join('\n')
+          : '';
+        augmentedAnalysis += `\n\n### 8. Realtime ML Model Insights\n- **Model:** ${modelType}\n- **Prediction:** ${prediction.disease || 'General Assessment'}\n- **Risk Score:** ${(prediction.riskScore * 100).toFixed(0)}%\n- **Confidence:** ${(prediction.confidence * 100).toFixed(0)}%\n- **Primary Trigger:** ${prediction.primaryTrigger}`;
+        if (probSection) augmentedAnalysis += `\n- **Class Probabilities:**\n${probSection}`;
+        if (factorsSection) augmentedAnalysis += `\n- **Top Contributing Factors:**\n${factorsSection}`;
+        if (prediction.recommendation) augmentedAnalysis += `\n- **Recommendation:** ${prediction.recommendation}`;
       }
       
       const cleanAugmented = stripHiddenModelReasoning(augmentedAnalysis);
@@ -858,19 +928,44 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     }
   };
 
-  const exportReport = () => {
+  const exportReport = (format: 'md' | 'html' = 'md') => {
     if (!analysis) return;
     
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `BioSentinel_Report_${weather?.city || 'Global'}_${timestamp}.txt`;
+    const city = weather?.city || 'Global';
     
-    const element = document.createElement("a");
-    const file = new Blob([analysis], { type: 'text/plain' });
-    element.href = URL.createObjectURL(file);
-    element.download = filename;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
+    if (format === 'html') {
+      const htmlContent = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>BioSentinel Report - ${city}</title>
+<style>
+  body { font-family: 'Inter', -apple-system, sans-serif; max-width: 800px; margin: 0 auto; padding: 40px 24px; background: #f8fafc; color: #1e293b; }
+  h1, h2, h3 { color: #0f172a; } h3 { border-bottom: 2px solid #14b8a6; padding-bottom: 8px; margin-top: 32px; }
+  strong { color: #0d9488; } ul { padding-left: 20px; } li { margin: 6px 0; line-height: 1.6; }
+  .header { background: #0f172a; color: white; padding: 24px 32px; border-radius: 16px; margin-bottom: 32px; }
+  .header h1 { color: #14b8a6; margin: 0; } .header p { color: #94a3b8; margin: 4px 0 0; font-size: 14px; }
+  .footer { text-align: center; color: #94a3b8; font-size: 12px; margin-top: 48px; padding-top: 24px; border-top: 1px solid #e2e8f0; }
+</style></head><body>
+<div class="header"><h1>BioSentinel Health Intelligence</h1><p>${city} - ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p></div>
+${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/\n- \*\*/g, '\n<li><strong>').replace(/\*\*/g, '</strong>').replace(/\n- /g, '\n<li>')}
+<div class="footer">Generated by BioSentinel Health Intelligence. Not medical advice.</div>
+</body></html>`;
+      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const element = document.createElement("a");
+      element.href = URL.createObjectURL(blob);
+      element.download = `BioSentinel_Report_${city}_${timestamp}.html`;
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+    } else {
+      const element = document.createElement("a");
+      const file = new Blob([analysis], { type: 'text/markdown' });
+      element.href = URL.createObjectURL(file);
+      element.download = `BioSentinel_Report_${city}_${timestamp}.md`;
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+    }
   };
 
   const handlePrint = () => {
@@ -1044,6 +1139,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                     </label>
                   </div>
                   <UserProfile data={lifestyleData} onChange={setLifestyleData} />
+                  <MLFeatureInputs weather={weather} />
                 </div>
               )}
 
@@ -1330,11 +1426,18 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
                  Print Report
                </button>
                <button 
-                 onClick={exportReport}
-                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-teal-600 hover:bg-teal-500 text-white rounded-xl sm:rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-teal-900/20"
+                 onClick={() => exportReport('md')}
+                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 bg-teal-600 hover:bg-teal-500 text-white rounded-xl sm:rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-teal-900/20"
                >
                  <FileDown className="w-4 h-4" />
-                 Export Report
+                 Markdown
+               </button>
+               <button 
+                 onClick={() => exportReport('html')}
+                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl sm:rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-indigo-900/20"
+               >
+                 <Download className="w-4 h-4" />
+                 HTML
                </button>
              </div>
           </div>

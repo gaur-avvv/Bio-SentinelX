@@ -893,9 +893,41 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </p>
             </div>
 
-            {/* smtp.dev API Key */}
+            {/* EmailJS Configuration (Primary - works with any email) */}
+            <div className="space-y-3 p-3 bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-800 rounded-2xl">
+              <div className="flex items-center gap-2">
+                <Mail className="w-3.5 h-3.5 text-indigo-500" />
+                <span className="text-[9px] font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-widest">EmailJS (Recommended)</span>
+                <a href="https://www.emailjs.com/" target="_blank" rel="noopener noreferrer"
+                  className="ml-auto text-[8px] font-black text-indigo-500 hover:underline">Setup Guide</a>
+              </div>
+              <p className="text-[8px] font-bold text-slate-400">Free plan: 200 emails/month. Works with any email address (Gmail, Outlook, etc).</p>
+              <input
+                type="text"
+                value={emailAlertSettings.emailJsPublicKey}
+                onChange={e => setEmailAlertSettings({ emailJsPublicKey: e.target.value })}
+                placeholder="Public Key (e.g. user_xxxxxxx)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-indigo-500 transition-all"
+              />
+              <input
+                type="text"
+                value={emailAlertSettings.emailJsServiceId}
+                onChange={e => setEmailAlertSettings({ emailJsServiceId: e.target.value })}
+                placeholder="Service ID (e.g. service_xxxxxxx)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-indigo-500 transition-all"
+              />
+              <input
+                type="text"
+                value={emailAlertSettings.emailJsTemplateId}
+                onChange={e => setEmailAlertSettings({ emailJsTemplateId: e.target.value })}
+                placeholder="Template ID (e.g. template_xxxxxxx)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-indigo-500 transition-all"
+              />
+            </div>
+
+            {/* smtp.dev API Key (Fallback) */}
             <div className="space-y-1.5">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">smtp.dev API Key</span>
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">smtp.dev API Key (Fallback)</span>
               <div className="relative group">
                 <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-rose-500 transition-colors" />
                 <input
@@ -1010,9 +1042,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             )}
 
             <p className="text-[9px] font-bold text-slate-400 leading-relaxed text-center">
-              ⚠ Requires recipient to be an smtp.dev address. See
-              {' '}<a href="https://app.smtp.dev" target="_blank" rel="noopener noreferrer"
-                className="text-rose-500 hover:underline">app.smtp.dev</a> to create a free test inbox.
+              Configure EmailJS above to send to any email address (Gmail, Outlook, etc).
+              Alternatively, use smtp.dev as a fallback. See
+              {' '}<a href="https://www.emailjs.com/docs/" target="_blank" rel="noopener noreferrer"
+                className="text-rose-500 hover:underline">EmailJS docs</a> for setup instructions.
             </p>
 
           </div>

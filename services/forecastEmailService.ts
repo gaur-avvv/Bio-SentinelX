@@ -4,9 +4,9 @@
  * Architecture:
  *  1. Multi-factor algorithmic scoring engine with uncertainty reduction
  *  2. Scans future dailyForecast + advancedData to detect high-risk windows
- *  3. Auto-provisions smtp.dev sender account via REST API
- *  4. Sends richly-formatted HTML alert emails via smtpjs (browser SMTP)
- *  5. Strict deduplication so the same event never triggers twice
+ *  3. Sends emails via EmailJS (free, works in browser, any email address)
+ *     Falls back to smtp.dev/smtpjs if EmailJS is not configured
+ *  4. Strict deduplication so the same event never triggers twice
  */
 
 import { WeatherData, DailyForecastItem, EmailAlertSettings } from '../types';
@@ -22,6 +22,11 @@ declare const Email: {
     Subject: string;
     Body: string;
   }): Promise<string>;
+};
+
+declare const emailjs: {
+  init(publicKey: string): void;
+  send(serviceId: string, templateId: string, params: Record<string, string>): Promise<{ status: number; text: string }>;
 };
 
 // ─── Scored forecast candidate ─────────────────────────────────────────────────
@@ -41,9 +46,52 @@ export interface ForecastAlertCandidate {
   summary: string;              // human-readable one-liner
 }
 
-// ─── SMTP.DEV API helpers ──────────────────────────────────────────────────────
+// ─── EMAIL PROVIDER HELPERS ──────────────────────────────────────────────────
 const SMTP_API_BASE = 'https://api.smtp.dev';
 const SMTP_SEND_HOST = 'send.smtp.dev';
+
+// ─── EmailJS Integration (Primary - works with any email) ────────────────────
+let _emailJsInitialized = false;
+
+function initEmailJs(publicKey: string): boolean {
+  if (_emailJsInitialized) return true;
+  if (typeof emailjs === 'undefined') return false;
+  try {
+    emailjs.init(publicKey);
+    _emailJsInitialized = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sendViaEmailJs(
+  to: string,
+  subject: string,
+  html: string,
+  settings: EmailAlertSettings
+): Promise<boolean> {
+  if (!settings.emailJsPublicKey || !settings.emailJsServiceId || !settings.emailJsTemplateId) {
+    return false;
+  }
+  if (typeof emailjs === 'undefined') {
+    console.warn('[ForecastEmail] EmailJS library not loaded.');
+    return false;
+  }
+  try {
+    if (!initEmailJs(settings.emailJsPublicKey)) return false;
+    const result = await emailjs.send(settings.emailJsServiceId, settings.emailJsTemplateId, {
+      to_email: to,
+      subject: subject,
+      message_html: html,
+      from_name: 'BioSentinel Health Intelligence',
+    });
+    return result.status === 200;
+  } catch (err) {
+    console.error('[ForecastEmail] EmailJS error:', err);
+    return false;
+  }
+}
 
 /** Generate a cryptographically-adequate random password */
 function randomPassword(len = 20): string {
@@ -487,7 +535,7 @@ function buildEmailHtml(
   return { subject, html };
 }
 
-// ─── SEND EMAIL VIA SMTPJS ────────────────────────────────────────────────────
+// ─── SEND EMAIL (tries EmailJS first, then smtpjs fallback) ─────────────────
 async function sendViaSmtpJs(
   to: string,
   from: string,
@@ -517,6 +565,29 @@ async function sendViaSmtpJs(
     console.error('[ForecastEmail] smtpjs error:', err);
     return false;
   }
+}
+
+/** Unified send: tries EmailJS first, falls back to smtpjs */
+async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+  settings: EmailAlertSettings,
+  senderEmail: string,
+  senderPassword: string
+): Promise<boolean> {
+  // Try EmailJS first (works with any email address)
+  if (settings.emailJsPublicKey && settings.emailJsServiceId && settings.emailJsTemplateId) {
+    console.log('[ForecastEmail] Attempting EmailJS send...');
+    const emailJsOk = await sendViaEmailJs(to, subject, html, settings);
+    if (emailJsOk) {
+      console.log('[ForecastEmail] EmailJS send successful.');
+      return true;
+    }
+    console.warn('[ForecastEmail] EmailJS failed, falling back to smtpjs...');
+  }
+  // Fallback to smtpjs
+  return sendViaSmtpJs(to, senderEmail, senderPassword, subject, html);
 }
 
 // ─── PUBLIC ENTRY POINT ────────────────────────────────────────────────────────
@@ -586,12 +657,13 @@ export async function checkAndSendForecastEmails(
 
   console.log(`[ForecastEmail] Sending alert to ${settings.recipientEmail} — ${fresh.length} event(s), top score ${fresh[0].totalScore}`);
 
-  const sent = await sendViaSmtpJs(
+  const sent = await sendEmail(
     settings.recipientEmail,
-    senderEmail,
-    senderPassword,
     subject,
-    html
+    html,
+    settings,
+    senderEmail,
+    senderPassword
   );
 
   if (sent) {
@@ -637,10 +709,10 @@ export async function sendTestEmail(
     html = testPlaceholderHtml(settings.recipientEmail);
   }
 
-  const sent = await sendViaSmtpJs(settings.recipientEmail, senderEmail, senderPassword, subject, html);
+  const sent = await sendEmail(settings.recipientEmail, subject, html, settings, senderEmail, senderPassword);
   return sent
     ? { ok: true, message: `Test email sent to ${settings.recipientEmail}! Check your inbox.` }
-    : { ok: false, message: 'SMTP send failed. Ensure the recipient is a valid smtp.dev address.' };
+    : { ok: false, message: 'Email send failed. Check your EmailJS configuration or smtp.dev settings.' };
 }
 
 function testPlaceholderHtml(recipientEmail: string): string {
