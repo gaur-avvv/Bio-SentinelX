@@ -64,6 +64,10 @@ export interface ClimateContribution {
   precipitation: number;
   humidity: number;
   lai: number;
+  uvIndex?: number;
+  aqi?: number;
+  pressure?: number;
+  soilMoisture?: number;
   riskMultiplier: number;
   seasonalContext: string;
 }
@@ -190,44 +194,63 @@ function calculateDeviations(currentCases: number, baseline: WeeklyBaseline): nu
  */
 export function assessClimateContribution(
   syndromeId: string,
-  climateData: { temperature: number; precipitation: number; humidity: number; lai: number }
+  climateData: { temperature: number; precipitation: number; humidity: number; lai: number; uvIndex?: number; aqi?: number; pressure?: number; soilMoisture?: number }
 ): ClimateContribution {
   const syndrome = IDSP_SYNDROMES.find(s => s.id === syndromeId);
   let riskMultiplier = 1.0;
-  let seasonalContext = 'Normal season';
+  let seasonalContext = "Normal season";
 
   // Syndrome-specific climate risk multipliers
   if (syndrome) {
     switch (syndrome.id) {
-      case 'awd': // Acute Watery Diarrhea — peaks with heavy rainfall + high temp
-      case 'abd':
+      case "awd": // Acute Watery Diarrhea — peaks with heavy rainfall + high temp
+      case "abd":
         if (climateData.precipitation > 100) riskMultiplier *= 1.8;
         if (climateData.temperature > 30) riskMultiplier *= 1.3;
         if (climateData.humidity > 80) riskMultiplier *= 1.2;
-        seasonalContext = climateData.precipitation > 100 ? 'Monsoon season — elevated waterborne risk' : 'Pre-monsoon';
+        if (climateData.soilMoisture && climateData.soilMoisture > 0.4) riskMultiplier *= 1.4; // Saturated soil -> runoff
+        seasonalContext = climateData.precipitation > 100 ? "Monsoon season — elevated waterborne risk" : "Pre-monsoon";
         break;
 
-      case 'afi': // Acute Febrile Illness — dengue/malaria peaks with humidity + stagnant water
+      case "afi": // Acute Febrile Illness — dengue/malaria peaks with humidity + stagnant water
         if (climateData.humidity > 70) riskMultiplier *= 1.5;
         if (climateData.temperature > 25 && climateData.temperature < 35) riskMultiplier *= 1.4;
         if (climateData.lai > 3) riskMultiplier *= 1.2; // Vegetation → mosquito breeding
-        seasonalContext = climateData.humidity > 70 ? 'Vector breeding season — high mosquito activity' : 'Normal vector activity';
+        if (climateData.soilMoisture && climateData.soilMoisture > 0.3) riskMultiplier *= 1.3; // Breeding sites
+        seasonalContext = climateData.humidity > 70 ? "Vector breeding season — high mosquito activity" : "Normal vector activity";
         break;
 
-      case 'ari': // Acute Respiratory Infection — peaks in cold/dry or high pollution
+      case "ari": // Acute Respiratory Infection — peaks in cold/dry or high pollution
         if (climateData.temperature < 15) riskMultiplier *= 1.6;
         if (climateData.humidity < 30) riskMultiplier *= 1.3;
-        seasonalContext = climateData.temperature < 15 ? 'Winter season — respiratory vulnerability' : 'Normal respiratory risk';
+        if (climateData.aqi && climateData.aqi >= 4) riskMultiplier *= 1.8; // High pollution (Poor/Very Poor)
+        if (climateData.pressure && climateData.pressure < 1000) riskMultiplier *= 1.2; // Low pressure systems
+        seasonalContext = climateData.aqi && climateData.aqi >= 4 ? "High pollution event — extreme respiratory risk" :
+                         climateData.temperature < 15 ? "Winter season — respiratory vulnerability" : "Normal respiratory risk";
         break;
 
-      case 'jaundice': // Hepatitis — waterborne, floods
+      case "jaundice": // Hepatitis — waterborne, floods
         if (climateData.precipitation > 150) riskMultiplier *= 2.0;
-        seasonalContext = climateData.precipitation > 150 ? 'Post-flood contamination risk' : 'Normal hepatitis risk';
+        if (climateData.soilMoisture && climateData.soilMoisture > 0.45) riskMultiplier *= 1.5;
+        seasonalContext = climateData.precipitation > 150 ? "Post-flood contamination risk" : "Normal hepatitis risk";
+        break;
+
+      case "snakebite": // Snakes emerge during floods or heavy rain
+        if (climateData.precipitation > 50) riskMultiplier *= 1.5;
+        if (climateData.soilMoisture && climateData.soilMoisture > 0.4) riskMultiplier *= 1.6;
+        seasonalContext = "Wet soil/Flooding — elevated snake activity";
+        break;
+
+      case "measles": // Measles peaks in dry seasons
+        if (climateData.humidity < 40) riskMultiplier *= 1.4;
+        if (climateData.uvIndex && climateData.uvIndex > 8) riskMultiplier *= 1.2;
+        seasonalContext = "Dry season — increased measles transmission";
         break;
 
       default:
         if (climateData.temperature > 35) riskMultiplier *= 1.2;
         if (climateData.precipitation > 100) riskMultiplier *= 1.3;
+        if (climateData.aqi && climateData.aqi >= 4) riskMultiplier *= 1.4;
         break;
     }
   }
@@ -237,6 +260,10 @@ export function assessClimateContribution(
     precipitation: climateData.precipitation,
     humidity: climateData.humidity,
     lai: climateData.lai,
+    uvIndex: climateData.uvIndex,
+    aqi: climateData.aqi,
+    pressure: climateData.pressure,
+    soilMoisture: climateData.soilMoisture,
     riskMultiplier: Math.round(riskMultiplier * 100) / 100,
     seasonalContext,
   };
@@ -284,7 +311,7 @@ export function recordSyndromicSignal(
 export function analyzeDistrict(
   district: string,
   state: string,
-  climateData?: { temperature: number; precipitation: number; humidity: number; lai: number }
+  climateData?: { temperature: number; precipitation: number; humidity: number; lai: number; uvIndex?: number; aqi?: number; pressure?: number; soilMoisture?: number }
 ): DistrictSurveillance {
   const signals = loadSignals();
   const districtSignals = signals.filter(

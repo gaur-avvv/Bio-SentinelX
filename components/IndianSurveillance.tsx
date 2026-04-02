@@ -6,6 +6,7 @@
  *   - Outbreak prediction with 4-week temporal baseline
  *   - Environmental health knowledge graph explorer
  *   - Privacy-first architecture dashboard
+ *   - Interconnected Regional Outbreak Monitor (Cloud + AI)
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -14,6 +15,7 @@ import {
   CheckCircle2, XCircle, Info, Clock, Play, Trash2, ChevronDown,
   ChevronRight, FileText, Thermometer, Droplets, Wind, Eye,
   Lock, Upload, Search, BarChart3, TrendingUp, MapPin, Loader2,
+  Crosshair, Target, Cloud, Share2, Network
 } from 'lucide-react';
 
 import {
@@ -24,13 +26,14 @@ import {
 } from '../services/indicDataService';
 import {
   hasHFToken, getHFToken, setHFToken, aiExtractSyndromes, analyzeClinicialImage,
-  aiAnalyzeOutbreakRisk, hfInference,
+  aiAnalyzeOutbreakRisk, hfInference, aiAnalyzeRegionalOutbreak,
   getAvailableModels, checkModelAvailability, getDefaultModel, MEDGEMMA_MODELS,
   type AISyndromeExtraction, type AIImageAnalysis, type AIOutbreakAnalysis,
 } from '../services/huggingFaceService';
 import {
   recordSyndromicSignal, analyzeDistrict, getOutbreakAlerts,
   getOutbreakPredictionStats, clearOutbreakAlerts, clearSyndromicSignals,
+  assessClimateContribution,
   type OutbreakAlert, type DistrictSurveillance, type OutbreakPredictionStats,
 } from '../services/outbreakPredictionService';
 import {
@@ -39,9 +42,12 @@ import {
 } from '../services/knowledgeGraphService';
 import {
   getPrivacyDashboard, getAuditLog, getConsentSettings, updateConsentSettings,
-  anonymizeText, clearPrivacyData,
+  anonymizeText, clearPrivacyData, createAnonymizedSignal,
   type PrivacyDashboard, type PrivacyAuditEntry, type ConsentSettings,
 } from '../services/privacyService';
+import { reverseGeocode } from '../services/geoService';
+import { syncSignalsToCloud, syncAlertsToCloud, fetchGlobalAlerts, fetchRegionalData } from '../services/supabaseService';
+import { type WeatherData } from '../types';
 
 // ─── Sub-tab type ───────────────────────────────────────────────────────────
 
@@ -71,7 +77,7 @@ const severityBadge = (severity: string) => {
 
 interface Props {
   onBack: () => void;
-  weather?: { temp: number; humidity: number; aqi?: number; rawAqi?: number; uvIndex?: number | null } | null;
+  weather?: WeatherData | null;
 }
 
 export const IndianSurveillance: React.FC<Props> = ({ onBack, weather }) => {
@@ -125,8 +131,8 @@ export const IndianSurveillance: React.FC<Props> = ({ onBack, weather }) => {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'intake' && <FieldIntakePanel />}
-      {activeTab === 'outbreak' && <OutbreakWatchPanel />}
+      {activeTab === 'intake' && <FieldIntakePanel weather={weather} />}
+      {activeTab === 'outbreak' && <OutbreakWatchPanel weather={weather} />}
       {activeTab === 'knowledge' && <KnowledgeGraphPanel weather={weather} />}
       {activeTab === 'privacy' && <PrivacyPanel />}
     </div>
@@ -135,7 +141,7 @@ export const IndianSurveillance: React.FC<Props> = ({ onBack, weather }) => {
 
 // ─── Field Intake Panel ─────────────────────────────────────────────────────
 
-const FieldIntakePanel: React.FC = () => {
+const FieldIntakePanel: React.FC<{ weather?: WeatherData | null }> = ({ weather }) => {
   const [text, setText] = useState('');
   const [language, setLanguage] = useState<IndicLanguage>('hi');
   const [district, setDistrict] = useState('');
@@ -151,8 +157,10 @@ const FieldIntakePanel: React.FC = () => {
   const [showHfSetup, setShowHfSetup] = useState(!hasHFToken());
   const [selectedModel, setSelectedModel] = useState<string>(getDefaultModel().id);
   const [modelStatus, setModelStatus] = useState<string>('');
+  const [isLocating, setIsLocating] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+
   const models = getAvailableModels();
-  // Knowledge Graph context enrichment for extracted syndromes
   const [kgContext, setKgContext] = useState<KGQueryResult | null>(null);
 
   const refreshData = useCallback(() => {
@@ -161,6 +169,38 @@ const FieldIntakePanel: React.FC = () => {
 
   useEffect(() => { refreshData(); }, [refreshData]);
 
+  const handleAutoLocate = useCallback(async () => {
+    setIsLocating(true);
+    try {
+      let lat = weather?.lat;
+      let lon = weather?.lon;
+      if (!lat || !lon) {
+        const pos = await new Promise<GeolocationPosition>((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej)
+        );
+        lat = pos.coords.latitude;
+        lon = pos.coords.longitude;
+      }
+      if (lat && lon) {
+        const info = await reverseGeocode(lat, lon);
+        if (info) {
+          setDistrict(info.district);
+          setState(info.state);
+        }
+      }
+    } catch (err) {
+      console.warn('[FieldIntake] Auto-location failed:', err);
+    } finally {
+      setIsLocating(false);
+    }
+  }, [weather]);
+
+  useEffect(() => {
+    if (weather?.lat && weather?.lon && !district) {
+      handleAutoLocate();
+    }
+  }, [weather, handleAutoLocate, district]);
+
   const handleProcess = async () => {
     if (!text.trim() || !district.trim() || !state.trim()) return;
     setProcessing(true);
@@ -168,42 +208,55 @@ const FieldIntakePanel: React.FC = () => {
     setImageAnalysis(null);
     setKgContext(null);
     try {
-      // Run keyword-based extraction for instant local result
       const result = processFieldConversation(text.trim(), language, district.trim(), state.trim());
       setLastResult(result);
 
-      // Query Knowledge Graph to enrich extraction with causal pathways
       if (result.extractedSyndromes.length > 0) {
         const kgQuery = result.extractedSyndromes.join(' ');
         const kgResult = queryKnowledgeGraph(kgQuery);
         if (kgResult.chains.length > 0) setKgContext(kgResult);
+
+        // Auto-sync anonymized signal to cloud
+        const consent = getConsentSettings();
+        if (consent.syndromeDataSync === 'granted') {
+          setIsSyncing(true);
+          try {
+            const topSyndrome = result.extractedSyndromes[0];
+            const syndrome = IDSP_SYNDROMES.find(s => s.name === topSyndrome);
+            const anonymized = createAnonymizedSignal(
+              syndrome?.id || 'unknown',
+              result.icd10Codes,
+              district,
+              state,
+              1, // Individual case
+              'low' // Default severity
+            );
+            await syncSignalsToCloud([anonymized], weather?.city);
+          } catch (err) {
+            console.error('[FieldIntake] Cloud sync failed:', err);
+          } finally {
+            setIsSyncing(false);
+          }
+        }
       }
 
-      // If HF token available, also run AI-powered extraction (with image if provided)
       if (hasHFToken()) {
         setAiProcessing(true);
         try {
-          // Multimodal: pass image URL to AI extraction if provided
           const aiResult = await aiExtractSyndromes(text.trim(), imageUrl.trim() || undefined);
           setAiExtraction(aiResult);
-          // Also enrich AI results with KG context
           if (aiResult.syndromes.length > 0 && !kgContext) {
             const aiKgQuery = aiResult.syndromes.map(s => s.name).join(' ');
             const kgResult = queryKnowledgeGraph(aiKgQuery);
             if (kgResult.chains.length > 0) setKgContext(kgResult);
           }
-          // If image URL provided, also run standalone image analysis
           if (imageUrl.trim()) {
             try {
               const imgResult = await analyzeClinicialImage(imageUrl.trim(), text.trim());
               setImageAnalysis(imgResult);
-            } catch {
-              // Image analysis is optional
-            }
+            } catch {}
           }
-        } catch {
-          // AI extraction is optional
-        } finally {
+        } catch {} finally {
           setAiProcessing(false);
         }
       }
@@ -231,12 +284,10 @@ const FieldIntakePanel: React.FC = () => {
     else setModelStatus(`Unavailable: ${status.error || 'Unknown error'}`);
   };
 
-  // Live preview extraction
   const preview = text.trim() ? extractSyndromes(text.trim()) : null;
 
   return (
     <div className="space-y-6">
-      {/* Hugging Face / MedGemma Setup */}
       {showHfSetup && (
         <div className="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-5">
           <h3 className="text-[10px] font-black text-amber-700 dark:text-amber-300 uppercase tracking-widest mb-2 flex items-center gap-2">
@@ -288,7 +339,6 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
-      {/* HF Token Status Banner (when configured) */}
       {!showHfSetup && hasHFToken() && (
         <div className="flex items-center justify-between bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-2.5">
           <div className="flex items-center gap-2">
@@ -302,12 +352,24 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
-      {/* Field Conversation Input */}
       <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
-        <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest mb-4 flex items-center gap-2">
-          <FileText className="w-3.5 h-3.5 text-teal-500" />
-          Clinical Intake — Process Field Conversation
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2">
+            <FileText className="w-3.5 h-3.5 text-teal-500" />
+            Clinical Intake — Process Field Conversation
+          </h3>
+          <div className="flex items-center gap-2">
+            {isSyncing && <Cloud className="w-3 h-3 text-blue-500 animate-pulse" />}
+            <button
+              onClick={handleAutoLocate}
+              disabled={isLocating}
+              className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-teal-50 dark:hover:bg-teal-900/20 text-slate-600 dark:text-slate-400 hover:text-teal-600 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
+            >
+              {isLocating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Crosshair className="w-3 h-3" />}
+              Auto-Detect Location
+            </button>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <div>
@@ -351,7 +413,6 @@ const FieldIntakePanel: React.FC = () => {
           />
         </div>
 
-        {/* Clinical Image URL (Phase 4: Multimodal) */}
         <div className="mb-3">
           <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 block flex items-center gap-1.5">
             <Upload className="w-3 h-3" /> Clinical Image URL (Optional — MedGemma 4B Vision)
@@ -371,7 +432,6 @@ const FieldIntakePanel: React.FC = () => {
           )}
         </div>
 
-        {/* Live Preview */}
         {preview && preview.syndromes.length > 0 && (
           <div className="mb-4 p-3 bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-800 rounded-xl">
             <p className="text-[9px] font-black text-teal-600 dark:text-teal-400 uppercase tracking-widest mb-2">Live Extraction Preview</p>
@@ -403,7 +463,6 @@ const FieldIntakePanel: React.FC = () => {
         </button>
       </div>
 
-      {/* Last Result */}
       {lastResult && (
         <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-5">
           <h4 className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-widest mb-2 flex items-center gap-2">
@@ -419,7 +478,6 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
-      {/* AI Extraction Result (MedGemma) */}
       {aiProcessing && (
         <div className="flex items-center gap-3 p-4 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-2xl">
           <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />
@@ -461,7 +519,6 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
-      {/* Image Analysis Result (Phase 4: Multimodal) */}
       {imageAnalysis && (
         <div className="bg-pink-50 dark:bg-pink-950/30 border border-pink-200 dark:border-pink-800 rounded-2xl p-5">
           <h4 className="text-[10px] font-black text-pink-700 dark:text-pink-300 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -491,7 +548,6 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
-      {/* Knowledge Graph — Causal Pathways (enriches extraction results) */}
       {kgContext && kgContext.chains.length > 0 && (
         <div className="bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-950/30 dark:to-violet-950/30 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-5">
           <h4 className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -529,7 +585,6 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
-      {/* Recent Conversations */}
       {conversations.length > 0 && (
         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
           <div className="flex items-center justify-between mb-4">
@@ -566,32 +621,75 @@ const FieldIntakePanel: React.FC = () => {
 
 // ─── Outbreak Watch Panel ───────────────────────────────────────────────────
 
-const OutbreakWatchPanel: React.FC = () => {
+const OutbreakWatchPanel: React.FC<{ weather?: WeatherData | null }> = ({ weather }) => {
   const [district, setDistrict] = useState('');
   const [state, setState] = useState('');
   const [surveillance, setSurveillance] = useState<DistrictSurveillance | null>(null);
   const [alerts, setAlerts] = useState<OutbreakAlert[]>([]);
   const [predStats, setPredStats] = useState<OutbreakPredictionStats | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  // AI-powered outbreak analysis (Phase 3)
   const [aiOutbreak, setAiOutbreak] = useState<AIOutbreakAnalysis | null>(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
-  // SitRep generation via MedGemma 27B
   const [sitRep, setSitRep] = useState<string | null>(null);
   const [generatingSitRep, setGeneratingSitRep] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  // Manual signal entry
+  // Regional/Interconnected State
+  const [regionalTotals, setRegionalTotals] = useState<Record<string, number>>({});
+  const [regionalAnalysis, setRegionalAnalysis] = useState<string | null>(null);
+  const [analyzingRegional, setAnalyzingRegional] = useState(false);
+  const [globalAlerts, setGlobalAlerts] = useState<OutbreakAlert[]>([]);
+
   const [signalSyndrome, setSignalSyndrome] = useState('afi');
   const [signalCases, setSignalCases] = useState('');
   const [signalDistrict, setSignalDistrict] = useState('');
   const [signalState, setSignalState] = useState('');
 
-  const refreshData = useCallback(() => {
+  const refreshData = useCallback(async () => {
     setAlerts(getOutbreakAlerts());
     setPredStats(getOutbreakPredictionStats());
+
+    // Fetch global signals from cloud for interconnected view
+    const cloudAlerts = await fetchGlobalAlerts();
+    setGlobalAlerts(cloudAlerts);
   }, []);
 
   useEffect(() => { refreshData(); }, [refreshData]);
+
+  const handleAutoLocate = useCallback(async () => {
+    setIsLocating(true);
+    try {
+      let lat = weather?.lat;
+      let lon = weather?.lon;
+      if (!lat || !lon) {
+        const pos = await new Promise<GeolocationPosition>((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej)
+        );
+        lat = pos.coords.latitude;
+        lon = pos.coords.longitude;
+      }
+      if (lat && lon) {
+        const info = await reverseGeocode(lat, lon);
+        if (info) {
+          setDistrict(info.district);
+          setState(info.state);
+          setSignalDistrict(info.district);
+          setSignalState(info.state);
+        }
+      }
+    } catch (err) {
+      console.warn('[OutbreakWatch] Auto-location failed:', err);
+    } finally {
+      setIsLocating(false);
+    }
+  }, [weather]);
+
+  useEffect(() => {
+    if (weather?.lat && weather?.lon && !district) {
+      handleAutoLocate();
+    }
+  }, [weather, handleAutoLocate, district]);
 
   const handleAnalyze = async () => {
     if (!district.trim() || !state.trim()) return;
@@ -599,15 +697,34 @@ const OutbreakWatchPanel: React.FC = () => {
     setAiOutbreak(null);
     setSitRep(null);
     try {
-      const result = analyzeDistrict(district.trim(), state.trim());
+      const climate = {
+        temperature: weather?.temp ?? 30,
+        humidity: weather?.humidity ?? 70,
+        precipitation: weather?.precipitationSum ?? 0,
+        lai: 0.4,
+        uvIndex: weather?.uvIndex ?? undefined,
+        aqi: weather?.rawAqi ?? weather?.aqi,
+        pressure: weather?.pressure,
+        soilMoisture: weather?.advancedData?.soilMoisture,
+      };
+
+      const result = analyzeDistrict(district.trim(), state.trim(), climate);
       setSurveillance(result);
       refreshData();
 
-      // Run AI-powered outbreak analysis if HF token available
+      const consent = getConsentSettings();
+      if (consent.anonymizedAlerts === 'granted') {
+        const active = getOutbreakAlerts(district).filter(a => a.status === 'alert' || a.status === 'outbreak');
+        if (active.length > 0) {
+          setIsSyncing(true);
+          try { await syncAlertsToCloud(active, weather?.city); }
+          catch {} finally { setIsSyncing(false); }
+        }
+      }
+
       if (hasHFToken() && result.syndromes.length > 0) {
         setAiAnalyzing(true);
         try {
-          // Find the highest-risk syndrome for AI analysis
           const topSyndrome = result.syndromes.reduce((prev, curr) =>
             curr.currentWeekCases > prev.currentWeekCases ? curr : prev, result.syndromes[0]);
           const aiResult = await aiAnalyzeOutbreakRisk({
@@ -616,22 +733,37 @@ const OutbreakWatchPanel: React.FC = () => {
             syndrome: topSyndrome.syndromeName,
             currentCases: topSyndrome.currentWeekCases,
             weeklyHistory: topSyndrome.weeklyHistory,
-            climate: {
-              temperature: 32,
-              humidity: 75,
-              precipitation: 120,
-              lai: 0.4,
-            },
+            climate,
           });
           setAiOutbreak(aiResult);
-        } catch {
-          // AI analysis is optional
+        } catch (err) {
+          console.error("AI Outbreak Analysis failed:", err);
         } finally {
           setAiAnalyzing(false);
         }
       }
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleRegionalAnalysis = async () => {
+    if (!state.trim() || !hasHFToken()) return;
+    setAnalyzingRegional(true);
+    try {
+      const totals = await fetchRegionalData(state.trim());
+      setRegionalTotals(totals);
+
+      const analysis = await aiAnalyzeRegionalOutbreak({
+        state: state.trim(),
+        regionalTotals: totals,
+        activeAlerts: globalAlerts.filter(a => a.state.toLowerCase() === state.toLowerCase()),
+      });
+      setRegionalAnalysis(analysis);
+    } catch (err) {
+      console.error('[Regional] Analysis failed:', err);
+    } finally {
+      setAnalyzingRegional(false);
     }
   };
 
@@ -686,7 +818,6 @@ Write a concise, professional SitRep covering:
 
   return (
     <div className="space-y-6">
-      {/* Stats */}
       {predStats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
@@ -708,10 +839,20 @@ Write a concise, professional SitRep covering:
 
       {/* Record Signal */}
       <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
-        <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest mb-4 flex items-center gap-2">
-          <Upload className="w-3.5 h-3.5 text-teal-500" />
-          Record Weekly Syndromic Signal
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2">
+            <Upload className="w-3.5 h-3.5 text-teal-500" />
+            Record Weekly Syndromic Signal
+          </h3>
+          <button
+            onClick={handleAutoLocate}
+            disabled={isLocating}
+            className="flex items-center gap-1.5 px-3 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-slate-600 dark:text-slate-400 hover:text-teal-600 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
+          >
+            {isLocating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Target className="w-3 h-3" />}
+            Auto-Detect
+          </button>
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
           <div>
             <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Syndrome</label>
@@ -750,10 +891,13 @@ Write a concise, professional SitRep covering:
 
       {/* Analyze District */}
       <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
-        <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest mb-4 flex items-center gap-2">
-          <Search className="w-3.5 h-3.5 text-rose-500" />
-          Analyze District — Outbreak Detection (N &gt; μ + 2σ)
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2">
+            <Search className="w-3.5 h-3.5 text-rose-500" />
+            Analyze District — Outbreak Detection (N &gt; μ + 2σ)
+          </h3>
+          {isSyncing && <Cloud className="w-3 h-3 text-blue-500 animate-pulse" />}
+        </div>
         <div className="flex gap-3 mb-4">
           <input type="text" value={district} onChange={e => setDistrict(e.target.value)}
             placeholder="District name"
@@ -769,7 +913,6 @@ Write a concise, professional SitRep covering:
           </button>
         </div>
 
-        {/* Analysis Result */}
         {surveillance && (
           <div className="space-y-4">
             <div className="flex items-center gap-3">
@@ -806,7 +949,77 @@ Write a concise, professional SitRep covering:
         )}
       </div>
 
-      {/* AI Outbreak Analysis (Phase 3) */}
+      {/* Regional Interconnected Dashboard */}
+      <div className="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-950/20 dark:to-blue-950/20 border border-indigo-100 dark:border-indigo-800 rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-widest flex items-center gap-2">
+            <Network className="w-3.5 h-3.5" />
+            Interconnected Regional Outbreak Monitor (Cloud + AI)
+          </h3>
+          <button
+            onClick={handleRegionalAnalysis}
+            disabled={!state.trim() || analyzingRegional}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-500 disabled:opacity-40 transition-all shadow-lg shadow-indigo-200 dark:shadow-none"
+          >
+            {analyzingRegional ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe2 className="w-3 h-3" />}
+            Regional Scan ({state || 'All'})
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Global Alert Stream */}
+          <div className="space-y-2">
+            <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+              <Share2 className="w-3 h-3" /> Live Interconnected Alerts
+            </h4>
+            <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+              {globalAlerts.length > 0 ? globalAlerts.map(a => (
+                <div key={a.id} className="p-2.5 bg-white/60 dark:bg-slate-800/60 border border-indigo-50 dark:border-indigo-900 rounded-xl">
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <span className="text-[10px] font-black text-slate-800 dark:text-white truncate">{a.syndromeName}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${outbreakStatusColor(a.status)}`}>{a.status}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-500 dark:text-slate-400">
+                    <MapPin className="w-2.5 h-2.5" /> {a.district}, {a.state}
+                    <span className="ml-auto opacity-60">{new Date(a.timestamp).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              )) : (
+                <div className="p-8 text-center text-slate-400 italic text-xs">No interconnected alerts found in cloud.</div>
+              )}
+            </div>
+          </div>
+
+          {/* Regional AI Analysis */}
+          <div className="space-y-2">
+            <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+              <Activity className="w-3 h-3" /> Regional Outbreak Prediction (MedGemma 27B)
+            </h4>
+            {regionalAnalysis ? (
+              <div className="p-4 bg-white/80 dark:bg-slate-800/80 border border-indigo-100 dark:border-indigo-800 rounded-xl min-h-[10rem]">
+                <pre className="text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed animate-fade-in">{regionalAnalysis}</pre>
+                {Object.keys(regionalTotals).length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-indigo-50 dark:border-indigo-900 flex flex-wrap gap-2">
+                    {Object.entries(regionalTotals).map(([code, count]) => (
+                      <span key={code} className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300 rounded text-[9px] font-black border border-indigo-100 dark:border-indigo-800">
+                        {code}: {count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full min-h-[10rem] bg-indigo-50/30 dark:bg-indigo-900/10 border-2 border-dashed border-indigo-100 dark:border-indigo-900/30 rounded-xl text-center p-6">
+                <Loader2 className={`w-8 h-8 text-indigo-300 mb-2 ${analyzingRegional ? 'animate-spin' : ''}`} />
+                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">
+                  {analyzingRegional ? 'Synthesizing Regional Intelligence...' : 'Run Regional Scan to Analyze Trends'}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {aiAnalyzing && (
         <div className="flex items-center gap-3 p-4 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-2xl">
           <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />
@@ -855,7 +1068,6 @@ Write a concise, professional SitRep covering:
         </div>
       )}
 
-      {/* SitRep Generation via MedGemma 27B */}
       {surveillance && hasHFToken() && (
         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
           <div className="flex items-center justify-between mb-3">
@@ -879,12 +1091,11 @@ Write a concise, professional SitRep covering:
         </div>
       )}
 
-      {/* Active Alerts */}
       {alerts.length > 0 && (
         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-[10px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest flex items-center gap-2">
-              <AlertTriangle className="w-3.5 h-3.5" /> Outbreak Alerts
+              <AlertTriangle className="w-3.5 h-3.5" /> Local Alerts
             </h3>
             <button onClick={() => { clearOutbreakAlerts(); clearSyndromicSignals(); refreshData(); setSurveillance(null); }}
               className="flex items-center gap-1 text-[9px] font-black text-rose-500 uppercase tracking-widest hover:text-rose-600 transition-colors">
@@ -920,7 +1131,7 @@ Write a concise, professional SitRep covering:
 
 // ─── Knowledge Graph Panel ──────────────────────────────────────────────────
 
-const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number; aqi?: number; rawAqi?: number; uvIndex?: number | null } | null }> = ({ weather }) => {
+const KnowledgeGraphPanel: React.FC<{ weather?: WeatherData | null }> = ({ weather }) => {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<KGQueryResult | null>(null);
   const [envResult, setEnvResult] = useState<KGQueryResult | null>(null);
@@ -939,6 +1150,8 @@ const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number
       humidity: weather.humidity,
       aqi: weather.rawAqi ?? weather.aqi,
       uvIndex: weather.uvIndex ?? undefined,
+      precipitation: weather.precipitationSum,
+      soilMoisture: weather.advancedData?.soilMoisture,
     };
     setEnvResult(analyzeEnvironmentalImpact(conditions));
     setResult(null);
@@ -948,7 +1161,6 @@ const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number
 
   return (
     <div className="space-y-6">
-      {/* Query */}
       <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
         <h3 className="text-[10px] font-black text-violet-600 dark:text-violet-400 uppercase tracking-widest mb-4 flex items-center gap-2">
           <GitBranch className="w-3.5 h-3.5" />
@@ -972,7 +1184,6 @@ const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number
         )}
       </div>
 
-      {/* Results */}
       {activeResult && (
         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
           <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest mb-3">Analysis Result</h3>
@@ -1021,7 +1232,6 @@ const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number
             </div>
           )}
 
-          {/* Quick action buttons for common queries */}
           <div className="mt-4 flex flex-wrap gap-2">
             <p className="w-full text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Quick Queries</p>
             {['humidity', 'pollution', 'rainfall', 'temperature', 'monsoon', 'mosquito'].map(q => (
@@ -1064,7 +1274,6 @@ const PrivacyPanel: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Metrics */}
       {dashboard && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
@@ -1082,7 +1291,6 @@ const PrivacyPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Consent Settings */}
       {dashboard && (
         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
           <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest mb-4">Data Consent Settings</h3>
@@ -1123,7 +1331,6 @@ const PrivacyPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Anonymization Tester */}
       <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
         <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest mb-4 flex items-center gap-2">
           <Eye className="w-3.5 h-3.5 text-blue-500" />
@@ -1158,7 +1365,6 @@ const PrivacyPanel: React.FC = () => {
         )}
       </div>
 
-      {/* Audit Log */}
       {auditLog.length > 0 && (
         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
           <div className="flex items-center justify-between mb-4">

@@ -308,7 +308,8 @@ export const generateHealthRiskAssessment = async (
   reportImage?: string, // Base64 image
   aiProvider: string = 'gemini',
   aiModel: string = 'gemini-2.5-flash',
-  apiKey?: string
+  apiKey?: string,
+  mlPrediction?: any,
 ): Promise<AnalysisResponse> => {
 
   const weatherContext = `
@@ -365,6 +366,17 @@ export const generateHealthRiskAssessment = async (
     - TODAY: ${weather.todaySummary}
     - TOMORROW: ${weather.tomorrowSummary}
   `;
+
+  const mlPredictionContext = `
+    ### ML Intelligence Core Prediction
+    ${mlPrediction ? `
+    - Disease: ${mlPrediction.disease}
+    - Confidence: ${(mlPrediction.confidence * 100).toFixed(1)}%
+    - Risk Level: ${mlPrediction.riskLevel}
+    - Primary Trigger: ${mlPrediction.primaryTrigger}
+    - Recommendation: ${mlPrediction.recommendation}
+    ` : "No ML prediction available."}
+    `;
 
   const feedbackContext = `
     Local Field Observations: "${userFeedback || "None provided."}"

@@ -333,3 +333,20 @@ function getISOWeek(date: Date): number {
   const week1 = new Date(d.getFullYear(), 0, 4);
   return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
 }
+
+/**
+ * Get a formatted anonymized signal for cloud sync.
+ */
+export function getAnonymizedSignalForSync(signal: AnonymizedSignal) {
+  return {
+    syndrome_code: signal.syndromeCode,
+    icd10_codes: signal.icd10Codes,
+    district: signal.district,
+    state: signal.state,
+    week: signal.week,
+    year: signal.year,
+    case_count: signal.caseCount,
+    severity: signal.severity,
+    timestamp: new Date(signal.timestamp).toISOString(),
+  };
+}
