@@ -17,15 +17,15 @@ import {
 } from 'lucide-react';
 
 import {
-  INDIC_DATA_SOURCES, IDSP_SYNDROMES, INDIC_LANGUAGE_LABELS,
+  IDSP_SYNDROMES, INDIC_LANGUAGE_LABELS,
   extractSyndromes, processFieldConversation, getFieldConversations,
-  getIndicDataStats, clearIndicData,
-  type IndicLanguage, type FieldConversation, type IndicDataStats,
+  clearIndicData,
+  type IndicLanguage, type FieldConversation,
 } from '../services/indicDataService';
 import {
-  hasHFToken, getHFToken, setHFToken, aiExtractSyndromes, aiAnalyzeOutbreakRisk,
+  hasHFToken, getHFToken, setHFToken, aiExtractSyndromes,
   getAvailableModels, checkModelAvailability, getDefaultModel,
-  type AISyndromeExtraction, type AIOutbreakAnalysis, type HFModelConfig,
+  type AISyndromeExtraction,
 } from '../services/huggingFaceService';
 import {
   recordSyndromicSignal, analyzeDistrict, getOutbreakAlerts,
@@ -34,8 +34,7 @@ import {
 } from '../services/outbreakPredictionService';
 import {
   initializeKnowledgeGraph, queryKnowledgeGraph, analyzeEnvironmentalImpact,
-  getKnowledgeGraphStats, clearKnowledgeGraph,
-  type KGQueryResult, type KnowledgeGraphStats,
+  type KGQueryResult,
 } from '../services/knowledgeGraphService';
 import {
   getPrivacyDashboard, getAuditLog, getConsentSettings, updateConsentSettings,
@@ -141,7 +140,6 @@ const FieldIntakePanel: React.FC = () => {
   const [district, setDistrict] = useState('');
   const [state, setState] = useState('');
   const [conversations, setConversations] = useState<FieldConversation[]>([]);
-  const [stats, setStats] = useState<IndicDataStats | null>(null);
   const [processing, setProcessing] = useState(false);
   const [lastResult, setLastResult] = useState<FieldConversation | null>(null);
   const [aiExtraction, setAiExtraction] = useState<AISyndromeExtraction | null>(null);
@@ -151,10 +149,11 @@ const FieldIntakePanel: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string>(getDefaultModel().id);
   const [modelStatus, setModelStatus] = useState<string>('');
   const models = getAvailableModels();
+  // Knowledge Graph context enrichment for extracted syndromes
+  const [kgContext, setKgContext] = useState<KGQueryResult | null>(null);
 
   const refreshData = useCallback(() => {
     setConversations(getFieldConversations());
-    setStats(getIndicDataStats());
   }, []);
 
   useEffect(() => { refreshData(); }, [refreshData]);
@@ -163,10 +162,18 @@ const FieldIntakePanel: React.FC = () => {
     if (!text.trim() || !district.trim() || !state.trim()) return;
     setProcessing(true);
     setAiExtraction(null);
+    setKgContext(null);
     try {
-      // Always run keyword-based extraction for instant local result
+      // Run keyword-based extraction for instant local result
       const result = processFieldConversation(text.trim(), language, district.trim(), state.trim());
       setLastResult(result);
+
+      // Query Knowledge Graph to enrich extraction with causal pathways
+      if (result.extractedSyndromes.length > 0) {
+        const kgQuery = result.extractedSyndromes.join(' ');
+        const kgResult = queryKnowledgeGraph(kgQuery);
+        if (kgResult.chains.length > 0) setKgContext(kgResult);
+      }
 
       // If HF token available, also run AI-powered extraction
       if (hasHFToken()) {
@@ -174,8 +181,14 @@ const FieldIntakePanel: React.FC = () => {
         try {
           const aiResult = await aiExtractSyndromes(text.trim());
           setAiExtraction(aiResult);
+          // Also enrich AI results with KG context
+          if (aiResult.syndromes.length > 0 && !kgContext) {
+            const aiKgQuery = aiResult.syndromes.map(s => s.name).join(' ');
+            const kgResult = queryKnowledgeGraph(aiKgQuery);
+            if (kgResult.chains.length > 0) setKgContext(kgResult);
+          }
         } catch {
-          // AI extraction is optional — keyword-based result is already saved
+          // AI extraction is optional
         } finally {
           setAiProcessing(false);
         }
@@ -271,48 +284,6 @@ const FieldIntakePanel: React.FC = () => {
           <button onClick={() => setShowHfSetup(true)} className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest hover:text-emerald-800 transition-colors">
             Configure
           </button>
-        </div>
-      )}
-
-      {/* Data Sources Info */}
-      <div className="bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-950/30 dark:to-cyan-950/30 border border-teal-100 dark:border-teal-800 rounded-2xl p-5">
-        <h3 className="text-[10px] font-black text-teal-700 dark:text-teal-300 uppercase tracking-widest mb-3">Phase 1 — Indian Context Data Sources</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {INDIC_DATA_SOURCES.map(src => (
-            <div key={src.id} className="bg-white/70 dark:bg-slate-800/70 rounded-xl p-3 border border-teal-100/50 dark:border-teal-800/50">
-              <div className="flex items-start justify-between mb-1">
-                <span className="text-xs font-black text-slate-800 dark:text-white">{src.name}</span>
-                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                  src.category === 'language' ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-300' :
-                  src.category === 'field_conversation' ? 'bg-teal-100 dark:bg-teal-900/40 text-teal-600 dark:text-teal-300' :
-                  src.category === 'outbreak' ? 'bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300' :
-                  'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300'
-                }`}>{src.category.replace('_', ' ')}</span>
-              </div>
-              <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 leading-relaxed">{src.description}</p>
-              {src.coverage && (
-                <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 mt-1">Coverage: {src.coverage}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Stats */}
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Conversations', value: stats.totalConversations, icon: <FileText className="w-4 h-4" /> },
-            { label: 'Syndromes Found', value: stats.totalSyndromes, icon: <Activity className="w-4 h-4" /> },
-            { label: 'Districts', value: stats.districtsCovered, icon: <MapPin className="w-4 h-4" /> },
-            { label: 'Languages', value: Object.keys(stats.languageCoverage).length, icon: <Globe2 className="w-4 h-4" /> },
-          ].map(s => (
-            <div key={s.label} className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl p-4 text-center">
-              <div className="flex justify-center text-teal-500 mb-2">{s.icon}</div>
-              <div className="text-lg font-black text-slate-900 dark:text-white">{s.value}</div>
-              <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{s.label}</div>
-            </div>
-          ))}
         </div>
       )}
 
@@ -455,6 +426,44 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
+      {/* Knowledge Graph — Causal Pathways (enriches extraction results) */}
+      {kgContext && kgContext.chains.length > 0 && (
+        <div className="bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-950/30 dark:to-violet-950/30 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-5">
+          <h4 className="text-[10px] font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <GitBranch className="w-3.5 h-3.5" /> Knowledge Graph — Causal Pathways
+            <span className="text-[8px] font-bold text-indigo-400 normal-case tracking-normal ml-auto">{kgContext.chains.length} pathway(s) found</span>
+          </h4>
+          <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-300 mb-3">{kgContext.summary}</p>
+          <div className="space-y-2">
+            {kgContext.chains.slice(0, 5).map((chain, i) => (
+              <div key={i} className="p-3 bg-white/60 dark:bg-slate-800/60 rounded-xl border border-indigo-100 dark:border-indigo-800">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200">{chain.explanation}</span>
+                  <span className="text-[9px] font-black text-indigo-500 px-2 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 rounded-full">
+                    {(chain.totalStrength * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {chain.nodes.map((node, j) => (
+                    <React.Fragment key={node.id}>
+                      <span className={`px-2 py-1 rounded-lg text-[9px] font-bold ${
+                        node.type === 'health_condition' ? 'bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300' :
+                        node.type === 'environmental_factor' ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300' :
+                        node.type === 'vector' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300' :
+                        node.type === 'pathogen' ? 'bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300' :
+                        node.type === 'intervention' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300' :
+                        'bg-slate-100 dark:bg-slate-600 text-slate-600 dark:text-slate-300'
+                      }`}>{node.label}</span>
+                      {j < chain.nodes.length - 1 && <span className="text-indigo-300 dark:text-indigo-600 self-center text-xs">→</span>}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Recent Conversations */}
       {conversations.length > 0 && (
         <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
@@ -486,22 +495,6 @@ const FieldIntakePanel: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* IDSP Syndromes Reference */}
-      <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
-        <h3 className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest mb-3">11 IDSP Surveillance Syndromes</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {IDSP_SYNDROMES.map(s => (
-            <div key={s.id} className="flex items-start gap-2 p-2.5 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-100 dark:border-slate-600">
-              <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${severityBadge(s.severity)} border`}>{s.severity}</span>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-slate-800 dark:text-white">{s.name}</p>
-                <p className="text-[9px] font-mono text-slate-400 dark:text-slate-500">{s.icd10Codes.join(', ')}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 };
@@ -714,11 +707,8 @@ const OutbreakWatchPanel: React.FC = () => {
 const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number; aqi?: number; rawAqi?: number; uvIndex?: number | null } | null }> = ({ weather }) => {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<KGQueryResult | null>(null);
-  const [kgStats, setKgStats] = useState<KnowledgeGraphStats | null>(null);
   const [envResult, setEnvResult] = useState<KGQueryResult | null>(null);
   const [expandedChain, setExpandedChain] = useState<number | null>(null);
-
-  useEffect(() => { setKgStats(getKnowledgeGraphStats()); }, []);
 
   const handleQuery = () => {
     if (!query.trim()) return;
@@ -742,23 +732,6 @@ const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number
 
   return (
     <div className="space-y-6">
-      {/* Stats */}
-      {kgStats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Nodes', value: kgStats.totalNodes },
-            { label: 'Edges', value: kgStats.totalEdges },
-            { label: 'Node Types', value: Object.keys(kgStats.nodesByType).length },
-            { label: 'Edge Types', value: Object.keys(kgStats.edgesByType).length },
-          ].map(s => (
-            <div key={s.label} className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl p-4 text-center">
-              <div className="text-lg font-black text-slate-900 dark:text-white">{s.value}</div>
-              <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{s.label}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Query */}
       <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
         <h3 className="text-[10px] font-black text-violet-600 dark:text-violet-400 uppercase tracking-widest mb-4 flex items-center gap-2">
@@ -844,17 +817,6 @@ const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number
           </div>
         </div>
       )}
-
-      {/* How It Works */}
-      <div className="bg-gradient-to-br from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 border border-violet-100 dark:border-violet-800 rounded-2xl p-5">
-        <h3 className="text-[10px] font-black text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-3">How the Knowledge Graph Works</h3>
-        <div className="space-y-2 text-[10px] font-semibold text-slate-600 dark:text-slate-400 leading-relaxed">
-          <p><strong className="text-slate-800 dark:text-white">Nodes</strong> represent environmental factors, health conditions, pathogens, vectors, symptoms, and interventions.</p>
-          <p><strong className="text-slate-800 dark:text-white">Edges</strong> encode causal relationships with evidence-backed strength scores (e.g., High Humidity → Mold Growth → Asthma).</p>
-          <p><strong className="text-slate-800 dark:text-white">Queries</strong> traverse the graph using BFS to find all causal pathways from environmental factors to health outcomes.</p>
-          <p><strong className="text-slate-800 dark:text-white">Impact</strong>: Answers the "Why" in health reports — explains how weather conditions lead to specific disease risks.</p>
-        </div>
-      </div>
     </div>
   );
 };
@@ -886,27 +848,6 @@ const PrivacyPanel: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Privacy Architecture Overview */}
-      <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 border border-blue-100 dark:border-blue-800 rounded-2xl p-5">
-        <h3 className="text-[10px] font-black text-blue-700 dark:text-blue-300 uppercase tracking-widest mb-3 flex items-center gap-2">
-          <Lock className="w-3.5 h-3.5" /> Privacy-First Architecture
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="bg-white/70 dark:bg-slate-800/70 rounded-xl p-3 border border-blue-100/50 dark:border-blue-800/50">
-            <p className="text-xs font-black text-slate-800 dark:text-white mb-1">On-Device Processing</p>
-            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">90% of extraction runs locally. Sensitive narratives never leave the device.</p>
-          </div>
-          <div className="bg-white/70 dark:bg-slate-800/70 rounded-xl p-3 border border-blue-100/50 dark:border-blue-800/50">
-            <p className="text-xs font-black text-slate-800 dark:text-white mb-1">Structured-Only Sync</p>
-            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Only anonymized ICD-10 codes and syndrome categories are uploaded to cloud.</p>
-          </div>
-          <div className="bg-white/70 dark:bg-slate-800/70 rounded-xl p-3 border border-blue-100/50 dark:border-blue-800/50">
-            <p className="text-xs font-black text-slate-800 dark:text-white mb-1">PII Redaction</p>
-            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Names, Aadhaar, phone numbers, and addresses are automatically stripped.</p>
-          </div>
-        </div>
-      </div>
-
       {/* Metrics */}
       {dashboard && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
