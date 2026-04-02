@@ -23,6 +23,11 @@ import {
   type IndicLanguage, type FieldConversation, type IndicDataStats,
 } from '../services/indicDataService';
 import {
+  hasHFToken, getHFToken, setHFToken, aiExtractSyndromes, aiAnalyzeOutbreakRisk,
+  getAvailableModels, checkModelAvailability, getDefaultModel,
+  type AISyndromeExtraction, type AIOutbreakAnalysis, type HFModelConfig,
+} from '../services/huggingFaceService';
+import {
   recordSyndromicSignal, analyzeDistrict, getOutbreakAlerts,
   getOutbreakPredictionStats, clearOutbreakAlerts, clearSyndromicSignals,
   type OutbreakAlert, type DistrictSurveillance, type OutbreakPredictionStats,
@@ -139,6 +144,13 @@ const FieldIntakePanel: React.FC = () => {
   const [stats, setStats] = useState<IndicDataStats | null>(null);
   const [processing, setProcessing] = useState(false);
   const [lastResult, setLastResult] = useState<FieldConversation | null>(null);
+  const [aiExtraction, setAiExtraction] = useState<AISyndromeExtraction | null>(null);
+  const [aiProcessing, setAiProcessing] = useState(false);
+  const [hfToken, setHfToken] = useState(getHFToken());
+  const [showHfSetup, setShowHfSetup] = useState(!hasHFToken());
+  const [selectedModel, setSelectedModel] = useState<string>(getDefaultModel().id);
+  const [modelStatus, setModelStatus] = useState<string>('');
+  const models = getAvailableModels();
 
   const refreshData = useCallback(() => {
     setConversations(getFieldConversations());
@@ -147,12 +159,28 @@ const FieldIntakePanel: React.FC = () => {
 
   useEffect(() => { refreshData(); }, [refreshData]);
 
-  const handleProcess = () => {
+  const handleProcess = async () => {
     if (!text.trim() || !district.trim() || !state.trim()) return;
     setProcessing(true);
+    setAiExtraction(null);
     try {
+      // Always run keyword-based extraction for instant local result
       const result = processFieldConversation(text.trim(), language, district.trim(), state.trim());
       setLastResult(result);
+
+      // If HF token available, also run AI-powered extraction
+      if (hasHFToken()) {
+        setAiProcessing(true);
+        try {
+          const aiResult = await aiExtractSyndromes(text.trim());
+          setAiExtraction(aiResult);
+        } catch {
+          // AI extraction is optional — keyword-based result is already saved
+        } finally {
+          setAiProcessing(false);
+        }
+      }
+
       setText('');
       refreshData();
     } finally {
@@ -160,11 +188,92 @@ const FieldIntakePanel: React.FC = () => {
     }
   };
 
+  const handleSaveHfToken = () => {
+    if (hfToken.trim()) {
+      setHFToken(hfToken.trim());
+      setShowHfSetup(false);
+    }
+  };
+
+  const handleCheckModel = async () => {
+    setModelStatus('Checking...');
+    const status = await checkModelAvailability(selectedModel);
+    if (status.available) setModelStatus('Model available and ready');
+    else if (status.loading) setModelStatus('Model is loading — retry in a few minutes');
+    else setModelStatus(`Unavailable: ${status.error || 'Unknown error'}`);
+  };
+
   // Live preview extraction
   const preview = text.trim() ? extractSyndromes(text.trim()) : null;
 
   return (
     <div className="space-y-6">
+      {/* Hugging Face / MedGemma Setup */}
+      {showHfSetup && (
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl p-5">
+          <h3 className="text-[10px] font-black text-amber-700 dark:text-amber-300 uppercase tracking-widest mb-2 flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5" /> MedGemma AI — Hugging Face Setup
+          </h3>
+          <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 mb-3">
+            Connect to MedGemma for AI-powered syndromic extraction. Get your token from{' '}
+            <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="underline font-black">huggingface.co/settings/tokens</a>
+          </p>
+          <div className="flex gap-2 mb-3">
+            <input
+              type="password"
+              value={hfToken}
+              onChange={e => setHfToken(e.target.value)}
+              placeholder="hf_xxxxxxxxxxxxxxxxxxxxx"
+              className="flex-1 px-3 py-2 bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-700 rounded-xl text-xs font-mono font-bold text-slate-800 dark:text-slate-100 placeholder-amber-300 dark:placeholder-amber-600 outline-none focus:border-amber-500"
+            />
+            <button
+              onClick={handleSaveHfToken}
+              disabled={!hfToken.trim()}
+              className="px-4 py-2 bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-amber-500 disabled:opacity-40 transition-all"
+            >
+              Save Token
+            </button>
+          </div>
+          <div className="flex items-center gap-2 mb-2">
+            <select
+              value={selectedModel}
+              onChange={e => setSelectedModel(e.target.value)}
+              className="flex-1 px-3 py-2 bg-white dark:bg-slate-800 border border-amber-200 dark:border-amber-700 rounded-xl text-[10px] font-bold text-slate-700 dark:text-slate-200 outline-none"
+            >
+              {models.map(m => (
+                <option key={m.id} value={m.id}>{m.name}{m.isDefault ? ' (default)' : ''}</option>
+              ))}
+            </select>
+            <button
+              onClick={handleCheckModel}
+              disabled={!hfToken.trim()}
+              className="px-3 py-2 bg-white dark:bg-slate-700 border border-amber-200 dark:border-amber-700 rounded-xl text-[10px] font-black text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-40 transition-all"
+            >
+              Check
+            </button>
+          </div>
+          {modelStatus && (
+            <p className={`text-[9px] font-bold ${modelStatus.includes('available') ? 'text-emerald-600' : modelStatus.includes('Checking') ? 'text-amber-600' : 'text-rose-600'}`}>
+              {modelStatus}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* HF Token Status Banner (when configured) */}
+      {!showHfSetup && hasHFToken() && (
+        <div className="flex items-center justify-between bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-xl px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-widest">MedGemma AI Connected</span>
+            <span className="text-[9px] font-bold text-emerald-500">{getDefaultModel().name}</span>
+          </div>
+          <button onClick={() => setShowHfSetup(true)} className="text-[9px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest hover:text-emerald-800 transition-colors">
+            Configure
+          </button>
+        </div>
+      )}
+
       {/* Data Sources Info */}
       <div className="bg-gradient-to-br from-teal-50 to-cyan-50 dark:from-teal-950/30 dark:to-cyan-950/30 border border-teal-100 dark:border-teal-800 rounded-2xl p-5">
         <h3 className="text-[10px] font-black text-teal-700 dark:text-teal-300 uppercase tracking-widest mb-3">Phase 1 — Indian Context Data Sources</h3>
@@ -301,6 +410,48 @@ const FieldIntakePanel: React.FC = () => {
             <div><span className="font-bold text-slate-500 dark:text-slate-400">ICD-10:</span> <span className="font-mono font-bold text-slate-800 dark:text-white">{lastResult.icd10Codes.join(', ') || 'N/A'}</span></div>
             <div><span className="font-bold text-slate-500 dark:text-slate-400">Confidence:</span> <span className="font-black text-slate-800 dark:text-white">{(lastResult.confidence * 100).toFixed(0)}%</span></div>
           </div>
+        </div>
+      )}
+
+      {/* AI Extraction Result (MedGemma) */}
+      {aiProcessing && (
+        <div className="flex items-center gap-3 p-4 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-2xl">
+          <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />
+          <div>
+            <p className="text-[10px] font-black text-violet-700 dark:text-violet-300 uppercase tracking-widest">MedGemma AI Processing</p>
+            <p className="text-[9px] font-semibold text-violet-500">Running deep clinical analysis via Hugging Face Inference API...</p>
+          </div>
+        </div>
+      )}
+      {aiExtraction && aiExtraction.syndromes.length > 0 && (
+        <div className="bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-2xl p-5">
+          <h4 className="text-[10px] font-black text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5" /> MedGemma AI Extraction
+            <span className="text-[8px] font-bold text-violet-400 normal-case tracking-normal ml-auto">{aiExtraction.processing_time_ms}ms</span>
+          </h4>
+          {aiExtraction.summary && (
+            <p className="text-xs font-semibold text-violet-600 dark:text-violet-300 mb-3">{aiExtraction.summary}</p>
+          )}
+          <div className="space-y-2">
+            {aiExtraction.syndromes.map((s, i) => (
+              <div key={i} className="p-3 bg-white/60 dark:bg-slate-800/60 rounded-xl border border-violet-100 dark:border-violet-800">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border ${severityBadge(s.severity)}`}>{s.severity}</span>
+                  <span className="text-xs font-black text-slate-800 dark:text-white">{s.name}</span>
+                  <span className="ml-auto text-[9px] font-bold text-violet-500">{(s.confidence * 100).toFixed(0)}% confidence</span>
+                </div>
+                <div className="flex flex-wrap gap-1 mb-1">
+                  {s.icd10Codes.map(code => (
+                    <span key={code} className="px-1.5 py-0.5 bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded text-[9px] font-mono font-bold">{code}</span>
+                  ))}
+                </div>
+                {s.reasoning && <p className="text-[9px] font-semibold text-slate-500 dark:text-slate-400">{s.reasoning}</p>}
+              </div>
+            ))}
+          </div>
+          {aiExtraction.language_detected && (
+            <p className="text-[9px] font-bold text-violet-400 mt-2">Language detected: {aiExtraction.language_detected}</p>
+          )}
         </div>
       )}
 

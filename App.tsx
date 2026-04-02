@@ -6,7 +6,6 @@ import { HistoricalAnalysis } from './components/HistoricalAnalysis';
 import { FloodPrediction } from './components/FloodPrediction';
 import { BioXAssistant } from './components/BioXAssistant';
 import { ResearchLibrary } from './components/ResearchLibrary';
-import { HealthcareOperations } from './components/HealthcareOperations';
 import { IndianSurveillance } from './components/IndianSurveillance';
 import { AlertNotificationPanel } from './components/AlertNotificationPanel';
 import { WeatherData, LoadingState, AiProvider, AI_MODELS, HealthAlert, NotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, ForecastUpdatePeriod, EmailAlertSettings, DEFAULT_EMAIL_ALERT_SETTINGS } from './types';
@@ -173,7 +172,7 @@ const AppInner: React.FC = () => {
     setEmailAlertSettingsState(prev => ({ ...prev, ...patch }));
   };
 
-  const [view, setView] = useState<'dashboard' | 'historical' | 'flood' | 'assistant' | 'research' | 'healthcare' | 'surveillance' | 'settings'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'historical' | 'flood' | 'assistant' | 'research' | 'surveillance' | 'settings'>('dashboard');
 
   // ── Health Alert State ────────────────────────────────────────────────────
   const [alerts, setAlerts] = useState<HealthAlert[]>([]);
@@ -606,10 +605,6 @@ const AppInner: React.FC = () => {
                 className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap flex-shrink-0 ${view === 'research' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900' : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-600 hover:bg-indigo-600 hover:text-white hover:border-transparent'}`}>
                 Research
               </button>
-              <button onClick={() => setView('healthcare')}
-                className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap flex-shrink-0 ${view === 'healthcare' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 dark:shadow-emerald-900' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-600 hover:bg-emerald-600 hover:text-white hover:border-transparent'}`}>
-                Healthcare Ops
-              </button>
               <button onClick={() => setView('surveillance')}
                 className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap flex-shrink-0 ${view === 'surveillance' ? 'bg-rose-600 text-white shadow-lg shadow-rose-200 dark:shadow-rose-900' : 'bg-rose-500/10 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-600 hover:bg-rose-600 hover:text-white hover:border-transparent'}`}>
                 Surveillance
@@ -674,10 +669,6 @@ const AppInner: React.FC = () => {
                 geminiKey={geminiKey}
                 llamaCloudKey={llamaCloudKey}
                 setLlamaCloudKey={setLlamaCloudKey}
-                onBack={() => setView('dashboard')}
-              />
-            ) : view === 'healthcare' ? (
-              <HealthcareOperations
                 onBack={() => setView('dashboard')}
               />
             ) : view === 'surveillance' ? (
