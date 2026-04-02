@@ -569,3 +569,52 @@ export function getCachedModelStatus(modelId: string): ModelStatus | null {
   const statuses = getModelStatuses();
   return statuses[modelId] || null;
 }
+
+/**
+ * AI-powered regional interconnected outbreak analysis using MedGemma 27B.
+ * Analyzes trends across multiple locations to predict spread.
+ */
+export async function aiAnalyzeRegionalOutbreak(data: {
+  state: string;
+  regionalTotals: Record<string, number>;
+  activeAlerts: OutbreakAlert[];
+  climateTrend?: string;
+}): Promise<string> {
+  if (!hasHFToken()) return 'AI regional analysis unavailable.';
+
+  const modelId = MEDGEMMA_MODELS.find(m => m.id.includes('27b'))?.id || MEDGEMMA_MODELS[0].id;
+
+  const alertsSummary = data.activeAlerts
+    .map(a => `- ${a.district}: ${a.syndromeName} (${a.status})`)
+    .join('\n');
+
+  const regionalSummary = Object.entries(data.regionalTotals)
+    .map(([code, count]) => `${code}: ${count} total cases`)
+    .join(', ');
+
+    const prompt = `Analyze interconnected regional outbreak patterns for the state of ${data.state}.
+
+Regional Case Totals (Across Districts and Cities):
+${regionalSummary}
+
+Active Local Alerts (District/City Level):
+${alertsSummary}
+
+Current Regional Climate Context:
+${data.climateTrend || "Seasonal patterns in effect."}
+
+Predict regional spread risks and provide interconnected guidance for health officers at both district and city levels.
+Identify if clusters are forming across district borders or between interconnected cities.
+Analyze how cases in one city might predict outbreaks in neighboring districts.
+Recommend coordinated regional response actions and resource sharing strategies.`;
+
+  try {
+    return await hfInference(prompt, modelId, {
+      systemPrompt: 'You are a senior regional epidemiologist for the Indian Integrated Disease Surveillance Programme (IDSP). Analyze cross-district health data and provide strategic guidance.',
+      maxTokens: 1024,
+      temperature: 0.3,
+    });
+  } catch (err) {
+    return `Regional analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+  }
+}
