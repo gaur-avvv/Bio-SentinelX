@@ -9,7 +9,6 @@ import { predictBioRisks, MLPrediction, formatExplanations, submitFeedback, quic
 import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, reconstructReportContent } from '../services/memoryService';
 import { ReportRenderer } from './ReportRenderer';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
-import MLTrainingPanel from './MLTrainingPanel';
 import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo } from '../services/realtimeMLService';
 
 interface AnalysisDashboardProps {
@@ -319,7 +318,7 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
             <Cpu className="w-5 h-5 sm:w-8 sm:h-8 text-white" />
           </div>
           <div>
-            <h3 className="text-xl sm:text-3xl font-black text-teal-400 uppercase leading-none">Neural ML Inference</h3>
+            <h3 className="text-xl sm:text-3xl font-black text-teal-400 uppercase leading-none">AI Risk Inference</h3>
             <p className="text-[8px] sm:text-[10px] font-black text-slate-300 uppercase tracking-widest mt-1 sm:mt-2">Bio-Sentinel Custom Model Output</p>
           </div>
         </div>
@@ -688,7 +687,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, boolean>>({});
   const [feedbackComments, setFeedbackComments] = useState<Record<number, string>>({});
   const [showCommentInput, setShowCommentInput] = useState<number | null>(null);
-  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'mltraining' | 'intel' | 'assistant'>('profile');
+  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'intel' | 'assistant'>('profile');
   const [addedObs, setAddedObs] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -856,7 +855,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         prediction = mlResult.value;
         setMlPrediction(prediction);
         setAnalysisCache({ mlPrediction: prediction, lastLocation: weather?.city ?? '', lastFetched: Date.now() });
-        console.log("Neural ML Prediction:", prediction);
+        console.log("AI Risk Prediction:", prediction);
       } else {
         console.error("ML Prediction failed:", mlResult.reason);
         // We don't throw here because we can still show the Gemini analysis
@@ -884,7 +883,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       
       // Append ML insights to the analysis if available
       let augmentedAnalysis = stripHiddenModelReasoning(geminiMarkdown);
-      if (prediction && !geminiMarkdown.includes("Neural ML Model Insights")) {
+      if (prediction && !geminiMarkdown.includes("AI Model Insights")) {
         const modelInfo = getTrainedModelInfo();
         const modelType = modelInfo ? `${modelInfo.type.toUpperCase()} (${modelInfo.featureNames.length} features, ${modelInfo.numClasses} classes)` : 'Bio-Sentinel API';
         const probSection = prediction.allProbabilities 
@@ -922,7 +921,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         return;
       }
       
-      const userFriendlyError = err instanceof Error ? err.message : "Neural core computation error. Please check your data and configuration, then try again.";
+      const userFriendlyError = err instanceof Error ? err.message : "Analysis computation error. Please check your data and configuration, then try again.";
       setError(`Bio-Sentinel Analysis Failed: ${userFriendlyError}`);
       setLoadingState(LoadingState.ERROR);
     }
@@ -1058,7 +1057,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <span className="flex h-2.5 w-2.5 rounded-full bg-teal-500 animate-ping" />
-            <h2 className="text-[10px] font-black text-teal-600 uppercase tracking-[0.4em]">Neural Engine v2.5 Online</h2>
+            <h2 className="text-[10px] font-black text-teal-600 uppercase tracking-[0.4em]">Analysis Engine v2.5 Online</h2>
           </div>
           <h1 className="text-5xl font-black text-slate-900 dark:text-white tracking-tighter uppercase leading-none">Intelligence Core</h1>
         </div>
@@ -1082,7 +1081,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
             <AlertTriangle className="w-5 h-5 text-white" />
           </div>
           <div className="flex-1">
-            <h4 className="text-sm font-black text-rose-900 uppercase tracking-widest mb-1">Neural Core Error</h4>
+            <h4 className="text-sm font-black text-rose-900 uppercase tracking-widest mb-1">Analysis Error</h4>
             <p className="text-xs font-bold text-rose-800 leading-relaxed">{error}</p>
             <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mt-2">Action: Verify dataset format, check Gemini API key, or refresh connection.</p>
           </div>
@@ -1105,7 +1104,6 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
               <div className="flex bg-slate-100 dark:bg-slate-700 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl gap-1 overflow-x-auto custom-scrollbar" role="tablist" aria-label="Input methods">
                 {[
                   { id: 'profile', label: 'Health Profile', icon: Activity },
-                  { id: 'mltraining', label: 'ML Training', icon: BrainCircuit },
                   { id: 'intel', label: 'Local Intel', icon: MessageSquarePlus },
                   { id: 'assistant', label: 'Bio-Assistant', icon: Bot }
                 ].map((tab) => (
@@ -1143,11 +1141,6 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 </div>
               )}
 
-              {activeInputTab === 'mltraining' && (
-                <div className="space-y-6 animate-fade-in" id="panel-mltraining" role="tabpanel" aria-labelledby="tab-mltraining">
-                  <MLTrainingPanel />
-                </div>
-              )}
 
               {activeInputTab === 'intel' && (
                 <div className="space-y-6 animate-fade-in" id="panel-intel" role="tabpanel" aria-labelledby="tab-intel">
@@ -1179,7 +1172,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                       </div>
                     </div>
                     <textarea value={userFeedback} onChange={(e) => setUserFeedback(e.target.value)} placeholder="Input observations or symptoms..." className="w-full min-h-[150px] sm:min-h-[250px] p-4 sm:p-6 bg-slate-50 dark:bg-slate-700/60 border border-slate-100 dark:border-slate-600 rounded-[1.5rem] sm:rounded-[2.5rem] text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-700 focus:border-teal-500 transition-all resize-none placeholder:text-slate-400" />
-                    <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tight">Your observations are used to ground the neural analysis in local reality.</p>
+                    <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tight">Your observations are used to ground the analysis in local reality.</p>
                   </div>
                 </div>
               )}
@@ -1747,7 +1740,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
               </div>
             )}
 
-            {/* Neural ML Inference Section */}
+            {/* AI Risk Inference Section */}
             {mlPrediction && <div id="section-ml" className="scroll-mt-24"><MLInferenceCard prediction={mlPrediction} /></div>}
 
             {/* Predictive Bio-Risks - Enhanced Severity Icons */}
