@@ -23,9 +23,10 @@ import {
   type IndicLanguage, type FieldConversation,
 } from '../services/indicDataService';
 import {
-  hasHFToken, getHFToken, setHFToken, aiExtractSyndromes,
-  getAvailableModels, checkModelAvailability, getDefaultModel,
-  type AISyndromeExtraction,
+  hasHFToken, getHFToken, setHFToken, aiExtractSyndromes, analyzeClinicialImage,
+  aiAnalyzeOutbreakRisk, hfInference,
+  getAvailableModels, checkModelAvailability, getDefaultModel, MEDGEMMA_MODELS,
+  type AISyndromeExtraction, type AIImageAnalysis, type AIOutbreakAnalysis,
 } from '../services/huggingFaceService';
 import {
   recordSyndromicSignal, analyzeDistrict, getOutbreakAlerts,
@@ -139,10 +140,12 @@ const FieldIntakePanel: React.FC = () => {
   const [language, setLanguage] = useState<IndicLanguage>('hi');
   const [district, setDistrict] = useState('');
   const [state, setState] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
   const [conversations, setConversations] = useState<FieldConversation[]>([]);
   const [processing, setProcessing] = useState(false);
   const [lastResult, setLastResult] = useState<FieldConversation | null>(null);
   const [aiExtraction, setAiExtraction] = useState<AISyndromeExtraction | null>(null);
+  const [imageAnalysis, setImageAnalysis] = useState<AIImageAnalysis | null>(null);
   const [aiProcessing, setAiProcessing] = useState(false);
   const [hfToken, setHfToken] = useState(getHFToken());
   const [showHfSetup, setShowHfSetup] = useState(!hasHFToken());
@@ -162,6 +165,7 @@ const FieldIntakePanel: React.FC = () => {
     if (!text.trim() || !district.trim() || !state.trim()) return;
     setProcessing(true);
     setAiExtraction(null);
+    setImageAnalysis(null);
     setKgContext(null);
     try {
       // Run keyword-based extraction for instant local result
@@ -175,17 +179,27 @@ const FieldIntakePanel: React.FC = () => {
         if (kgResult.chains.length > 0) setKgContext(kgResult);
       }
 
-      // If HF token available, also run AI-powered extraction
+      // If HF token available, also run AI-powered extraction (with image if provided)
       if (hasHFToken()) {
         setAiProcessing(true);
         try {
-          const aiResult = await aiExtractSyndromes(text.trim());
+          // Multimodal: pass image URL to AI extraction if provided
+          const aiResult = await aiExtractSyndromes(text.trim(), imageUrl.trim() || undefined);
           setAiExtraction(aiResult);
           // Also enrich AI results with KG context
           if (aiResult.syndromes.length > 0 && !kgContext) {
             const aiKgQuery = aiResult.syndromes.map(s => s.name).join(' ');
             const kgResult = queryKnowledgeGraph(aiKgQuery);
             if (kgResult.chains.length > 0) setKgContext(kgResult);
+          }
+          // If image URL provided, also run standalone image analysis
+          if (imageUrl.trim()) {
+            try {
+              const imgResult = await analyzeClinicialImage(imageUrl.trim(), text.trim());
+              setImageAnalysis(imgResult);
+            } catch {
+              // Image analysis is optional
+            }
           }
         } catch {
           // AI extraction is optional
@@ -195,6 +209,7 @@ const FieldIntakePanel: React.FC = () => {
       }
 
       setText('');
+      setImageUrl('');
       refreshData();
     } finally {
       setProcessing(false);
@@ -336,6 +351,26 @@ const FieldIntakePanel: React.FC = () => {
           />
         </div>
 
+        {/* Clinical Image URL (Phase 4: Multimodal) */}
+        <div className="mb-3">
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1 block flex items-center gap-1.5">
+            <Upload className="w-3 h-3" /> Clinical Image URL (Optional — MedGemma 4B Vision)
+          </label>
+          <input
+            type="url"
+            value={imageUrl}
+            onChange={e => setImageUrl(e.target.value)}
+            placeholder="https://... (rash photo, water sample, clinical image)"
+            className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 outline-none focus:border-violet-500"
+          />
+          {imageUrl.trim() && (
+            <div className="mt-2 flex items-center gap-2">
+              <img src={imageUrl} alt="Preview" className="w-16 h-16 object-cover rounded-lg border border-slate-200 dark:border-slate-600" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              <span className="text-[9px] font-bold text-violet-500">Image will be analyzed by MedGemma 4B multimodal model</span>
+            </div>
+          )}
+        </div>
+
         {/* Live Preview */}
         {preview && preview.syndromes.length > 0 && (
           <div className="mb-4 p-3 bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-800 rounded-xl">
@@ -426,6 +461,36 @@ const FieldIntakePanel: React.FC = () => {
         </div>
       )}
 
+      {/* Image Analysis Result (Phase 4: Multimodal) */}
+      {imageAnalysis && (
+        <div className="bg-pink-50 dark:bg-pink-950/30 border border-pink-200 dark:border-pink-800 rounded-2xl p-5">
+          <h4 className="text-[10px] font-black text-pink-700 dark:text-pink-300 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <Eye className="w-3.5 h-3.5" /> MedGemma 4B Vision — Image Analysis
+            <span className="text-[8px] font-bold text-pink-400 normal-case tracking-normal ml-auto">{imageAnalysis.processing_time_ms}ms · {imageAnalysis.model_used}</span>
+          </h4>
+          <p className="text-xs font-semibold text-pink-600 dark:text-pink-300 mb-3">{imageAnalysis.findings}</p>
+          {imageAnalysis.conditions.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {imageAnalysis.conditions.map((c, i) => (
+                <span key={i} className="px-2 py-1 bg-pink-100 dark:bg-pink-900/40 text-pink-700 dark:text-pink-300 rounded-lg text-[10px] font-bold">{c}</span>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`px-2 py-0.5 rounded-lg text-[9px] font-black uppercase border ${severityBadge(imageAnalysis.severity)}`}>{imageAnalysis.severity}</span>
+          </div>
+          {imageAnalysis.recommendations.length > 0 && (
+            <div className="space-y-1">
+              {imageAnalysis.recommendations.map((r, i) => (
+                <p key={i} className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 flex items-start gap-1.5">
+                  <span className="text-pink-500 mt-0.5">•</span> {r}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Knowledge Graph — Causal Pathways (enriches extraction results) */}
       {kgContext && kgContext.chains.length > 0 && (
         <div className="bg-gradient-to-br from-indigo-50 to-violet-50 dark:from-indigo-950/30 dark:to-violet-950/30 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-5">
@@ -508,6 +573,12 @@ const OutbreakWatchPanel: React.FC = () => {
   const [alerts, setAlerts] = useState<OutbreakAlert[]>([]);
   const [predStats, setPredStats] = useState<OutbreakPredictionStats | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  // AI-powered outbreak analysis (Phase 3)
+  const [aiOutbreak, setAiOutbreak] = useState<AIOutbreakAnalysis | null>(null);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  // SitRep generation via MedGemma 27B
+  const [sitRep, setSitRep] = useState<string | null>(null);
+  const [generatingSitRep, setGeneratingSitRep] = useState(false);
 
   // Manual signal entry
   const [signalSyndrome, setSignalSyndrome] = useState('afi');
@@ -522,15 +593,87 @@ const OutbreakWatchPanel: React.FC = () => {
 
   useEffect(() => { refreshData(); }, [refreshData]);
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
     if (!district.trim() || !state.trim()) return;
     setAnalyzing(true);
+    setAiOutbreak(null);
+    setSitRep(null);
     try {
       const result = analyzeDistrict(district.trim(), state.trim());
       setSurveillance(result);
       refreshData();
+
+      // Run AI-powered outbreak analysis if HF token available
+      if (hasHFToken() && result.syndromes.length > 0) {
+        setAiAnalyzing(true);
+        try {
+          // Find the highest-risk syndrome for AI analysis
+          const topSyndrome = result.syndromes.reduce((prev, curr) =>
+            curr.currentWeekCases > prev.currentWeekCases ? curr : prev, result.syndromes[0]);
+          const aiResult = await aiAnalyzeOutbreakRisk({
+            district: district.trim(),
+            state: state.trim(),
+            syndrome: topSyndrome.syndromeName,
+            currentCases: topSyndrome.currentWeekCases,
+            weeklyHistory: topSyndrome.weeklyHistory,
+            climate: {
+              temperature: 32,
+              humidity: 75,
+              precipitation: 120,
+              lai: 0.4,
+            },
+          });
+          setAiOutbreak(aiResult);
+        } catch {
+          // AI analysis is optional
+        } finally {
+          setAiAnalyzing(false);
+        }
+      }
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleGenerateSitRep = async () => {
+    if (!surveillance || !hasHFToken()) return;
+    setGeneratingSitRep(true);
+    try {
+      const model27b = MEDGEMMA_MODELS.find(m => m.id.includes('27b'));
+      const syndromesSummary = surveillance.syndromes
+        .map(s => `${s.syndromeName}: ${s.currentWeekCases} cases (baseline: ${s.baselineMean.toFixed(1)}, trend: ${s.trend}, status: ${s.status})`)
+        .join('\n');
+
+      const prompt = `Generate a professional Situation Report (SitRep) for disease surveillance:
+
+District: ${surveillance.district}, ${surveillance.state}
+Overall Status: ${surveillance.overallStatus}
+Active Alerts: ${surveillance.activeAlerts}
+Report Period: Current week
+
+Syndrome Data:
+${syndromesSummary}
+
+${aiOutbreak ? `AI Risk Assessment: ${aiOutbreak.risk_level} (score: ${aiOutbreak.risk_score})\nFactors: ${aiOutbreak.contributing_factors.join(', ')}\n` : ''}
+
+Write a concise, professional SitRep covering:
+1. Executive Summary
+2. Current Situation (case counts, trends)
+3. Risk Assessment
+4. Recommended Actions
+5. Resource Requirements`;
+
+      const result = await hfInference(prompt, model27b?.id, {
+        systemPrompt: 'You are an epidemiological report writer for the Indian Integrated Disease Surveillance Programme (IDSP). Generate clear, actionable situation reports for district health officers.',
+        maxTokens: 2048,
+        temperature: 0.3,
+      });
+      setSitRep(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'SitRep generation failed';
+      setSitRep(`Error generating SitRep: ${msg}`);
+    } finally {
+      setGeneratingSitRep(false);
     }
   };
 
@@ -662,6 +805,79 @@ const OutbreakWatchPanel: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* AI Outbreak Analysis (Phase 3) */}
+      {aiAnalyzing && (
+        <div className="flex items-center gap-3 p-4 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-2xl">
+          <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />
+          <div>
+            <p className="text-[10px] font-black text-violet-700 dark:text-violet-300 uppercase tracking-widest">MedGemma AI Outbreak Analysis</p>
+            <p className="text-[9px] font-semibold text-violet-500">Analyzing risk factors, climate correlations, and temporal patterns...</p>
+          </div>
+        </div>
+      )}
+      {aiOutbreak && (
+        <div className={`border rounded-2xl p-5 ${
+          aiOutbreak.risk_level === 'outbreak' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800' :
+          aiOutbreak.risk_level === 'alert' ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800' :
+          aiOutbreak.risk_level === 'watch' ? 'bg-yellow-50 dark:bg-yellow-950/30 border-yellow-200 dark:border-yellow-800' :
+          'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800'
+        }`}>
+          <h4 className="text-[10px] font-black text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-3 flex items-center gap-2">
+            <Activity className="w-3.5 h-3.5" /> MedGemma AI Risk Assessment
+            <span className={`ml-auto px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${outbreakStatusColor(aiOutbreak.risk_level)}`}>
+              {aiOutbreak.risk_level} — {(aiOutbreak.risk_score * 100).toFixed(0)}% risk
+            </span>
+          </h4>
+          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-3">{aiOutbreak.reasoning}</p>
+          {aiOutbreak.contributing_factors.length > 0 && (
+            <div className="mb-2">
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Contributing Factors</p>
+              <div className="flex flex-wrap gap-1.5">
+                {aiOutbreak.contributing_factors.map((f, i) => (
+                  <span key={i} className="px-2 py-1 bg-white/60 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 rounded-lg text-[10px] font-bold border border-slate-200 dark:border-slate-600">{f}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {aiOutbreak.recommended_actions.length > 0 && (
+            <div>
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Recommended Actions</p>
+              <div className="space-y-1">
+                {aiOutbreak.recommended_actions.map((a, i) => (
+                  <p key={i} className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 flex items-start gap-1.5">
+                    <span className="text-violet-500 mt-0.5">•</span> {a}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SitRep Generation via MedGemma 27B */}
+      {surveillance && hasHFToken() && (
+        <div className="bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-2">
+              <FileText className="w-3.5 h-3.5" /> AI Situation Report (MedGemma 27B)
+            </h3>
+            <button onClick={handleGenerateSitRep} disabled={generatingSitRep}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+              {generatingSitRep ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+              Generate SitRep
+            </button>
+          </div>
+          {generatingSitRep && (
+            <p className="text-[9px] font-semibold text-blue-500">Generating situation report via MedGemma 27B...</p>
+          )}
+          {sitRep && (
+            <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl border border-slate-200 dark:border-slate-600 max-h-96 overflow-y-auto">
+              <pre className="text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">{sitRep}</pre>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Active Alerts */}
       {alerts.length > 0 && (

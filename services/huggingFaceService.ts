@@ -1,14 +1,16 @@
 /**
- * Bio-SentinelX — Hugging Face API Integration Service
+ * Bio-SentinelX — Hugging Face MedGemma Integration Service
  *
- * Connects to Hugging Face Inference API for MedGemma and other medical AI models.
- * Provides:
- *   1. MedGemma 4B integration for on-device clinical text extraction
- *   2. Syndromic extraction via AI (dynamic, not rule-based)
- *   3. Clinical text analysis and ICD-10 code assignment
- *   4. Model availability checking and automatic fallback
+ * Uses the HF Inference API (OpenAI-compatible chat completions) for:
+ *   1. MedGemma 4B IT — multimodal (image + text) clinical analysis
+ *   2. MedGemma 27B Text IT — complex medical reasoning & SitReps
+ *   3. Indian Meds adapter — Indian healthcare context
  *
- * Uses the HF Inference API — requires a valid Hugging Face token.
+ * Supports:
+ *   - Text-only clinical extraction
+ *   - Multimodal analysis (clinical photos + text)
+ *   - Outbreak risk analysis
+ *   - Model availability checking
  */
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -17,25 +19,29 @@ export interface HFModelConfig {
   id: string;
   name: string;
   description: string;
-  task: 'text-generation' | 'text-classification' | 'feature-extraction';
+  supportsVision: boolean;
   maxTokens: number;
   isDefault: boolean;
 }
 
-export interface HFInferenceRequest {
-  model: string;
-  inputs: string;
-  parameters?: {
-    max_new_tokens?: number;
-    temperature?: number;
-    top_p?: number;
-    do_sample?: boolean;
-    return_full_text?: boolean;
-  };
+/** A single content part in a chat message (text or image). */
+type ChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+/** A chat message in the OpenAI-compatible format. */
+interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string | ChatContentPart[];
 }
 
-export interface HFInferenceResponse {
-  generated_text?: string;
+/** OpenAI-compatible chat completion response. */
+interface ChatCompletionResponse {
+  choices: Array<{
+    message: { role: string; content: string };
+    finish_reason: string;
+  }>;
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   error?: string;
 }
 
@@ -50,6 +56,7 @@ export interface AISyndromeExtraction {
   summary: string;
   language_detected: string;
   processing_time_ms: number;
+  model_used?: string;
 }
 
 export interface AIOutbreakAnalysis {
@@ -60,32 +67,42 @@ export interface AIOutbreakAnalysis {
   reasoning: string;
 }
 
+export interface AIImageAnalysis {
+  findings: string;
+  conditions: string[];
+  severity: 'low' | 'moderate' | 'high' | 'critical';
+  recommendations: string[];
+  processing_time_ms: number;
+  model_used: string;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const HF_INFERENCE_API = 'https://api-inference.huggingface.co/models';
+/** HF Inference API — OpenAI-compatible chat completions endpoint. */
+const HF_API_BASE = 'https://router.huggingface.co/hf-inference/models';
 
 export const MEDGEMMA_MODELS: HFModelConfig[] = [
   {
     id: 'google/medgemma-4b-it',
     name: 'MedGemma 4B IT',
-    description: 'Medical reasoning and instruction-following model optimized for clinical text extraction and ICD-10 coding.',
-    task: 'text-generation',
+    description: 'Multimodal medical model — supports clinical image + text analysis, syndromic extraction, and ICD-10 coding.',
+    supportsVision: true,
     maxTokens: 2048,
     isDefault: true,
   },
   {
     id: 'google/medgemma-27b-text-it',
     name: 'MedGemma 27B Text IT',
-    description: 'Larger model for complex medical analysis, situation reports, and clinical decision support.',
-    task: 'text-generation',
+    description: 'Large text-only model for complex medical reasoning, situation reports, and outbreak analysis.',
+    supportsVision: false,
     maxTokens: 4096,
     isDefault: false,
   },
   {
     id: 'Medical-NLP/medgemma-1.5-4b-it-sft-lora-indian-meds',
     name: 'MedGemma Indian Meds Adapter',
-    description: 'Fine-tuned on Indian medicine metadata. Specialized for Indian healthcare context, drug interactions, and regional disease patterns.',
-    task: 'text-generation',
+    description: 'Fine-tuned on Indian medicine metadata — specialized for Indian drug interactions and regional disease patterns.',
+    supportsVision: false,
     maxTokens: 2048,
     isDefault: false,
   },
@@ -98,7 +115,7 @@ const MODEL_STATUS_KEY = 'biosentinel_hf_model_status';
 
 export function getHFToken(): string {
   return localStorage.getItem(STORAGE_KEY)
-    || process.env.HF_TOKEN
+    || (typeof process !== 'undefined' && process.env?.HF_TOKEN)
     || '';
 }
 
@@ -146,15 +163,16 @@ export async function checkModelAvailability(modelId: string): Promise<{
   }
 
   try {
-    const response = await fetch(`${HF_INFERENCE_API}/${modelId}`, {
+    const response = await fetch(`${HF_API_BASE}/${modelId}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        inputs: 'test',
-        parameters: { max_new_tokens: 1 },
+        model: modelId,
+        messages: [{ role: 'user', content: 'test' }],
+        max_tokens: 1,
       }),
     });
 
@@ -179,10 +197,58 @@ export async function checkModelAvailability(modelId: string): Promise<{
   }
 }
 
-// ─── Inference API ──────────────────────────────────────────────────────────
+// ─── Chat Completions API ───────────────────────────────────────────────────
 
 /**
- * Send a prompt to a Hugging Face model via Inference API.
+ * Send a chat completion request to the HF Inference API.
+ * Uses the OpenAI-compatible format supported by MedGemma models.
+ */
+export async function chatCompletion(
+  messages: ChatMessage[],
+  options?: {
+    modelId?: string;
+    maxTokens?: number;
+    temperature?: number;
+  }
+): Promise<string> {
+  const token = getHFToken();
+  if (!token) {
+    throw new Error('Hugging Face token not configured. Please add your HF token in Settings.');
+  }
+
+  const modelId = options?.modelId || MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id;
+  const maxTokens = options?.maxTokens || 1024;
+  const temperature = options?.temperature ?? 0.3;
+
+  const response = await fetch(`${HF_API_BASE}/${modelId}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: modelId,
+      messages,
+      max_tokens: maxTokens,
+      temperature,
+      top_p: 0.9,
+    }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+    const error = (data as { error?: string }).error || `HF API error ${response.status}`;
+    throw new Error(String(error));
+  }
+
+  const result = await response.json() as ChatCompletionResponse;
+  if (result.error) throw new Error(result.error);
+
+  return result.choices?.[0]?.message?.content || '';
+}
+
+/**
+ * Convenience wrapper: text-only chat completion.
  */
 export async function hfInference(
   prompt: string,
@@ -193,48 +259,91 @@ export async function hfInference(
     systemPrompt?: string;
   }
 ): Promise<string> {
-  const token = getHFToken();
-  if (!token) {
-    throw new Error('Hugging Face token not configured. Please add your HF token in Settings.');
+  const messages: ChatMessage[] = [];
+  if (options?.systemPrompt) {
+    messages.push({ role: 'system', content: options.systemPrompt });
   }
+  messages.push({ role: 'user', content: prompt });
 
-  const model = modelId || MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id;
-  const maxNewTokens = options?.maxTokens || 1024;
-  const temperature = options?.temperature ?? 0.3;
-
-  const fullPrompt = options?.systemPrompt
-    ? `${options.systemPrompt}\n\nUser: ${prompt}\n\nAssistant:`
-    : prompt;
-
-  const response = await fetch(`${HF_INFERENCE_API}/${model}`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      inputs: fullPrompt,
-      parameters: {
-        max_new_tokens: maxNewTokens,
-        temperature,
-        top_p: 0.9,
-        do_sample: temperature > 0,
-        return_full_text: false,
-      },
-    }),
+  return chatCompletion(messages, {
+    modelId,
+    maxTokens: options?.maxTokens,
+    temperature: options?.temperature,
   });
+}
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({})) as Record<string, unknown>;
-    const error = (data as { error?: string }).error || `HF API error ${response.status}`;
-    throw new Error(String(error));
+// ─── Multimodal Analysis (Image + Text) ─────────────────────────────────────
+
+/**
+ * Analyze a clinical image with optional text context using MedGemma 4B (VLM).
+ * Supports image URLs for remote images.
+ */
+export async function analyzeClinicialImage(
+  imageUrl: string,
+  textContext?: string,
+): Promise<AIImageAnalysis> {
+  const startTime = Date.now();
+  const modelId = MEDGEMMA_MODELS.find(m => m.supportsVision)?.id || MEDGEMMA_MODELS[0].id;
+
+  if (!hasHFToken()) {
+    return {
+      findings: 'Hugging Face token required for image analysis.',
+      conditions: [],
+      severity: 'low',
+      recommendations: ['Configure HF token in Settings'],
+      processing_time_ms: Date.now() - startTime,
+      model_used: modelId,
+    };
   }
 
-  const result = await response.json() as HFInferenceResponse[] | HFInferenceResponse;
-  if (Array.isArray(result)) {
-    return result[0]?.generated_text || '';
+  const userContent: ChatContentPart[] = [
+    { type: 'image_url', image_url: { url: imageUrl } },
+    {
+      type: 'text',
+      text: textContext
+        ? `Analyze this clinical image. Patient context: ${textContext}\n\nProvide: 1) Key findings 2) Possible conditions 3) Severity (low/moderate/high/critical) 4) Recommendations. Respond in JSON: {"findings":"...","conditions":["..."],"severity":"...","recommendations":["..."]}`
+        : 'Analyze this clinical/medical image. Identify any visible conditions, symptoms, or health concerns. Respond in JSON: {"findings":"...","conditions":["..."],"severity":"...","recommendations":["..."]}',
+    },
+  ];
+
+  try {
+    const response = await chatCompletion(
+      [
+        { role: 'system', content: 'You are a medical AI assistant. Analyze clinical images and provide structured findings. Always respond in valid JSON.' },
+        { role: 'user', content: userContent },
+      ],
+      { modelId, maxTokens: 1024, temperature: 0.1 },
+    );
+
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as Omit<AIImageAnalysis, 'processing_time_ms' | 'model_used'>;
+      return {
+        ...parsed,
+        processing_time_ms: Date.now() - startTime,
+        model_used: modelId,
+      };
+    }
+
+    return {
+      findings: response,
+      conditions: [],
+      severity: 'low',
+      recommendations: [],
+      processing_time_ms: Date.now() - startTime,
+      model_used: modelId,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Image analysis failed';
+    return {
+      findings: `Error: ${msg}`,
+      conditions: [],
+      severity: 'low',
+      recommendations: ['Check HF token and model availability'],
+      processing_time_ms: Date.now() - startTime,
+      model_used: modelId,
+    };
   }
-  return result.generated_text || '';
 }
 
 // ─── AI-Powered Syndromic Extraction ────────────────────────────────────────
@@ -266,14 +375,16 @@ Respond ONLY in valid JSON format:
 }`;
 
 /**
- * AI-powered syndromic extraction using MedGemma.
- * Falls back to keyword-based extraction if HF API is unavailable.
+ * AI-powered syndromic extraction using MedGemma via chat completions.
+ * Optionally includes a clinical image for multimodal analysis.
  */
-export async function aiExtractSyndromes(text: string): Promise<AISyndromeExtraction> {
+export async function aiExtractSyndromes(
+  text: string,
+  imageUrl?: string,
+): Promise<AISyndromeExtraction> {
   const startTime = Date.now();
 
   if (!hasHFToken()) {
-    // Return empty result when no token
     return {
       syndromes: [],
       summary: 'Hugging Face token required for AI-powered extraction. Configure in Settings.',
@@ -282,13 +393,30 @@ export async function aiExtractSyndromes(text: string): Promise<AISyndromeExtrac
     };
   }
 
+  // Choose model: use vision model if image is provided
+  const modelId = imageUrl
+    ? (MEDGEMMA_MODELS.find(m => m.supportsVision)?.id || MEDGEMMA_MODELS[0].id)
+    : (MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id);
+
   try {
-    const prompt = `Analyze this clinical description and extract syndromes:\n\n"${text}"`;
-    const response = await hfInference(prompt, undefined, {
-      systemPrompt: EXTRACTION_SYSTEM_PROMPT,
-      maxTokens: 1024,
-      temperature: 0.1,
-    });
+    // Build user content — multimodal if image provided
+    let userContent: string | ChatContentPart[];
+    if (imageUrl) {
+      userContent = [
+        { type: 'image_url' as const, image_url: { url: imageUrl } },
+        { type: 'text' as const, text: `Analyze this clinical image along with the patient description and extract syndromes:\n\n"${text}"` },
+      ];
+    } else {
+      userContent = `Analyze this clinical description and extract syndromes:\n\n"${text}"`;
+    }
+
+    const response = await chatCompletion(
+      [
+        { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
+      ],
+      { modelId, maxTokens: 1024, temperature: 0.1 },
+    );
 
     // Parse JSON response
     const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -297,14 +425,16 @@ export async function aiExtractSyndromes(text: string): Promise<AISyndromeExtrac
       return {
         ...parsed,
         processing_time_ms: Date.now() - startTime,
+        model_used: modelId,
       };
     }
 
     return {
       syndromes: [],
-      summary: 'AI extraction returned non-parseable response. Try again.',
+      summary: response || 'AI extraction returned non-parseable response. Try again.',
       language_detected: 'unknown',
       processing_time_ms: Date.now() - startTime,
+      model_used: modelId,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'AI extraction failed';
@@ -313,6 +443,7 @@ export async function aiExtractSyndromes(text: string): Promise<AISyndromeExtrac
       summary: `AI extraction error: ${msg}`,
       language_detected: 'unknown',
       processing_time_ms: Date.now() - startTime,
+      model_used: modelId,
     };
   }
 }
@@ -338,7 +469,7 @@ Respond ONLY in valid JSON:
 }`;
 
 /**
- * AI-powered outbreak risk analysis using MedGemma.
+ * AI-powered outbreak risk analysis using MedGemma via chat completions.
  */
 export async function aiAnalyzeOutbreakRisk(data: {
   district: string;
@@ -380,11 +511,13 @@ Baseline mean: ${mean.toFixed(1)}, StdDev: ${stddev.toFixed(1)}
 Threshold (μ+2σ): ${(mean + 2 * stddev).toFixed(1)}
 Climate: Temp ${data.climate.temperature}°C, Humidity ${data.climate.humidity}%, Precip ${data.climate.precipitation}mm, LAI ${data.climate.lai}`;
 
-    const response = await hfInference(prompt, undefined, {
-      systemPrompt: OUTBREAK_SYSTEM_PROMPT,
-      maxTokens: 512,
-      temperature: 0.1,
-    });
+    const response = await chatCompletion(
+      [
+        { role: 'system', content: OUTBREAK_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+      { maxTokens: 512, temperature: 0.1 },
+    );
 
     const jsonMatch = response.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -412,23 +545,14 @@ Climate: Temp ${data.climate.temperature}°C, Humidity ${data.climate.humidity}%
 
 // ─── Model Info ─────────────────────────────────────────────────────────────
 
-/**
- * Get the default MedGemma model config.
- */
 export function getDefaultModel(): HFModelConfig {
   return MEDGEMMA_MODELS.find(m => m.isDefault) || MEDGEMMA_MODELS[0];
 }
 
-/**
- * Get all available model configs.
- */
 export function getAvailableModels(): HFModelConfig[] {
   return MEDGEMMA_MODELS;
 }
 
-/**
- * Get cached model status info.
- */
 export function getCachedModelStatus(modelId: string): ModelStatus | null {
   const statuses = getModelStatuses();
   return statuses[modelId] || null;
