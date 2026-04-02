@@ -42,6 +42,10 @@ The platform fuses **real-time environmental data**, **machine learning predicti
 | 📊 | **Charts & Visualisation** | Recharts area/line/bar · risk gauges · anomaly highlighting |
 | 🌙 | **Theme Engine** | Light / Dark / Auto · weather card modes · custom colour picker |
 | 📱 | **Android App** | Capacitor APK · full feature parity |
+| 🇮🇳 | **Indian Syndromic Surveillance** | 11 IDSP syndromes · Hinglish/regional intake · ICD-10 mapping |
+| 📈 | **Outbreak Prediction** | 4-week moving average baseline · N > μ+2σ flagging · climate integration |
+| 🕸️ | **Knowledge Graph** | In-browser causal graph · environmental→health pathways · evidence-backed |
+| 🔐 | **Privacy-First Architecture** | 90% on-device · PII redaction · structured-only sync · consent controls |
 
 ---
 
@@ -142,6 +146,52 @@ The platform fuses **real-time environmental data**, **machine learning predicti
 - One-tap health snapshot for the current location
 - Instant feedback on dominant risk factors without full analysis
 
+### 🇮🇳 Indian Syndromic Surveillance (Phase 1 — Data Acquisition)
+- **Indic language support**: Processes informal clinical descriptions in Hindi, Hinglish, Bhojpuri, and 22 scheduled Indian languages
+- **Data sources**: IndicLLMSuite/Sangraha (251B tokens), DISPLACE-M (Bhashini) field conversations, EpiClim district-wise outbreak data, IDSP weekly reports
+- **Syndromic extraction**: Maps informal text (e.g., "बहुत तेज़ बुखार और ठंड लग रही है") to IDSR syndromes and ICD-10 codes
+- **11 IDSP syndromes** monitored: Acute Watery Diarrhea, Acute Bloody Diarrhea, Acute Febrile Illness, Acute Respiratory Infection, Meningitis/Encephalitis, Measles, Acute Jaundice, Acute Flaccid Paralysis, Snake Bite, Dog Bite/Rabies, Unusual Fever Cluster
+- **Zero-connectivity extraction**: Converts informal descriptions into structured WHO surveillance signals in 2-10 seconds without cloud dependency
+- **Live preview**: Real-time syndrome/ICD-10 extraction as the health worker types
+
+### 📈 Outbreak Prediction (Phase 3 — Temporal Baseline)
+- **Moving average baseline**: Calculates 4-week rolling mean (μ) and standard deviation (σ) per syndrome per district
+- **Automated flagging**: When weekly cases N > μ + 2σ, the system flags a potential outbreak alert
+- **Status levels**: Normal → Watch → Alert → Outbreak (escalating based on standard deviations above mean)
+- **Climate integration**: Syndrome-specific risk multipliers from EpiClim variables (temperature, precipitation, humidity, LAI)
+- **Seasonal context**: Monsoon-aware risk adjustment (e.g., waterborne disease risk ×1.8 during heavy rainfall)
+- **District-level dashboard**: Per-syndrome status, trend direction (rising/stable/declining), and weekly history
+
+### 🕸️ Environmental Health Knowledge Graph
+- **In-browser graph**: 40+ nodes and 39+ evidence-backed edges mapping environmental factors → health outcomes
+- **Causal chain traversal**: BFS algorithm finds all pathways from environmental conditions to health risks
+- **Example chains**: High Humidity → Mold Growth → Asthma Trigger · Heavy Rainfall → Stagnant Water → Mosquito Breeding → Dengue
+- **Live weather analysis**: Automatically identifies active environmental risk factors from current conditions and maps to health risks
+- **Intervention suggestions**: Recommends evidence-based preventive actions (e.g., N95 masks for PM2.5, mosquito nets for vector-borne risk)
+- **Explains the "Why"**: Provides causal reasoning for health reports with strength scores and scientific evidence
+
+### 🔐 Privacy-First Architecture
+- **On-device processing**: 90% of extraction and analysis runs locally on the device
+- **Structured-only sync**: Only anonymized ICD-10 codes and syndrome categories are ever uploaded to cloud
+- **PII redaction engine**: Automatically strips names, Aadhaar numbers, phone numbers, emails, IP addresses, and addresses
+- **Consent management**: Granular controls for syndrome sync, cloud AI, analytics, and research data sharing
+- **Privacy audit log**: Tracks every operation — where it ran (on-device vs cloud), what was anonymized, what was sent
+- **Anonymization tester**: Interactive tool to verify PII stripping before any data leaves the device
+
+### 🧬 Fine-Tuning Strategy (Phase 2 — MedGemma)
+- **Base model**: MedGemma 1.5 4B optimized for medical reasoning and instruction-following
+- **Methodology**: QLoRA (4-bit quantization) for fine-tuning on consumer-grade hardware via PEFT
+- **Indian Meds adapter**: Builds on existing `medgemma-1.5-4b-it-sft-lora-indian-meds` baseline from Hugging Face
+- **Document ingestion**: Training dataset creation from medical data, research papers, and clinical guidelines
+- **Domain detection**: Automatic classification into respiratory, cardiovascular, heat stress, infectious, neurological, dermatological, and environmental domains
+- **Ollama integration**: Fine-tuned models created via Ollama Modelfile system for local deployment
+
+### 🔬 Multimodal Enhancements (Phase 4)
+- **MedSigLIP integration**: Vision component from Google Health AI foundations for visual symptom analysis
+- **Rural health imaging**: Handles rashes, water contamination photos, and hygiene assessment specific to Indian rural environments
+- **Builds on existing YOLO/ResNet**: Extends current image analysis pipeline with medical-specific vision models
+- **HeAR model support**: Google Health Acoustic Representations model (trained on 25,000 cough recordings) for respiratory classification
+
 ---
 
 ## ⚙️ AI Engine — Under the Hood
@@ -220,6 +270,7 @@ Bio-SentinelX monitors and provides intelligence across the following health dom
 | **Dermatological** | UV-induced skin damage, pollen-triggered eczema, humidity-related fungal conditions |
 | **Metabolic** | Dehydration risk, electrolyte loss from heat/humidity, diet-environment interaction |
 | **Flood / Disaster** | Flood-related injury risk, post-disaster infection, displacement health impact |
+| **Syndromic (IDSP)** | Acute Watery/Bloody Diarrhea, Acute Febrile Illness (Dengue/Malaria), ARI, Meningitis, Measles, Jaundice, AFP, Snake/Dog Bite, Unusual Fever Clusters |
 
 ---
 
@@ -248,6 +299,9 @@ Bio-SentinelX
 ├── Prompt Cache     Client LRU + server cached-token accounting (all providers)
 ├── Memory           localStorage TF-IDF chunk RAG + cross-session MemorySummary
 ├── Alerts           Rule engine → AI-rewritten notifications (provider waterfall)
+├── Surveillance     Indian syndromic surveillance · IDSP 11 syndromes · outbreak prediction
+├── Knowledge Graph  In-browser causal graph · environmental→health pathways
+├── Privacy Layer    On-device processing · PII redaction · structured-only sync
 ├── Mobile           Capacitor (Android APK)
 └── Deployment       Vercel (web)
 ```
@@ -309,6 +363,7 @@ Notes:
 | **Historical Analysis** | Date-range climate charts with AI health correlation report |
 | **Research Library** | Document upload, embedding, semantic search, RAG integration |
 | **Config Sidebar** | API keys, AI provider/model selection, theme settings, custom colours |
+| **Surveillance** | Indian syndromic surveillance — field intake, outbreak watch, knowledge graph, privacy dashboard |
 
 ---
 
