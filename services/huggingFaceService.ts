@@ -455,9 +455,9 @@ Given syndromic surveillance data with case counts and climate variables, analyz
 
 Consider:
 - Temporal trends (4-week baseline: flag if current > mean + 2*stddev)
-- Climate factors (temperature, humidity, rainfall, LAI correlations)
+- Climate factors (temperature, humidity, rainfall, LAI, UV Index, Air Quality/AQI, Pressure, Soil Moisture)
 - Regional disease patterns in Indian context
-- Seasonal disease patterns (monsoon → dengue/cholera, winter → respiratory)
+- Seasonal disease patterns (monsoon → dengue/cholera, winter → respiratory, dry season → measles)
 
 Respond ONLY in valid JSON:
 {
@@ -482,6 +482,10 @@ export async function aiAnalyzeOutbreakRisk(data: {
     humidity: number;
     precipitation: number;
     lai: number;
+    uvIndex?: number;
+    aqi?: number;
+    pressure?: number;
+    soilMoisture?: number;
   };
 }): Promise<AIOutbreakAnalysis> {
   if (!hasHFToken()) {
@@ -509,7 +513,15 @@ Current week cases: ${data.currentCases}
 4-week history: [${data.weeklyHistory.join(', ')}]
 Baseline mean: ${mean.toFixed(1)}, StdDev: ${stddev.toFixed(1)}
 Threshold (μ+2σ): ${(mean + 2 * stddev).toFixed(1)}
-Climate: Temp ${data.climate.temperature}°C, Humidity ${data.climate.humidity}%, Precip ${data.climate.precipitation}mm, LAI ${data.climate.lai}`;
+Climate:
+- Temp: ${data.climate.temperature}°C
+- Humidity: ${data.climate.humidity}%
+- Precip: ${data.climate.precipitation}mm
+- LAI: ${data.climate.lai}
+${data.climate.uvIndex !== undefined ? `- UV Index: ${data.climate.uvIndex}` : ''}
+${data.climate.aqi !== undefined ? `- AQI: ${data.climate.aqi}` : ''}
+${data.climate.pressure !== undefined ? `- Pressure: ${data.climate.pressure} hPa` : ''}
+${data.climate.soilMoisture !== undefined ? `- Soil Moisture: ${data.climate.soilMoisture}` : ''}`;
 
     const response = await chatCompletion(
       [

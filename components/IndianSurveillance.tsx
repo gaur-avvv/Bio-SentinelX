@@ -31,6 +31,7 @@ import {
 import {
   recordSyndromicSignal, analyzeDistrict, getOutbreakAlerts,
   getOutbreakPredictionStats, clearOutbreakAlerts, clearSyndromicSignals,
+  assessClimateContribution,
   type OutbreakAlert, type DistrictSurveillance, type OutbreakPredictionStats,
 } from '../services/outbreakPredictionService';
 import {
@@ -42,6 +43,7 @@ import {
   anonymizeText, clearPrivacyData,
   type PrivacyDashboard, type PrivacyAuditEntry, type ConsentSettings,
 } from '../services/privacyService';
+import { type WeatherData } from '../types';
 
 // ─── Sub-tab type ───────────────────────────────────────────────────────────
 
@@ -71,7 +73,7 @@ const severityBadge = (severity: string) => {
 
 interface Props {
   onBack: () => void;
-  weather?: { temp: number; humidity: number; aqi?: number; rawAqi?: number; uvIndex?: number | null } | null;
+  weather?: WeatherData | null;
 }
 
 export const IndianSurveillance: React.FC<Props> = ({ onBack, weather }) => {
@@ -126,7 +128,7 @@ export const IndianSurveillance: React.FC<Props> = ({ onBack, weather }) => {
 
       {/* Tab content */}
       {activeTab === 'intake' && <FieldIntakePanel />}
-      {activeTab === 'outbreak' && <OutbreakWatchPanel />}
+      {activeTab === 'outbreak' && <OutbreakWatchPanel weather={weather} />}
       {activeTab === 'knowledge' && <KnowledgeGraphPanel weather={weather} />}
       {activeTab === 'privacy' && <PrivacyPanel />}
     </div>
@@ -566,7 +568,7 @@ const FieldIntakePanel: React.FC = () => {
 
 // ─── Outbreak Watch Panel ───────────────────────────────────────────────────
 
-const OutbreakWatchPanel: React.FC = () => {
+const OutbreakWatchPanel: React.FC<{ weather?: WeatherData | null }> = ({ weather }) => {
   const [district, setDistrict] = useState('');
   const [state, setState] = useState('');
   const [surveillance, setSurveillance] = useState<DistrictSurveillance | null>(null);
@@ -599,7 +601,18 @@ const OutbreakWatchPanel: React.FC = () => {
     setAiOutbreak(null);
     setSitRep(null);
     try {
-      const result = analyzeDistrict(district.trim(), state.trim());
+      const climate = {
+        temperature: weather?.temp ?? 30,
+        humidity: weather?.humidity ?? 70,
+        precipitation: weather?.precipitationSum ?? 0,
+        lai: 0.4,
+        uvIndex: weather?.uvIndex ?? undefined,
+        aqi: weather?.rawAqi ?? weather?.aqi,
+        pressure: weather?.pressure,
+        soilMoisture: weather?.advancedData?.soilMoisture,
+      };
+
+      const result = analyzeDistrict(district.trim(), state.trim(), climate);
       setSurveillance(result);
       refreshData();
 
@@ -616,16 +629,11 @@ const OutbreakWatchPanel: React.FC = () => {
             syndrome: topSyndrome.syndromeName,
             currentCases: topSyndrome.currentWeekCases,
             weeklyHistory: topSyndrome.weeklyHistory,
-            climate: {
-              temperature: 32,
-              humidity: 75,
-              precipitation: 120,
-              lai: 0.4,
-            },
+            climate,
           });
           setAiOutbreak(aiResult);
-        } catch {
-          // AI analysis is optional
+        } catch (err) {
+          console.error("AI Outbreak Analysis failed:", err);
         } finally {
           setAiAnalyzing(false);
         }
@@ -920,7 +928,7 @@ Write a concise, professional SitRep covering:
 
 // ─── Knowledge Graph Panel ──────────────────────────────────────────────────
 
-const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number; aqi?: number; rawAqi?: number; uvIndex?: number | null } | null }> = ({ weather }) => {
+const KnowledgeGraphPanel: React.FC<{ weather?: WeatherData | null }> = ({ weather }) => {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<KGQueryResult | null>(null);
   const [envResult, setEnvResult] = useState<KGQueryResult | null>(null);
@@ -939,6 +947,8 @@ const KnowledgeGraphPanel: React.FC<{ weather?: { temp: number; humidity: number
       humidity: weather.humidity,
       aqi: weather.rawAqi ?? weather.aqi,
       uvIndex: weather.uvIndex ?? undefined,
+      precipitation: weather.precipitationSum,
+      soilMoisture: weather.advancedData?.soilMoisture,
     };
     setEnvResult(analyzeEnvironmentalImpact(conditions));
     setResult(null);
