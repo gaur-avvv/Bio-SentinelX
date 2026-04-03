@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, Cell } from 'recharts';
 import { Upload, Brain, Cpu, Database, TrendingUp, Loader2, CheckCircle, AlertCircle, BarChart3, Layers, Zap, Settings, Play, RotateCcw, FileDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { parseCSV } from '../utils/csvHelper';
@@ -37,6 +37,17 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
   const [trainingProgress, setTrainingProgress] = useState<TrainingMetrics[]>([]);
   const [trainingResult, setTrainingResult] = useState<TrainingResult | null>(null);
   const [error, setError] = useState('');
+  const [autoRetrainEnabled, setAutoRetrainEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('biosentinel_auto_retrain_enabled') === 'true'; } catch { return false; }
+  });
+  const [autoRetrainMinutes, setAutoRetrainMinutes] = useState<number>(() => {
+    try {
+      const raw = Number(localStorage.getItem('biosentinel_auto_retrain_interval_min') || 15);
+      return Number.isFinite(raw) && raw > 0 ? raw : 15;
+    } catch {
+      return 15;
+    }
+  });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -147,7 +158,7 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
     } finally {
       setIsTraining(false);
     }
-  }, [rawData, config, autoDetect, onModelReady]);
+  }, [rawData, config, autoDetect, selectedLabel, selectedFeatures, onModelReady]);
 
   // ── Reset ──────────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -162,6 +173,27 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
   }, []);
 
   const modelInfo = getTrainedModelInfo();
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('biosentinel_auto_retrain_enabled', String(autoRetrainEnabled));
+      localStorage.setItem('biosentinel_auto_retrain_interval_min', String(autoRetrainMinutes));
+    } catch {
+      // no-op when storage is unavailable
+    }
+  }, [autoRetrainEnabled, autoRetrainMinutes]);
+
+  const featureCandidates = (autoDetect?.columns || [])
+    .filter(c => c.type === 'numeric' || c.type === 'categorical')
+    .map(c => c.name)
+    .filter(name => name !== selectedLabel);
+
+  const toggleFeature = (feature: string) => {
+    setSelectedFeatures(prev => prev.includes(feature)
+      ? prev.filter(f => f !== feature)
+      : [...prev, feature]
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -293,6 +325,68 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
             )}
           </div>
 
+          <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl border border-indigo-200 dark:border-indigo-800 space-y-3">
+            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">Manual Feature & Label Controls</p>
+
+            <div>
+              <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Target Label Column</label>
+              <select
+                value={selectedLabel}
+                onChange={(e) => {
+                  const nextLabel = e.target.value;
+                  setSelectedLabel(nextLabel);
+                  setSelectedFeatures(prev => prev.filter(f => f !== nextLabel));
+                }}
+                className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white"
+              >
+                {(autoDetect.columns || []).map(col => (
+                  <option key={col.name} value={col.name}>{col.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Training Features ({selectedFeatures.length})</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFeatures(featureCandidates)}
+                    className="px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-500 text-slate-600"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFeatures([])}
+                    className="px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-widest bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-500 text-slate-600"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-40 overflow-y-auto p-2 bg-white/70 dark:bg-slate-700/40 border border-slate-200 dark:border-slate-600 rounded-lg">
+                <div className="flex flex-wrap gap-1.5">
+                  {featureCandidates.map(feature => {
+                    const active = selectedFeatures.includes(feature);
+                    return (
+                      <button
+                        key={feature}
+                        type="button"
+                        onClick={() => toggleFeature(feature)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all ${active
+                          ? 'bg-indigo-600 text-white border-indigo-500'
+                          : 'bg-white dark:bg-slate-600 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-500'}`}
+                      >
+                        {feature}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Feature list (collapsed) */}
           <div className="p-3 bg-slate-50 dark:bg-slate-700/50 rounded-xl">
             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Features ({autoDetect.features.length})</p>
@@ -383,6 +477,37 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
               </div>
             </div>
           )}
+
+          <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-200 dark:border-emerald-800">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Auto-Retrain with Live Data</p>
+                <p className="text-[10px] text-emerald-700 dark:text-emerald-300">Re-trains edge model using live weather every configured interval.</p>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoRetrainEnabled}
+                  onChange={(e) => setAutoRetrainEnabled(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-widest">Enabled</span>
+              </label>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Every</span>
+              <select
+                value={autoRetrainMinutes}
+                onChange={(e) => setAutoRetrainMinutes(parseInt(e.target.value) || 15)}
+                disabled={!autoRetrainEnabled}
+                className="p-1.5 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white disabled:opacity-50"
+              >
+                {[5, 10, 15, 30, 45, 60].map(min => (
+                  <option key={min} value={min}>{min} min</option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           {/* Train Button */}
           <button

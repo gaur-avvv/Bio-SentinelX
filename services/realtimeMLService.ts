@@ -986,6 +986,7 @@ let _trainedModel: {
   nnLayers?: NNLayer[];
   tfliteLayers?: QuantizedNNLayer[];
   categoricalEncoders?: Record<string, string[]>;
+  featureImportance?: Array<{ feature: string; importance: number }>;
   numClasses: number;
   learningRate: number;
   featureNames: string[];
@@ -1113,6 +1114,9 @@ export async function trainModel(
   // Compute metrics
   const metrics = computeMetrics(yTest, yPred, numClasses);
   const featureImportance = computeFeatureImportance(XTrain, yTrain, featureNames, numClasses);
+  if (_trainedModel) {
+    _trainedModel.featureImportance = featureImportance;
+  }
 
   const trainTime = (Date.now() - startTime) / 1000;
 
@@ -1135,10 +1139,24 @@ export async function trainModel(
 
 export function predictWithTrainedModel(
   inputData: Record<string, unknown>
-): { prediction: string; confidence: number; probabilities: Record<string, number>; topFactors: Array<{ feature: string; value: number; impact: string; importance: number }> } | null {
+): {
+  prediction: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+  topFactors: Array<{ feature: string; value: number; impact: string; importance: number }>;
+  confidenceBreakdown: {
+    topClass: string;
+    topClassProbabilityPct: number;
+    secondClass: string;
+    secondClassProbabilityPct: number;
+    marginPct: number;
+  };
+  topPredictorSnapshot: Array<{ feature: string; value: unknown; importance: number }>;
+} | null {
   if (!_trainedModel) return null;
+  const trainedModel = _trainedModel;
 
-  const { featureNames, classNames, numClasses, autoDetect, columnInfos, categoricalEncoders } = _trainedModel;
+  const { featureNames, classNames, numClasses, autoDetect, columnInfos, categoricalEncoders } = trainedModel;
 
   // Build feature vector
   const x: number[] = [];
@@ -1198,12 +1216,25 @@ export function predictWithTrainedModel(
     probabilities[classNames[c] || `Class ${c}`] = Math.round(prediction.probabilities[c] * 10000) / 100;
   }
 
-  // Top factors from feature importance
-  const topFactors = featureNames.slice(0, 5).map((feat, i) => ({
+  const rankedFeatures = (trainedModel.featureImportance && trainedModel.featureImportance.length > 0
+    ? [...trainedModel.featureImportance].sort((a, b) => b.importance - a.importance).map(f => f.feature)
+    : featureNames
+  );
+
+  // Top factors from feature importance ordering
+  const topFactors = rankedFeatures.slice(0, 5).map((feat, i) => ({
     feature: feat,
-    value: typeof inputData[feat] === 'number' ? inputData[feat] as number : 0,
+    value: typeof inputData[feat] === 'number' ? inputData[feat] as number : parseFloat(String(inputData[feat] ?? 0)) || 0,
     impact: prediction.probabilities[prediction.class] > 0.5 ? 'increases' : 'decreases',
-    importance: Math.max(0.1, 1 - i * 0.15),
+    importance: trainedModel.featureImportance?.find(f => f.feature === feat)?.importance ?? Math.max(0.1, 1 - i * 0.15),
+  }));
+
+  const sortedProbEntries = Object.entries(probabilities).sort(([, a], [, b]) => (b as number) - (a as number));
+  const [topEntry, secondEntry] = [sortedProbEntries[0], sortedProbEntries[1] || ['N/A', 0]];
+  const topPredictorSnapshot = rankedFeatures.slice(0, 8).map((feat, idx) => ({
+    feature: feat,
+    value: inputData[feat],
+    importance: trainedModel.featureImportance?.find(f => f.feature === feat)?.importance ?? Math.max(0.1, 1 - idx * 0.1),
   }));
 
   return {
@@ -1211,6 +1242,14 @@ export function predictWithTrainedModel(
     confidence: prediction.probabilities[prediction.class],
     probabilities,
     topFactors,
+    confidenceBreakdown: {
+      topClass: String(topEntry?.[0] ?? 'N/A'),
+      topClassProbabilityPct: Number(topEntry?.[1] ?? 0),
+      secondClass: String(secondEntry?.[0] ?? 'N/A'),
+      secondClassProbabilityPct: Number(secondEntry?.[1] ?? 0),
+      marginPct: Math.max(0, Number(topEntry?.[1] ?? 0) - Number(secondEntry?.[1] ?? 0)),
+    },
+    topPredictorSnapshot,
   };
 }
 
@@ -1247,3 +1286,4 @@ export function loadTrainedModel(modelData: string): boolean {
     return false;
   }
 }
+

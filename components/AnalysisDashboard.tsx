@@ -697,6 +697,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [addedObs, setAddedObs] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const autoRetrainLastRunRef = useRef<number>(0);
 
   // Stable ref so sendMessage callback never changes reference during typing
   const chatCtxRef = useRef({ weather, isChatLoading, aiKey, mlPrediction, aiProvider, aiModel, chatMessages } as any);
@@ -731,6 +732,45 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     { label: 'Smoke/Haze', icon: CloudFog, value: 'Smoke or haze from unknown source.' },
     { label: 'Heat Island', icon: ThermometerSun, value: 'Urban heat island effect felt strongly.' }
   ];
+
+  useEffect(() => {
+    if (!weather) return;
+
+    let cancelled = false;
+    const runAutoRetrainTick = async () => {
+      let enabled = false;
+      let intervalMin = 15;
+      try {
+        enabled = localStorage.getItem('biosentinel_auto_retrain_enabled') === 'true';
+        const stored = Number(localStorage.getItem('biosentinel_auto_retrain_interval_min') || 15);
+        intervalMin = Number.isFinite(stored) && stored > 0 ? stored : 15;
+      } catch {
+        return;
+      }
+
+      if (!enabled) return;
+
+      const now = Date.now();
+      const minGapMs = intervalMin * 60 * 1000;
+      if (now - autoRetrainLastRunRef.current < minGapMs) return;
+      autoRetrainLastRunRef.current = now;
+
+      try {
+        await performWebLLMTraining(weather);
+        if (cancelled) return;
+        setOutbreakPredictions(predictOutbreak(weather));
+      } catch (e) {
+        console.warn('Auto-retrain tick failed:', e);
+      }
+    };
+
+    runAutoRetrainTick();
+    const timer = setInterval(runAutoRetrainTick, 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [weather]);
 
   const handleAddCustomObs = () => {
     if (!customObs.trim()) return;
@@ -926,7 +966,30 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           ? Promise.resolve({
             riskScore: localModelPrediction.confidence,
             primaryTrigger: localModelPrediction.topFactors[0]?.feature || 'Environmental Factors',
-            recommendation: `Real-time ML prediction: ${localModelPrediction.prediction} (${(localModelPrediction.confidence * 100).toFixed(1)}% confidence). ${localModelPrediction.topFactors.length > 0 ? `Top factors: ${localModelPrediction.topFactors.map(f => f.feature).join(', ')}.` : 'Top factors unavailable for current trained feature set.'}`,
+            recommendation: (() => {
+              const sortedProbabilities = Object.entries(localModelPrediction.probabilities || {})
+                .sort(([, a], [, b]) => (b as number) - (a as number))
+                .slice(0, 5)
+                .map(([label, pct]) => `- **${label}:** ${(pct as number).toFixed(2)}%`)
+                .join('\n');
+
+              const confidenceLines = localModelPrediction.confidenceBreakdown
+                ? `- **Top Class:** ${localModelPrediction.confidenceBreakdown.topClass} (${localModelPrediction.confidenceBreakdown.topClassProbabilityPct.toFixed(2)}%)\n- **Runner-Up:** ${localModelPrediction.confidenceBreakdown.secondClass} (${localModelPrediction.confidenceBreakdown.secondClassProbabilityPct.toFixed(2)}%)\n- **Decision Margin:** ${localModelPrediction.confidenceBreakdown.marginPct.toFixed(2)}%`
+                : '- Confidence decomposition unavailable.';
+
+              const predictorSnapshot = (localModelPrediction.topPredictorSnapshot || [])
+                .slice(0, 8)
+                .map(p => `- **${p.feature}:** ${String(p.value ?? 'N/A')} (importance ${(p.importance * 100).toFixed(1)}%)`)
+                .join('\n');
+
+              const whyChosen = localModelPrediction.topFactors.length > 0
+                ? localModelPrediction.topFactors.slice(0, 3)
+                  .map(f => `${f.feature} (${f.impact}, ${(f.importance * 100).toFixed(0)}%)`)
+                  .join(', ')
+                : 'No feature-level attribution available';
+
+              return `### 1. Trained Model Prediction\n- **Predicted Disease Class:** ${localModelPrediction.prediction}\n- **Confidence:** ${(localModelPrediction.confidence * 100).toFixed(2)}%\n\n### 2. Why This Disease Was Chosen\n- The model selected **${localModelPrediction.prediction}** because the strongest weighted predictors were: ${whyChosen}.\n\n### 3. Confidence Breakdown\n${confidenceLines}\n\n### 4. Class Probability Distribution\n${sortedProbabilities || '- No class probabilities available.'}\n\n### 5. Model Input Snapshot (Top Predictors + Values Used)\n${predictorSnapshot || '- Input snapshot unavailable.'}`;
+            })(),
             confidence: localModelPrediction.confidence,
             disease: localModelPrediction.prediction,
             riskLevel: (localModelPrediction.confidence > 0.7 ? 'HIGH' : localModelPrediction.confidence > 0.4 ? 'MODERATE' : 'LOW') as 'HIGH' | 'MODERATE' | 'LOW',
