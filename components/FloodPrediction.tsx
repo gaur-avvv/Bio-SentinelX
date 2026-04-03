@@ -2168,20 +2168,20 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             {/* Map container rendering: Custom Web Component for ArcGIS, or a div for SDK-based maps */}
             {mapProvider === 'arcgis' ? (
               // @ts-ignore: ArcGIS custom web component loaded via script tag
-              <arcgis-embedded-map
-                class="w-full border border-slate-100 dark:border-slate-700"
+              <div
+
                 style={{ height: '480px', borderRadius: '1rem', overflow: 'hidden', zIndex: 0 }}
-                item-id="3b74e184127f46618ed3d50f464a8447"
-                theme="dark"
-                legend-enabled="true"
-                share-enabled="true"
-                basemap-gallery-enabled="true"
-                time-zone-label-enabled="true"
-                center={`${weather?.lon ?? 78.9629},${weather?.lat ?? 20.5937}`}
-                scale="500000"
-                portal-url="https://biosentinel.maps.arcgis.com"
+
+
+
+
+
+
+                data-center={`${weather?.lon ?? 78.9629},${weather?.lat ?? 20.5937}`}
+
+
                 {...(arcGisKey ? { "api-key": arcGisKey } : {})}
-              ></arcgis-embedded-map>
+              ></div>
             ) : (
               <div
                 ref={wardMapContainerRef}

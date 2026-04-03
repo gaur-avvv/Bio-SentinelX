@@ -850,7 +850,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           : predictBioRisks(weather, [], lifestyleData),
         generateHealthRiskAssessment(
           weather, 
-          augmentedSummary || summary, 
+          summary,
           userFeedback, 
           weatherFeedback,
           lifestyleData,
