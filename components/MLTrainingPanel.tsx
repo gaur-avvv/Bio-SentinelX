@@ -48,6 +48,18 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
       return 15;
     }
   });
+  const [liveFeaturesOnly, setLiveFeaturesOnly] = useState<boolean>(() => {
+    try { return localStorage.getItem('biosentinel_live_features_only') === 'true'; } catch { return false; }
+  });
+  const [lastAutoRetrainTs, setLastAutoRetrainTs] = useState<number | null>(() => {
+    try {
+      const raw = Number(localStorage.getItem('biosentinel_auto_retrain_last_run_ts') || 0);
+      return raw > 0 ? raw : null;
+    } catch {
+      return null;
+    }
+  });
+  const [countdownSec, setCountdownSec] = useState<number>(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -178,9 +190,33 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
     try {
       localStorage.setItem('biosentinel_auto_retrain_enabled', String(autoRetrainEnabled));
       localStorage.setItem('biosentinel_auto_retrain_interval_min', String(autoRetrainMinutes));
+      localStorage.setItem('biosentinel_live_features_only', String(liveFeaturesOnly));
     } catch {
       // no-op when storage is unavailable
     }
+  }, [autoRetrainEnabled, autoRetrainMinutes, liveFeaturesOnly]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      try {
+        const raw = Number(localStorage.getItem('biosentinel_auto_retrain_last_run_ts') || 0);
+        const last = raw > 0 ? raw : null;
+        setLastAutoRetrainTs(last);
+
+        if (!autoRetrainEnabled || !last) {
+          setCountdownSec(0);
+          return;
+        }
+
+        const nextRun = last + autoRetrainMinutes * 60 * 1000;
+        const remaining = Math.max(0, Math.ceil((nextRun - Date.now()) / 1000));
+        setCountdownSec(remaining);
+      } catch {
+        setCountdownSec(0);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
   }, [autoRetrainEnabled, autoRetrainMinutes]);
 
   const featureCandidates = (autoDetect?.columns || [])
@@ -506,6 +542,33 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
                   <option key={min} value={min}>{min} min</option>
                 ))}
               </select>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-emerald-200/60 dark:border-emerald-700/50">
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={liveFeaturesOnly}
+                  onChange={(e) => setLiveFeaturesOnly(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-widest">
+                  Use Selected Live Features Only
+                </span>
+              </label>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                When enabled, prediction input is restricted to the exact trained feature set.
+              </p>
+            </div>
+
+            <div className="mt-3 p-3 bg-white/70 dark:bg-slate-800/40 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+              <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Auto-Retrain Status</p>
+              <p className="text-[10px] text-slate-600 dark:text-slate-300 mt-1">
+                Last Run: {lastAutoRetrainTs ? new Date(lastAutoRetrainTs).toLocaleString() : 'Not run yet'}
+              </p>
+              <p className="text-[10px] text-slate-600 dark:text-slate-300">
+                Next Run In: {autoRetrainEnabled ? `${Math.floor(countdownSec / 60)}m ${countdownSec % 60}s` : 'Disabled'}
+              </p>
             </div>
           </div>
 

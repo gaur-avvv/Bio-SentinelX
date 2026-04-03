@@ -303,11 +303,64 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
     }
   };
 
-  // Sort top factors by absolute impact
-  const sortedFactors = (prediction.topFactors || [])
-    .sort((a, b) => Math.abs(b.importance) - Math.abs(a.importance))
-    .slice(0, 5);
-  const maxImpact = Math.max(...sortedFactors.map(f => Math.abs(f.importance)), 0.1);
+  const sortedFactors = (prediction.factorContributions && prediction.factorContributions.length > 0
+    ? [...prediction.factorContributions]
+      .sort((a, b) => Math.abs(b.signedContribution) - Math.abs(a.signedContribution))
+      .slice(0, 8)
+    : (prediction.topFactors || []).map(f => ({
+      feature: f.feature,
+      value: f.value,
+      importance: f.importance,
+      signedContribution: f.importance * (f.impact === 'increases' ? 1 : -1),
+      direction: f.impact === 'increases' ? 'increases' as const : 'decreases' as const,
+    }))
+      .sort((a, b) => Math.abs(b.signedContribution) - Math.abs(a.signedContribution))
+      .slice(0, 8)
+  );
+
+  const exportSnapshotJson = () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      disease: prediction.disease || 'General Assessment',
+      confidence: prediction.confidence,
+      confidenceBreakdown: prediction.confidenceBreakdown,
+      topPredictorSnapshot: prediction.topPredictorSnapshot || [],
+      factorContributions: prediction.factorContributions || [],
+      probabilities: prediction.allProbabilities || {},
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ml_snapshot_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportSnapshotCsv = () => {
+    const rows = (prediction.factorContributions || []).map(f => [
+      f.feature,
+      String(f.value ?? ''),
+      f.importance.toFixed(6),
+      f.signedContribution.toFixed(6),
+      f.direction,
+    ]);
+    const header = ['feature', 'value', 'importance', 'signedContribution', 'direction'];
+    const csv = [header, ...rows]
+      .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ml_snapshot_${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-6 sm:space-y-10 p-5 sm:p-10 bg-slate-900 rounded-[2rem] sm:rounded-[3rem] border border-slate-800 shadow-2xl overflow-hidden relative">
@@ -370,10 +423,10 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
                     data={sortedFactors.map(f => ({
                       feature: f.feature,
                       value: f.value,
-                      impact: f.impact,
+                      impact: f.direction,
                       importance: f.importance,
-                      contribution: f.importance * (f.impact === 'increases' ? 1 : -1),
-                      fill: f.impact === 'increases' ? '#f43f5e' : '#10b981'
+                      signedContribution: f.signedContribution,
+                      fill: f.signedContribution >= 0 ? '#f43f5e' : '#10b981'
                     }))}
                     margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
                   >
@@ -409,6 +462,10 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
                                 <span className="text-slate-400">Importance:</span>
                                 <span>{data.importance?.toFixed(3) || 'N/A'}</span>
                               </div>
+                              <div className="flex justify-between gap-4">
+                                <span className="text-slate-400">Signed Contribution:</span>
+                                <span>{data.signedContribution?.toFixed(4) || 'N/A'}</span>
+                              </div>
                               <p className="text-[9px] text-slate-500 mt-2 pt-2 border-t border-slate-700">
                                 SHAP value indicates feature contribution to the model's prediction.
                               </p>
@@ -419,9 +476,9 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
                       }}
                     />
                     <ReferenceLine x={0} stroke="#475569" />
-                    <Bar dataKey="contribution" radius={[0, 4, 4, 0]} barSize={20}>
+                    <Bar dataKey="signedContribution" radius={[0, 4, 4, 0]} barSize={20}>
                       {sortedFactors.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.impact === 'increases' ? '#f43f5e' : '#10b981'} />
+                        <Cell key={`cell-${index}`} fill={entry.signedContribution >= 0 ? '#f43f5e' : '#10b981'} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -446,6 +503,22 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
             </div>
           </div>
           <div className="bg-slate-800/60 rounded-2xl sm:rounded-3xl border border-slate-700/60 p-6 sm:p-10">
+            <div className="flex flex-wrap justify-end gap-2 mb-4">
+              <button
+                type="button"
+                onClick={exportSnapshotJson}
+                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-black uppercase tracking-widest"
+              >
+                Export Snapshot JSON
+              </button>
+              <button
+                type="button"
+                onClick={exportSnapshotCsv}
+                className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-[10px] font-black uppercase tracking-widest"
+              >
+                Export Snapshot CSV
+              </button>
+            </div>
             <ReportRenderer markdown={prediction.recommendation} />
           </div>
 
@@ -758,6 +831,11 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       try {
         await performWebLLMTraining(weather);
         if (cancelled) return;
+        try {
+          localStorage.setItem('biosentinel_auto_retrain_last_run_ts', String(Date.now()));
+        } catch {
+          // ignore storage errors
+        }
         setOutbreakPredictions(predictOutbreak(weather));
       } catch (e) {
         console.warn('Auto-retrain tick failed:', e);
@@ -957,7 +1035,34 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           has_pollen: (userFeedback || '').toLowerCase().includes('pollen') ? 1 : 0,
           has_water_stagnation: (userFeedback || '').toLowerCase().includes('standing water') ? 1 : 0,
         };
-        return predictWithTrainedModel(fullModelInput);
+        let modelInput = fullModelInput;
+        try {
+          const useSelectedOnly = localStorage.getItem('biosentinel_live_features_only') === 'true';
+          if (useSelectedOnly) {
+            const trainedInfo = getTrainedModelInfo();
+            if (trainedInfo?.featureNames?.length) {
+              const canonical = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+              const availableEntries = Object.entries(fullModelInput);
+              const availableMap = new Map<string, unknown>();
+              for (const [k, v] of availableEntries) {
+                availableMap.set(k, v);
+                availableMap.set(canonical(k), v);
+              }
+
+              const filteredInput: Record<string, unknown> = {};
+              for (const f of trainedInfo.featureNames) {
+                const exact = availableMap.get(f);
+                const canonicalHit = availableMap.get(canonical(f));
+                filteredInput[f] = exact ?? canonicalHit ?? 0;
+              }
+              modelInput = filteredInput;
+            }
+          }
+        } catch {
+          // keep full payload on storage/read issues
+        }
+
+        return predictWithTrainedModel(modelInput);
       })() : null;
 
       // Trigger Custom ML Model Prediction alongside Gemini in parallel
@@ -995,6 +1100,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             riskLevel: (localModelPrediction.confidence > 0.7 ? 'HIGH' : localModelPrediction.confidence > 0.4 ? 'MODERATE' : 'LOW') as 'HIGH' | 'MODERATE' | 'LOW',
             allProbabilities: localModelPrediction.probabilities,
             topFactors: localModelPrediction.topFactors,
+            confidenceBreakdown: localModelPrediction.confidenceBreakdown,
+            topPredictorSnapshot: localModelPrediction.topPredictorSnapshot,
+            factorContributions: localModelPrediction.factorContributions,
             timestamp: new Date().toISOString(),
           } as MLPrediction)
           : predictBioRisks(weather, [], lifestyleData),

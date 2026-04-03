@@ -1144,6 +1144,13 @@ export function predictWithTrainedModel(
   confidence: number;
   probabilities: Record<string, number>;
   topFactors: Array<{ feature: string; value: number; impact: string; importance: number }>;
+  factorContributions: Array<{
+    feature: string;
+    value: unknown;
+    importance: number;
+    signedContribution: number;
+    direction: 'increases' | 'decreases';
+  }>;
   confidenceBreakdown: {
     topClass: string;
     topClassProbabilityPct: number;
@@ -1221,12 +1228,43 @@ export function predictWithTrainedModel(
     : featureNames
   );
 
-  // Top factors from feature importance ordering
-  const topFactors = rankedFeatures.slice(0, 5).map((feat, i) => ({
-    feature: feat,
-    value: typeof inputData[feat] === 'number' ? inputData[feat] as number : parseFloat(String(inputData[feat] ?? 0)) || 0,
-    impact: prediction.probabilities[prediction.class] > 0.5 ? 'increases' : 'decreases',
-    importance: trainedModel.featureImportance?.find(f => f.feature === feat)?.importance ?? Math.max(0.1, 1 - i * 0.15),
+  const factorContributions = rankedFeatures.slice(0, 12).map((feat, i) => {
+    const info = columnInfos.find(c => c.name === feat);
+    const baseImportance = trainedModel.featureImportance?.find(f => f.feature === feat)?.importance ?? Math.max(0.1, 1 - i * 0.15);
+    const rawVal = inputData[feat];
+
+    let signedContribution = 0;
+    if (info?.type === 'numeric') {
+      let n = typeof rawVal === 'number' ? rawVal : parseFloat(String(rawVal));
+      if (isNaN(n)) n = info.mean ?? 0;
+      const range = (info.max ?? 1) - (info.min ?? 0) || 1;
+      const mean = info.mean ?? ((info.max ?? 1) + (info.min ?? 0)) / 2;
+      const centered = (n - mean) / (range / 2 || 1);
+      signedContribution = baseImportance * centered;
+    } else if (info?.type === 'categorical') {
+      const categories = categoricalEncoders?.[feat] || [];
+      const raw = String(rawVal ?? '');
+      const idx = Math.max(0, categories.indexOf(raw));
+      const middle = Math.max(1, (categories.length - 1) / 2);
+      const centered = (idx - middle) / middle;
+      signedContribution = baseImportance * centered * 0.6;
+    }
+
+    return {
+      feature: feat,
+      value: rawVal,
+      importance: baseImportance,
+      signedContribution,
+      direction: signedContribution >= 0 ? 'increases' as const : 'decreases' as const,
+    };
+  }).sort((a, b) => Math.abs(b.signedContribution) - Math.abs(a.signedContribution));
+
+  // Top factors from signed contributions
+  const topFactors = factorContributions.slice(0, 5).map((f) => ({
+    feature: f.feature,
+    value: typeof f.value === 'number' ? f.value : parseFloat(String(f.value ?? 0)) || 0,
+    impact: f.direction,
+    importance: f.importance,
   }));
 
   const sortedProbEntries = Object.entries(probabilities).sort(([, a], [, b]) => (b as number) - (a as number));
@@ -1242,6 +1280,7 @@ export function predictWithTrainedModel(
     confidence: prediction.probabilities[prediction.class],
     probabilities,
     topFactors,
+    factorContributions,
     confidenceBreakdown: {
       topClass: String(topEntry?.[0] ?? 'N/A'),
       topClassProbabilityPct: Number(topEntry?.[1] ?? 0),
