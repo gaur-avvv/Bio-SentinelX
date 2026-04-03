@@ -6,9 +6,9 @@
   // Request an 8-core / 32 GB Codespace so the ML training doesn't OOM.
   // Apply via: Codespaces → kebab menu → "Change machine type" → rebuild.
   "hostRequirements": {
-    "cpus": 8,
-    "memory": "32gb",
-    "storage": "64gb"
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "32gb"
   },
 
   // ── Lifecycle ───────────────────────────────────────────────────────────
