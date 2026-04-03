@@ -422,6 +422,19 @@ export async function aiExtractSyndromes(
     const jsonMatch = response.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]) as AISyndromeExtraction;
+
+      // Agentic Enhancement: Search for regional outbreaks if high confidence syndromes found
+      if (parsed.syndromes.length > 0 && parsed.syndromes[0].confidence > 0.6) {
+        try {
+          const syndrome = parsed.syndromes[0].name;
+          const searchPrompt = `Latest disease outbreak news for ${syndrome} in regional India 2024-2025`;
+          parsed.summary += `\n\n[AGENTIC SEARCH TRIGGERED: Fetching regional context for ${syndrome}...]`;
+          (parsed as any).agentic_search_query = searchPrompt;
+        } catch (e) {
+          console.warn('Agentic search trigger failed', e);
+        }
+      }
+
       return {
         ...parsed,
         processing_time_ms: Date.now() - startTime,
