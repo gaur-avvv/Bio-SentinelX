@@ -152,8 +152,6 @@ const FieldIntakePanel: React.FC<{ weather?: WeatherData | null }> = ({ weather 
   const [lastResult, setLastResult] = useState<FieldConversation | null>(null);
   const [aiExtraction, setAiExtraction] = useState<AISyndromeExtraction | null>(null);
   const [imageAnalysis, setImageAnalysis] = useState<AIImageAnalysis | null>(null);
-  const [agenticSearchContext, setAgenticSearchContext] = useState<string | null>(null);
-  const [searchingAgentic, setSearchingAgentic] = useState(false);
   const [aiProcessing, setAiProcessing] = useState(false);
   const [hfToken, setHfToken] = useState(getHFToken());
   const [showHfSetup, setShowHfSetup] = useState(!hasHFToken());
@@ -247,24 +245,6 @@ const FieldIntakePanel: React.FC<{ weather?: WeatherData | null }> = ({ weather 
         try {
           const aiResult = await aiExtractSyndromes(text.trim(), imageUrl.trim() || undefined);
           setAiExtraction(aiResult);
-          // Agentic Enhancement: Execute regional search if query provided
-          if ((aiResult as any).agentic_search_query) {
-            setSearchingAgentic(true);
-            try {
-              // Using hfInference as a proxy for agentic search tool
-              const searchPrompt = `Perform a regional search and provide a summary of current health reports for: ${(aiResult as any).agentic_search_query}. Focus on district-level news from regional sources in India.`;
-              const searchResult = await hfInference(searchPrompt, 'google/medgemma-27b-text-it', {
-                systemPrompt: 'You are an agentic search tool for regional epidemiological intelligence. Search and synthesize current localized reports.',
-                maxTokens: 512
-              });
-              setAgenticSearchContext(searchResult);
-            } catch (searchErr) {
-              console.warn('Agentic regional search failed:', searchErr);
-            } finally {
-              setSearchingAgentic(false);
-            }
-          }
-
           if (aiResult.syndromes.length > 0 && !kgContext) {
             const aiKgQuery = aiResult.syndromes.map(s => s.name).join(' ');
             const kgResult = queryKnowledgeGraph(aiKgQuery);
@@ -565,17 +545,6 @@ const FieldIntakePanel: React.FC<{ weather?: WeatherData | null }> = ({ weather 
               ))}
             </div>
           )}
-        </div>
-      )}
-
-            {agenticSearchContext && (
-        <div className="bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-2xl p-5 animate-fade-in mb-6">
-          <h4 className="text-[10px] font-black text-sky-700 dark:text-sky-300 uppercase tracking-widest mb-3 flex items-center gap-2">
-            <Search className="w-3.5 h-3.5" /> Regional Agentic Search — Regional Outbreak Context
-          </h4>
-          <div className="prose prose-xs dark:prose-invert max-w-none text-xs font-semibold text-sky-600 dark:text-sky-300 leading-relaxed">
-            <ReactMarkdown>{agenticSearchContext}</ReactMarkdown>
-          </div>
         </div>
       )}
 
@@ -1163,22 +1132,6 @@ Write a concise, professional SitRep covering:
 // ─── Knowledge Graph Panel ──────────────────────────────────────────────────
 
 const KnowledgeGraphPanel: React.FC<{ weather?: WeatherData | null }> = ({ weather }) => {
-  useEffect(() => {
-    if (weather) {
-      const envResult = analyzeEnvironmentalImpact({
-        temperature: weather.temp,
-        humidity: weather.humidity,
-        aqi: weather.rawAqi || weather.aqi,
-        pm25: weather.advancedData?.pm2_5,
-        uvIndex: weather.uvIndex,
-        precipitation: weather.precipitationSum,
-        soilMoisture: weather.advancedData?.soilMoisture,
-        pressure: weather.pressure,
-        evapotranspiration: weather.advancedData?.evapotranspiration
-      });
-      setEnvResult(envResult.chains.length > 0 ? envResult : null);
-    }
-  }, [weather]);
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<KGQueryResult | null>(null);
   const [envResult, setEnvResult] = useState<KGQueryResult | null>(null);

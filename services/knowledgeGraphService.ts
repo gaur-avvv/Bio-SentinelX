@@ -431,9 +431,6 @@ export function analyzeEnvironmentalImpact(conditions: {
   uvIndex?: number;
   precipitation?: number;
   pollenCount?: number;
-  soilMoisture?: number;
-  pressure?: number;
-  evapotranspiration?: number;
 }): KGQueryResult {
   const activeFactors: string[] = [];
 
@@ -446,9 +443,6 @@ export function analyzeEnvironmentalImpact(conditions: {
   if (conditions.uvIndex !== undefined && conditions.uvIndex > 8) activeFactors.push('high_uv');
   if (conditions.precipitation !== undefined && conditions.precipitation > 50) activeFactors.push('heavy_rainfall');
   if (conditions.pollenCount !== undefined && conditions.pollenCount > 50) activeFactors.push('high_pollen');
-  if (conditions.soilMoisture !== undefined && conditions.soilMoisture > 0.4) activeFactors.push('high_soil_moisture');
-  if (conditions.pressure !== undefined && conditions.pressure < 1000) activeFactors.push('low_pressure');
-  if (conditions.evapotranspiration !== undefined && conditions.evapotranspiration > 5) activeFactors.push('high_evapotranspiration');
 
   if (activeFactors.length === 0) {
     return { chains: [], relatedNodes: [], summary: 'Current conditions are within normal parameters. No elevated health risks detected by the knowledge graph.' };

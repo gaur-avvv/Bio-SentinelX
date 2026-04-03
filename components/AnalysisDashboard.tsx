@@ -809,11 +809,6 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       const outbreaks = predictOutbreak(weather);
       setOutbreakPredictions(outbreaks);
 
-      // 0. Perform Real-time WebLLM Training (Edge Fine-tuning)
-      await performWebLLMTraining(weather);
-      const outbreaks = predictOutbreak(weather);
-      setOutbreakPredictions(outbreaks);
-
       // Quick warnings check (fast, no model call)
       const check = await quickHealthCheck(weather, [], lifestyleData).catch(e => {
         console.warn("Quick health check failed:", e);
