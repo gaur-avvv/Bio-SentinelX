@@ -1176,7 +1176,7 @@ const KnowledgeGraphPanel: React.FC<{ weather?: WeatherData | null }> = ({ weath
         pressure: weather.pressure,
         evapotranspiration: weather.advancedData?.evapotranspiration
       });
-      if (envResult.chains.length > 0) setEnvResult(envResult);
+      setEnvResult(envResult.chains.length > 0 ? envResult : null);
     }
   }, [weather]);
   const [query, setQuery] = useState('');
