@@ -235,7 +235,7 @@ async function generateWithSiliconFlow(
       model,
       messages: [
         { role: 'system', content: systemInstruction },
-        { role: 'user',   content: userPrompt },
+        { role: 'user', content: userPrompt },
       ],
       temperature: 0.7,
       max_tokens: 4096,
@@ -398,13 +398,13 @@ export const generateHealthRiskAssessment = async (
     - Allergies: ${lifestyleData.allergies}${bmiContext}
   ` : "No lifestyle data provided.";
 
-    // System instruction is cached per city — rebuilding it on every call for the same
-    // city wastes CPU. The static prefix (rules + geofencing + protocol) is also eligible
-    // for server-side prefix caching (Cerebras, OpenAI-compatible providers).
-    const { text: systemInstruction } = promptCache.getSystemInstruction(
-      `ha:${weather.city}:${weather.lat.toFixed(2)}:${weather.lon.toFixed(2)}`,
-      () => `
-    You are **BioSentinel Neural Engine**, a concise health-climate intelligence model.
+  // System instruction is cached per city — rebuilding it on every call for the same
+  // city wastes CPU. The static prefix (rules + geofencing + protocol) is also eligible
+  // for server-side prefix caching (Cerebras, OpenAI-compatible providers).
+  const { text: systemInstruction } = promptCache.getSystemInstruction(
+    `ha:${weather.city}:${weather.lat.toFixed(2)}:${weather.lon.toFixed(2)}`,
+    () => `
+    You are **BioSentinel Neural Engine**, a concise and clinically precise health-climate intelligence model.
 
     ABSOLUTE RULES:
     1. NO emoji characters anywhere.
@@ -423,6 +423,9 @@ export const generateHealthRiskAssessment = async (
     - Identify 1-2 synergistic threat combinations.
     - Historical trend: 2 sentences max.
     - Future outlook: 3-day window, 3-4 bullet points.
+    - Personalize recommendations to the user's profile (age, BMI, medication, allergies, lifestyle, medical history).
+    - Prefer quantified language: include explicit values, ranges, confidence, and risk tier rationale.
+    - If ML model prediction exists, reconcile it with meteorological evidence and explain agreement/divergence.
 
     SECTION WORD LIMITS (STRICT):
     - Section 1 (Prevention): Max 150 words, 4-5 bullet points total
@@ -433,7 +436,7 @@ export const generateHealthRiskAssessment = async (
     - Section 6 (Safety): Exactly 3-4 bullet points
     - Section 7 (Disclaimer): 1-2 sentences
   `
-    );
+  );
 
   // ── RAG retrieval: pull relevant passages from user's Research Library ──────
   const _ragQuery = [
@@ -461,6 +464,9 @@ export const generateHealthRiskAssessment = async (
     ${feedbackContext}
     ${lifestyleContext}
 
+    ### ML Intelligence
+    ${mlPredictionContext}
+
     ### Clinical Data
     ${datasetSummary || "No clinical CSV data."}
 
@@ -483,9 +489,11 @@ export const generateHealthRiskAssessment = async (
 
     ### 5. Disease Outbreak Warning
     Overall risk level + top 1-2 concerns. Max 80 words. Use EARLY WARNING: prefix if high risk.
+    If ML Intelligence is available, include prediction label, confidence, and top 2 drivers in this section.
 
     ### 6. Safety Protocols
     3-4 bullet points: - **Protocol:** Action step.
+    Make each action explicitly personalized where possible (e.g., respiratory-sensitive users, high-BMI users, users on antihistamines/inhalers).
 
     ### 7. Medical Disclaimer
     1-2 sentences. No bold, no lists.
@@ -733,7 +741,7 @@ EXACTLY 2 sentences. Plain text, no bold, no lists.`
     // Non-fatal — research continues without RAG context
   }
 
-  const userPrompt = `${ _ragContext ? _ragContext + '\n\n---\n\n' : '' }RESEARCH REQUEST: Perform a comprehensive scientific literature review and climate-health correlation analysis for the following historical weather data.
+  const userPrompt = `${_ragContext ? _ragContext + '\n\n---\n\n' : ''}RESEARCH REQUEST: Perform a comprehensive scientific literature review and climate-health correlation analysis for the following historical weather data.
 
 Location: ${input.location} (Lat: ${input.lat}, Lon: ${input.lon})
 Analysis Period: ${input.period}
@@ -905,11 +913,11 @@ export const chatWithWeatherAssistant = async (
   let lifestyleContext = '';
   try {
     const rawLifestyle = localStorage.getItem('biosentinel_lifestyle_data');
-    const rawFeedback  = localStorage.getItem('biosentinel_user_feedback');
+    const rawFeedback = localStorage.getItem('biosentinel_user_feedback');
     const ld = rawLifestyle ? JSON.parse(rawLifestyle) : null;
     if (ld) {
       const h = parseFloat(ld.height || '0');
-      const w = parseFloat(ld.weight  || '0');
+      const w = parseFloat(ld.weight || '0');
       const bmiStr = (h > 50 && w > 10)
         ? (() => { const bmi = w / Math.pow(h / 100, 2); return ` | BMI: ${bmi.toFixed(1)}`; })()
         : '';
@@ -1233,12 +1241,12 @@ ABSOLUTE OUTPUT RULES (follow exactly):
 - ML Recommendation: ${input.mlPrediction.recommendation}
 - Contributing Factors:
 ${Object.entries(input.mlPrediction.contributing_factors)
-  .sort((a, b) => b[1] - a[1])
-  .map(([k, v]) => `  · ${k}: ${(v * 100).toFixed(1)}%`).join('\n')}
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `  · ${k}: ${(v * 100).toFixed(1)}%`).join('\n')}
 ${input.mlModelStats ? `- Model Quality: Accuracy ${((input.mlModelStats.accuracy ?? 0) * 100).toFixed(2)}%, F1 ${(input.mlModelStats.f1_score ?? 0).toFixed(4)}, ROC-AUC ${(input.mlModelStats.roc_auc ?? 0).toFixed(4)} (trained on ${input.mlModelStats.training_samples?.toLocaleString()} samples)
 - Top Predictive Features: ${input.mlModelStats.feature_importances ? Object.entries(input.mlModelStats.feature_importances).slice(0, 3).map(([k, v]) => `${k} (${(v * 100).toFixed(1)}%)`).join(', ') : 'N/A'}` : ''}` : '';
   const compactOrFull = input.detailLevel ?? 'compact';
-  
+
   const futureWeatherSummary = input.futureWeather ? `
   
 **FUTURE WEATHER (near-term precipitation forecast)**
@@ -1246,28 +1254,28 @@ ${input.mlModelStats ? `- Model Quality: Accuracy ${((input.mlModelStats.accurac
 - Next 7 days total precipitation: ${input.futureWeather.precipitation7dTotalMm != null ? `${input.futureWeather.precipitation7dTotalMm.toFixed(1)} mm` : 'N/A'}
 - Peak daily precipitation: ${input.futureWeather.precipitationMaxDayMm != null ? `${input.futureWeather.precipitationMaxDayMm.toFixed(1)} mm` : 'N/A'}${input.futureWeather.precipitationMaxDayDate ? ` on ${input.futureWeather.precipitationMaxDayDate}` : ''}
 ` : '';
-  
+
   const monthlyBlock = input.forecastDischargeMonthly && input.forecastDischargeMonthly.length ? `
   
 **MONTHLY DISCHARGE OUTLOOK (derived from daily ensemble median)**
 ${input.forecastDischargeMonthly
-  .slice(0, 8)
-  .map(m => `- ${m.month}: mean ${m.dischargeMedianMean != null ? m.dischargeMedianMean.toFixed(2) : 'N/A'} m³/s · max ${m.dischargeMedianMax != null ? m.dischargeMedianMax.toFixed(2) : 'N/A'} m³/s (${m.days} days)`)
-  .join('\n')}
+      .slice(0, 8)
+      .map(m => `- ${m.month}: mean ${m.dischargeMedianMean != null ? m.dischargeMedianMean.toFixed(2) : 'N/A'} m³/s · max ${m.dischargeMedianMax != null ? m.dischargeMedianMax.toFixed(2) : 'N/A'} m³/s (${m.days} days)`)
+      .join('\n')}
 ` : '';
 
   const futurePredictionBlock = input.futurePrediction?.windows?.length ? `
 
 **FUTURE FLOOD PREDICTION (computed from GloFAS daily forecast)**
 ${input.futurePrediction.windows.map(w => {
-  const ml = w.mostLikelyMean != null ? `${w.mostLikelyMean.toFixed(2)} m³/s` : 'N/A';
-  const best = w.bestCaseLow != null ? w.bestCaseLow.toFixed(2) : '—';
-  const worst = w.worstCaseHigh != null ? w.worstCaseHigh.toFixed(2) : '—';
-  const precip = w.precipTotalMm != null ? `${w.precipTotalMm.toFixed(1)} mm` : 'N/A';
-  return `- ${w.label}: most-likely ${ml} · best ${best} · worst ${worst} · precip ${precip} · days median>P75 ${w.daysMedianExceedsHistP75} · days forecastP75>P75 ${w.daysEnsembleP75ExceedsHistP75}`;
-}).join('\n')}
+    const ml = w.mostLikelyMean != null ? `${w.mostLikelyMean.toFixed(2)} m³/s` : 'N/A';
+    const best = w.bestCaseLow != null ? w.bestCaseLow.toFixed(2) : '—';
+    const worst = w.worstCaseHigh != null ? w.worstCaseHigh.toFixed(2) : '—';
+    const precip = w.precipTotalMm != null ? `${w.precipTotalMm.toFixed(1)} mm` : 'N/A';
+    return `- ${w.label}: most-likely ${ml} · best ${best} · worst ${worst} · precip ${precip} · days median>P75 ${w.daysMedianExceedsHistP75} · days forecastP75>P75 ${w.daysEnsembleP75ExceedsHistP75}`;
+  }).join('\n')}
 ` : '';
-  
+
   const dailyTable = (compactOrFull === 'full' && (input.forecastDischargeDaily?.length || input.futureWeather?.precipitationDailyMm?.length)) ? (() => {
     const dischargeByDate = new Map((input.forecastDischargeDaily ?? []).map(d => [d.date, d] as const));
     const precipByDate = new Map((input.futureWeather?.precipitationDailyMm ?? []).map(p => [p.date, p] as const));
@@ -1275,7 +1283,7 @@ ${input.futurePrediction.windows.map(w => {
       ...(input.forecastDischargeDaily ?? []).map(d => d.date),
       ...(input.futureWeather?.precipitationDailyMm ?? []).map(p => p.date),
     ])).sort();
-  
+
     const rows = dates.slice(0, 30).map(date => {
       const d = dischargeByDate.get(date);
       const p = precipByDate.get(date);
@@ -1284,10 +1292,10 @@ ${input.futurePrediction.windows.map(w => {
       const qMax = d?.dischargeMax;
       const pr = p?.precipitationSumMm;
       const pop = p?.popPct;
-  
+
       return `| ${date} | ${pr != null ? pr.toFixed(1) : '—'} | ${pop != null ? `${Math.round(pop)}%` : '—'} | ${qMed != null ? qMed.toFixed(2) : '—'} | ${qP75 != null ? qP75.toFixed(2) : '—'} | ${qMax != null ? qMax.toFixed(2) : '—'} |`;
     });
-  
+
     return `
   
 **FULL DAILY OUTLOOK (precipitation + discharge)**

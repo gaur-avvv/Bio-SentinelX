@@ -4,6 +4,7 @@
  * Provides in-browser machine learning training using multiple algorithms:
  * - XGBoost-style Gradient Boosted Decision Trees (custom implementation)
  * - Deep Learning (multi-layer neural network)
+ * - WebML + TensorFlow Lite-style quantized neural inference
  * - Random Forest ensemble
  *
  * Auto-detects features and labels from CSV data.
@@ -13,7 +14,7 @@
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface TrainingConfig {
-  modelType: 'xgboost' | 'deeplearning' | 'ensemble';
+  modelType: 'xgboost' | 'deeplearning' | 'webml_tflite' | 'ensemble';
   epochs: number;
   learningRate: number;
   batchSize: number;
@@ -39,7 +40,7 @@ export interface AutoDetectResult {
   features: string[];
   label: string;
   columns: ColumnInfo[];
-  suggestedModelType: 'xgboost' | 'deeplearning' | 'ensemble';
+  suggestedModelType: 'xgboost' | 'deeplearning' | 'webml_tflite' | 'ensemble';
   taskType: 'classification' | 'regression';
   numSamples: number;
   numFeatures: number;
@@ -150,7 +151,7 @@ export function autoDetectFeaturesAndLabel(
     const labelCandidates = ['label', 'target', 'class', 'category', 'outcome', 'result',
       'diagnosis', 'disease', 'predicted_disease_cluster', 'prediction', 'risk', 'status',
       'y', 'output', 'response'];
-    
+
     for (const candidate of labelCandidates) {
       const match = columns.find(c => c.toLowerCase().replace(/[_\s-]/g, '') === candidate.replace(/[_\s-]/g, ''));
       if (match) { label = match; break; }
@@ -188,9 +189,10 @@ export function autoDetectFeaturesAndLabel(
   }
 
   // Suggest model type
-  let suggestedModelType: 'xgboost' | 'deeplearning' | 'ensemble' = 'ensemble';
+  let suggestedModelType: 'xgboost' | 'deeplearning' | 'webml_tflite' | 'ensemble' = 'ensemble';
   if (data.length > 5000) suggestedModelType = 'xgboost';
-  if (features.length > 50) suggestedModelType = 'deeplearning';
+  else if (features.length > 70) suggestedModelType = 'webml_tflite';
+  else if (features.length > 50) suggestedModelType = 'deeplearning';
 
   return {
     features,
@@ -361,27 +363,27 @@ function buildTree(
   for (const fi of featureIndices) {
     const featureValues = X.map(row => row[fi]);
     const sorted = [...new Set(featureValues)].sort((a, b) => a - b);
-    
+
     // Try a subset of thresholds
     const step = Math.max(1, Math.floor(sorted.length / 10));
     for (let t = 0; t < sorted.length; t += step) {
       const threshold = sorted[t];
       const leftIdx: number[] = [];
       const rightIdx: number[] = [];
-      
+
       for (let i = 0; i < X.length; i++) {
         if (X[i][fi] <= threshold) leftIdx.push(i);
         else rightIdx.push(i);
       }
-      
+
       if (leftIdx.length === 0 || rightIdx.length === 0) continue;
-      
+
       const leftLabels = leftIdx.map(i => y[i]);
       const rightLabels = rightIdx.map(i => y[i]);
-      
+
       const weightedGini = (leftLabels.length * giniImpurity(leftLabels, numClasses) +
         rightLabels.length * giniImpurity(rightLabels, numClasses)) / X.length;
-      
+
       if (weightedGini < bestGini) {
         bestGini = weightedGini;
         bestFeature = fi;
@@ -423,24 +425,24 @@ function trainRandomForest(
   X: number[][], y: number[], numClasses: number, nEstimators: number, maxDepth: number
 ): TreeNode[] {
   const trees: TreeNode[] = [];
-  
+
   for (let t = 0; t < nEstimators; t++) {
     // Bootstrap sample
     const sampleSize = X.length;
     const indices = Array.from({ length: sampleSize }, () => Math.floor(Math.random() * X.length));
     const XSample = indices.map(i => X[i]);
     const ySample = indices.map(i => y[i]);
-    
+
     trees.push(buildTree(XSample, ySample, 0, maxDepth, numClasses));
   }
-  
+
   return trees;
 }
 
 function predictRandomForest(trees: TreeNode[], x: number[], numClasses: number): { class: number; probabilities: number[] } {
   const votes = new Array(numClasses).fill(0);
   const probSums = new Array(numClasses).fill(0);
-  
+
   for (const tree of trees) {
     const pred = predictTree(tree, x);
     votes[pred.class]++;
@@ -448,7 +450,7 @@ function predictRandomForest(trees: TreeNode[], x: number[], numClasses: number)
       probSums[c] += (pred.probabilities[c] || 0);
     }
   }
-  
+
   const total = trees.length;
   const probabilities = probSums.map(p => p / total);
   return { class: votes.indexOf(Math.max(...votes)), probabilities };
@@ -492,29 +494,29 @@ function buildGBTree(
     const values = X.map(row => row[fi]);
     const sorted = [...new Set(values)].sort((a, b) => a - b);
     const step = Math.max(1, Math.floor(sorted.length / 8));
-    
+
     for (let t = 0; t < sorted.length; t += step) {
       const threshold = sorted[t];
       const leftIdx: number[] = [];
       const rightIdx: number[] = [];
-      
+
       for (let i = 0; i < X.length; i++) {
         if (X[i][fi] <= threshold) leftIdx.push(i);
         else rightIdx.push(i);
       }
-      
+
       if (leftIdx.length < 2 || rightIdx.length < 2) continue;
-      
+
       const leftResiduals = leftIdx.map(i => residuals[i]);
       const rightResiduals = rightIdx.map(i => residuals[i]);
-      
+
       const leftMean = leftResiduals.reduce((a, b) => a + b, 0) / leftResiduals.length;
       const rightMean = rightResiduals.reduce((a, b) => a + b, 0) / rightResiduals.length;
-      
+
       const leftVar = leftResiduals.reduce((s, v) => s + (v - leftMean) ** 2, 0);
       const rightVar = rightResiduals.reduce((s, v) => s + (v - rightMean) ** 2, 0);
       const totalVar = leftVar + rightVar;
-      
+
       if (totalVar < bestVariance) {
         bestVariance = totalVar;
         bestFeature = fi;
@@ -552,12 +554,12 @@ function trainXGBoost(
   const n = X.length;
   // Initialize logits to zero
   const logits: number[][] = Array.from({ length: n }, () => new Array(numClasses).fill(0));
-  
+
   const allTrees: GBTreeNode[][] = []; // [estimator][class]
 
   for (let round = 0; round < nEstimators; round++) {
     const roundTrees: GBTreeNode[] = [];
-    
+
     for (let c = 0; c < numClasses; c++) {
       // Compute softmax probabilities
       const probs = logits.map(row => {
@@ -566,23 +568,23 @@ function trainXGBoost(
         const sum = exps.reduce((a, b) => a + b, 0);
         return exps[c] / sum;
       });
-      
+
       // Negative gradient (residuals): y_true - prob
       const residuals = y.map((yi, i) => (yi === c ? 1 : 0) - probs[i]);
-      
+
       // Fit a regression tree to residuals
       const tree = buildGBTree(X, residuals, 0, maxDepth);
       roundTrees.push(tree);
-      
+
       // Update logits
       for (let i = 0; i < n; i++) {
         logits[i][c] += learningRate * predictGBTree(tree, X[i]);
       }
     }
-    
+
     allTrees.push(roundTrees);
   }
-  
+
   return allTrees;
 }
 
@@ -590,19 +592,19 @@ function predictXGBoost(
   trees: GBTreeNode[][], x: number[], numClasses: number, learningRate: number
 ): { class: number; probabilities: number[] } {
   const logits = new Array(numClasses).fill(0);
-  
+
   for (const roundTrees of trees) {
     for (let c = 0; c < numClasses; c++) {
       logits[c] += learningRate * predictGBTree(roundTrees[c], x);
     }
   }
-  
+
   // Softmax
   const maxVal = Math.max(...logits);
   const exps = logits.map(v => Math.exp(v - maxVal));
   const sum = exps.reduce((a, b) => a + b, 0);
   const probabilities = exps.map(e => e / sum);
-  
+
   return { class: probabilities.indexOf(Math.max(...probabilities)), probabilities };
 }
 
@@ -612,6 +614,14 @@ interface NNLayer {
   weights: number[][];
   biases: number[];
   activation: 'relu' | 'softmax' | 'sigmoid';
+}
+
+interface QuantizedNNLayer {
+  weights: number[][];
+  biases: number[];
+  activation: 'relu' | 'softmax' | 'sigmoid';
+  weightScale: number;
+  biasScale: number;
 }
 
 function initLayer(inputSize: number, outputSize: number, activation: NNLayer['activation']): NNLayer {
@@ -643,7 +653,7 @@ function forwardLayer(input: number[], layer: NNLayer): number[] {
     }
     output.push(sum);
   }
-  
+
   if (layer.activation === 'relu') return output.map(relu);
   if (layer.activation === 'softmax') return softmax(output);
   return output; // linear
@@ -652,7 +662,7 @@ function forwardLayer(input: number[], layer: NNLayer): number[] {
 function forwardPass(input: number[], layers: NNLayer[]): { outputs: number[][]; preActivations: number[][] } {
   const outputs: number[][] = [input];
   const preActivations: number[][] = [input];
-  
+
   let current = input;
   for (const layer of layers) {
     // Pre-activation
@@ -665,17 +675,17 @@ function forwardPass(input: number[], layers: NNLayer[]): { outputs: number[][];
       pre.push(sum);
     }
     preActivations.push(pre);
-    
+
     // Activation
     let activated: number[];
     if (layer.activation === 'relu') activated = pre.map(relu);
     else if (layer.activation === 'softmax') activated = softmax(pre);
     else activated = pre;
-    
+
     outputs.push(activated);
     current = activated;
   }
-  
+
   return { outputs, preActivations };
 }
 
@@ -686,7 +696,7 @@ function trainNeuralNetwork(
   onProgress?: (metrics: TrainingMetrics) => void
 ): NNLayer[] {
   const inputSize = X[0].length;
-  
+
   // Build layers
   const layers: NNLayer[] = [];
   let prevSize = inputSize;
@@ -695,49 +705,49 @@ function trainNeuralNetwork(
     prevSize = size;
   }
   layers.push(initLayer(prevSize, numClasses, 'softmax'));
-  
+
   // Training loop
   for (let epoch = 0; epoch < epochs; epoch++) {
     let epochLoss = 0;
     let correct = 0;
-    
+
     // Mini-batch SGD
     const indices = Array.from({ length: X.length }, (_, i) => i);
     for (let i = indices.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [indices[i], indices[j]] = [indices[j], indices[i]];
     }
-    
+
     for (let b = 0; b < X.length; b += batchSize) {
       const batchEnd = Math.min(b + batchSize, X.length);
-      
+
       // Accumulate gradients
       const weightGrads = layers.map(l =>
         l.weights.map(row => row.map(() => 0))
       );
       const biasGrads = layers.map(l => l.biases.map(() => 0));
-      
+
       for (let idx = b; idx < batchEnd; idx++) {
         const sampleIdx = indices[idx];
         const x = X[sampleIdx];
         const target = y[sampleIdx];
-        
+
         // Forward
         const { outputs, preActivations } = forwardPass(x, layers);
         const finalOutput = outputs[outputs.length - 1];
-        
+
         // Loss (cross-entropy)
         const prob = Math.max(finalOutput[target], 1e-10);
         epochLoss += -Math.log(prob);
         if (finalOutput.indexOf(Math.max(...finalOutput)) === target) correct++;
-        
+
         // Backpropagation
         // Output layer gradient (softmax + cross-entropy)
         let delta = finalOutput.map((p, c) => p - (c === target ? 1 : 0));
-        
+
         for (let l = layers.length - 1; l >= 0; l--) {
           const layerInput = outputs[l]; // input to this layer
-          
+
           // Update gradients
           for (let i = 0; i < layerInput.length; i++) {
             for (let j = 0; j < delta.length; j++) {
@@ -747,7 +757,7 @@ function trainNeuralNetwork(
           for (let j = 0; j < delta.length; j++) {
             biasGrads[l][j] += delta[j];
           }
-          
+
           if (l > 0) {
             // Propagate to previous layer
             const newDelta: number[] = new Array(layers[l].weights.length).fill(0);
@@ -762,7 +772,7 @@ function trainNeuralNetwork(
           }
         }
       }
-      
+
       // Apply gradients
       const batchLen = batchEnd - b;
       for (let l = 0; l < layers.length; l++) {
@@ -776,7 +786,7 @@ function trainNeuralNetwork(
         }
       }
     }
-    
+
     // Validation metrics
     let valLoss = 0;
     let valCorrect = 0;
@@ -787,7 +797,7 @@ function trainNeuralNetwork(
       valLoss += -Math.log(prob);
       if (finalOutput.indexOf(Math.max(...finalOutput)) === valY[i]) valCorrect++;
     }
-    
+
     const metrics: TrainingMetrics = {
       epoch: epoch + 1,
       trainLoss: epochLoss / X.length,
@@ -795,10 +805,10 @@ function trainNeuralNetwork(
       trainAccuracy: correct / X.length,
       valAccuracy: valX.length > 0 ? valCorrect / valX.length : 0,
     };
-    
+
     onProgress?.(metrics);
   }
-  
+
   return layers;
 }
 
@@ -810,6 +820,55 @@ function predictNN(layers: NNLayer[], x: number[]): { class: number; probabiliti
   return { class: current.indexOf(Math.max(...current)), probabilities: current };
 }
 
+function quantizeValue(v: number, scale: number): number {
+  if (scale <= 0) return 0;
+  const q = Math.round(v / scale);
+  return Math.max(-127, Math.min(127, q));
+}
+
+function quantizeLayer(layer: NNLayer): QuantizedNNLayer {
+  const flatW = layer.weights.flat();
+  const maxW = Math.max(...flatW.map(v => Math.abs(v)), 1e-8);
+  const weightScale = maxW / 127;
+  const quantizedWeights = layer.weights.map(row => row.map(v => quantizeValue(v, weightScale) * weightScale));
+
+  const maxB = Math.max(...layer.biases.map(v => Math.abs(v)), 1e-8);
+  const biasScale = maxB / 127;
+  const quantizedBiases = layer.biases.map(v => quantizeValue(v, biasScale) * biasScale);
+
+  return {
+    weights: quantizedWeights,
+    biases: quantizedBiases,
+    activation: layer.activation,
+    weightScale,
+    biasScale,
+  };
+}
+
+function toTFLiteStyleLayers(layers: NNLayer[]): QuantizedNNLayer[] {
+  return layers.map(quantizeLayer);
+}
+
+function predictQuantizedNN(layers: QuantizedNNLayer[], x: number[]): { class: number; probabilities: number[] } {
+  let current = x;
+  for (const layer of layers) {
+    const output: number[] = [];
+    for (let j = 0; j < layer.biases.length; j++) {
+      let sum = layer.biases[j];
+      for (let i = 0; i < current.length; i++) {
+        sum += current[i] * layer.weights[i][j];
+      }
+      output.push(sum);
+    }
+
+    if (layer.activation === 'relu') current = output.map(relu);
+    else if (layer.activation === 'softmax') current = softmax(output);
+    else current = output;
+  }
+
+  return { class: current.indexOf(Math.max(...current)), probabilities: current };
+}
+
 // ─── Metrics Computation ────────────────────────────────────────────────────
 
 function computeMetrics(
@@ -817,38 +876,38 @@ function computeMetrics(
 ): { accuracy: number; f1: number; precision: number; recall: number; confusionMatrix: number[][] } {
   const cm = Array.from({ length: numClasses }, () => new Array(numClasses).fill(0));
   let correct = 0;
-  
+
   for (let i = 0; i < yTrue.length; i++) {
     cm[yTrue[i]][yPred[i]]++;
     if (yTrue[i] === yPred[i]) correct++;
   }
-  
+
   const accuracy = correct / yTrue.length;
-  
+
   // Macro-averaged precision, recall, F1
   let totalPrecision = 0;
   let totalRecall = 0;
   let validClasses = 0;
-  
+
   for (let c = 0; c < numClasses; c++) {
     const tp = cm[c][c];
     const fp = cm.reduce((sum, row) => sum + row[c], 0) - tp;
     const fn = cm[c].reduce((sum, val) => sum + val, 0) - tp;
-    
+
     const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
     const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-    
+
     if (tp + fp + fn > 0) {
       totalPrecision += precision;
       totalRecall += recall;
       validClasses++;
     }
   }
-  
+
   const avgPrecision = validClasses > 0 ? totalPrecision / validClasses : 0;
   const avgRecall = validClasses > 0 ? totalRecall / validClasses : 0;
   const f1 = avgPrecision + avgRecall > 0 ? 2 * avgPrecision * avgRecall / (avgPrecision + avgRecall) : 0;
-  
+
   return { accuracy, f1, precision: avgPrecision, recall: avgRecall, confusionMatrix: cm };
 }
 
@@ -858,7 +917,7 @@ function computeFeatureImportance(
   // Permutation importance
   const baselineAccuracy = computeBaseline(X, y, numClasses);
   const importances: Array<{ feature: string; importance: number }> = [];
-  
+
   for (let f = 0; f < featureNames.length; f++) {
     // Shuffle feature f
     const shuffledX = X.map(row => [...row]);
@@ -870,14 +929,14 @@ function computeFeatureImportance(
     for (let i = 0; i < shuffledX.length; i++) {
       shuffledX[i][f] = featureVals[i];
     }
-    
+
     const shuffledAcc = computeBaseline(shuffledX, y, numClasses);
     importances.push({
       feature: featureNames[f],
       importance: Math.max(0, baselineAccuracy - shuffledAcc),
     });
   }
-  
+
   // Normalize
   const maxImp = Math.max(...importances.map(i => i.importance), 0.001);
   return importances.map(i => ({ ...i, importance: i.importance / maxImp })).sort((a, b) => b.importance - a.importance);
@@ -898,7 +957,7 @@ function computeBaseline(X: number[][], y: number[], numClasses: number): number
     }
     centroids.push(centroid.map(v => v / classRows.length));
   }
-  
+
   let correct = 0;
   for (let i = 0; i < X.length; i++) {
     let minDist = Infinity;
@@ -916,10 +975,11 @@ function computeBaseline(X: number[][], y: number[], numClasses: number): number
 
 // Store trained models in memory for prediction
 let _trainedModel: {
-  type: 'rf' | 'xgboost' | 'deeplearning' | 'ensemble';
+  type: 'rf' | 'xgboost' | 'deeplearning' | 'webml_tflite' | 'ensemble';
   rfTrees?: TreeNode[];
   xgbTrees?: GBTreeNode[][];
   nnLayers?: NNLayer[];
+  tfliteLayers?: QuantizedNNLayer[];
   numClasses: number;
   learningRate: number;
   featureNames: string[];
@@ -935,25 +995,25 @@ export async function trainModel(
   onProgress?: (metrics: TrainingMetrics) => void,
 ): Promise<TrainingResult> {
   const startTime = Date.now();
-  
+
   const { features, label, classNames, columns } = autoDetect;
   const numClasses = classNames?.length || 2;
-  
+
   // Preprocess
   const { X, y, featureNames } = preprocessData(data, features, label, columns, classNames);
-  
+
   // Split
   const { XTrain, yTrain, XTest, yTest } = trainTestSplit(X, y, config.validationSplit);
-  
+
   const history: TrainingMetrics[] = [];
   let yPred: number[] = [];
-  
+
   if (config.modelType === 'xgboost') {
     // XGBoost training with progress
     const trees = trainXGBoost(XTrain, yTrain, numClasses, config.nEstimators, config.maxDepth, config.learningRate);
-    
+
     yPred = XTest.map(x => predictXGBoost(trees, x, numClasses, config.learningRate).class);
-    
+
     // Generate synthetic history
     for (let i = 0; i < Math.min(config.nEstimators, 50); i++) {
       const progress = (i + 1) / Math.min(config.nEstimators, 50);
@@ -962,7 +1022,7 @@ export async function trainModel(
         return treesSlice.length > 0 ? predictXGBoost(treesSlice, x, numClasses, config.learningRate).class : 0;
       });
       const trainAcc = trainPreds.reduce((s, p, j) => s + (p === yTrain[j] ? 1 : 0), 0) / yTrain.length;
-      
+
       const metrics: TrainingMetrics = {
         epoch: i + 1,
         trainLoss: Math.max(0.01, 2.0 * (1 - progress) + Math.random() * 0.1),
@@ -973,9 +1033,9 @@ export async function trainModel(
       history.push(metrics);
       onProgress?.(metrics);
     }
-    
+
     _trainedModel = { type: 'xgboost', xgbTrees: trees, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns };
-    
+
   } else if (config.modelType === 'deeplearning') {
     // Neural network
     const layers = trainNeuralNetwork(
@@ -984,10 +1044,31 @@ export async function trainModel(
       XTest, yTest,
       (metrics) => { history.push(metrics); onProgress?.(metrics); }
     );
-    
+
     yPred = XTest.map(x => predictNN(layers, x).class);
     _trainedModel = { type: 'deeplearning', nnLayers: layers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns };
-    
+
+  } else if (config.modelType === 'webml_tflite') {
+    // WebML + TensorFlow Lite-style path: train neural layers, then quantize for lightweight inference
+    const nnLayers = trainNeuralNetwork(
+      XTrain, yTrain, numClasses,
+      config.hiddenLayers, config.epochs, config.learningRate, config.batchSize,
+      XTest, yTest,
+      (metrics) => { history.push(metrics); onProgress?.(metrics); }
+    );
+    const tfliteLayers = toTFLiteStyleLayers(nnLayers);
+    yPred = XTest.map(x => predictQuantizedNN(tfliteLayers, x).class);
+    _trainedModel = {
+      type: 'webml_tflite',
+      nnLayers,
+      tfliteLayers,
+      numClasses,
+      learningRate: config.learningRate,
+      featureNames,
+      classNames: classNames || [],
+      autoDetect,
+      columnInfos: columns,
+    };
   } else {
     // Ensemble: RF + XGBoost + NN
     const rfTrees = trainRandomForest(XTrain, yTrain, numClasses, Math.floor(config.nEstimators / 2), config.maxDepth);
@@ -998,29 +1079,36 @@ export async function trainModel(
       XTest, yTest,
       (metrics) => { history.push(metrics); onProgress?.(metrics); }
     );
-    
-    // Ensemble prediction: average probabilities
+    const tfliteLayers = toTFLiteStyleLayers(nnLayers);
+
+    // Ensemble prediction: weighted average across tree + deep + TFLite-style paths
     yPred = XTest.map(x => {
       const rfPred = predictRandomForest(rfTrees, x, numClasses);
       const xgbPred = predictXGBoost(xgbTrees, x, numClasses, config.learningRate);
       const nnPred = predictNN(nnLayers, x);
-      
+      const tflitePred = predictQuantizedNN(tfliteLayers, x);
+
       const avgProbs = new Array(numClasses).fill(0);
       for (let c = 0; c < numClasses; c++) {
-        avgProbs[c] = (rfPred.probabilities[c] + xgbPred.probabilities[c] + nnPred.probabilities[c]) / 3;
+        avgProbs[c] = (
+          rfPred.probabilities[c] * 0.30 +
+          xgbPred.probabilities[c] * 0.25 +
+          nnPred.probabilities[c] * 0.20 +
+          tflitePred.probabilities[c] * 0.25
+        );
       }
       return avgProbs.indexOf(Math.max(...avgProbs));
     });
-    
-    _trainedModel = { type: 'ensemble', rfTrees, xgbTrees, nnLayers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns };
+
+    _trainedModel = { type: 'ensemble', rfTrees, xgbTrees, nnLayers, tfliteLayers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns };
   }
-  
+
   // Compute metrics
   const metrics = computeMetrics(yTest, yPred, numClasses);
   const featureImportance = computeFeatureImportance(XTrain, yTrain, featureNames, numClasses);
-  
+
   const trainTime = (Date.now() - startTime) / 1000;
-  
+
   return {
     modelType: config.modelType,
     accuracy: metrics.accuracy,
@@ -1042,15 +1130,15 @@ export function predictWithTrainedModel(
   inputData: Record<string, unknown>
 ): { prediction: string; confidence: number; probabilities: Record<string, number>; topFactors: Array<{ feature: string; value: number; impact: string; importance: number }> } | null {
   if (!_trainedModel) return null;
-  
+
   const { featureNames, classNames, numClasses, autoDetect, columnInfos } = _trainedModel;
-  
+
   // Build feature vector
   const x: number[] = [];
   for (const feat of featureNames) {
     const info = columnInfos.find(c => c.name === feat);
     const val = inputData[feat];
-    
+
     if (info?.type === 'numeric') {
       let n = typeof val === 'number' ? val : parseFloat(String(val));
       if (isNaN(n)) n = info.mean ?? 0;
@@ -1061,32 +1149,40 @@ export function predictWithTrainedModel(
       x.push(0); // Default for non-numeric
     }
   }
-  
+
   let prediction: { class: number; probabilities: number[] };
-  
+
   if (_trainedModel.type === 'xgboost' && _trainedModel.xgbTrees) {
     prediction = predictXGBoost(_trainedModel.xgbTrees, x, numClasses, _trainedModel.learningRate);
   } else if (_trainedModel.type === 'deeplearning' && _trainedModel.nnLayers) {
     prediction = predictNN(_trainedModel.nnLayers, x);
+  } else if (_trainedModel.type === 'webml_tflite' && _trainedModel.tfliteLayers) {
+    prediction = predictQuantizedNN(_trainedModel.tfliteLayers, x);
   } else if (_trainedModel.type === 'ensemble') {
     const rfPred = _trainedModel.rfTrees ? predictRandomForest(_trainedModel.rfTrees, x, numClasses) : { class: 0, probabilities: new Array(numClasses).fill(1 / numClasses) };
     const xgbPred = _trainedModel.xgbTrees ? predictXGBoost(_trainedModel.xgbTrees, x, numClasses, _trainedModel.learningRate) : { class: 0, probabilities: new Array(numClasses).fill(1 / numClasses) };
     const nnPred = _trainedModel.nnLayers ? predictNN(_trainedModel.nnLayers, x) : { class: 0, probabilities: new Array(numClasses).fill(1 / numClasses) };
-    
+    const tflitePred = _trainedModel.tfliteLayers ? predictQuantizedNN(_trainedModel.tfliteLayers, x) : { class: 0, probabilities: new Array(numClasses).fill(1 / numClasses) };
+
     const avgProbs = new Array(numClasses).fill(0);
     for (let c = 0; c < numClasses; c++) {
-      avgProbs[c] = (rfPred.probabilities[c] + xgbPred.probabilities[c] + nnPred.probabilities[c]) / 3;
+      avgProbs[c] = (
+        rfPred.probabilities[c] * 0.30 +
+        xgbPred.probabilities[c] * 0.25 +
+        nnPred.probabilities[c] * 0.20 +
+        tflitePred.probabilities[c] * 0.25
+      );
     }
     prediction = { class: avgProbs.indexOf(Math.max(...avgProbs)), probabilities: avgProbs };
   } else {
     return null;
   }
-  
+
   const probabilities: Record<string, number> = {};
   for (let c = 0; c < numClasses; c++) {
     probabilities[classNames[c] || `Class ${c}`] = Math.round(prediction.probabilities[c] * 10000) / 100;
   }
-  
+
   // Top factors from feature importance
   const topFactors = featureNames.slice(0, 5).map((feat, i) => ({
     feature: feat,
@@ -1094,7 +1190,7 @@ export function predictWithTrainedModel(
     impact: prediction.probabilities[prediction.class] > 0.5 ? 'increases' : 'decreases',
     importance: Math.max(0.1, 1 - i * 0.15),
   }));
-  
+
   return {
     prediction: classNames[prediction.class] || `Class ${prediction.class}`,
     confidence: prediction.probabilities[prediction.class],

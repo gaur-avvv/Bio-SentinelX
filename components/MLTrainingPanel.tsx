@@ -186,11 +186,11 @@ const MLTrainingPanel: React.FC = () => {
           </div>
         )}
         <div className="flex items-center gap-2">
-           <button onClick={() => loadModelInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-              <Upload className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
-              <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Load Model</span>
-           </button>
-           <input type="file" ref={loadModelInputRef} accept=".json" className="hidden" onChange={handleLoadModel} />
+          <button onClick={() => loadModelInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+            <Upload className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+            <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Load Model</span>
+          </button>
+          <input type="file" ref={loadModelInputRef} accept=".json" className="hidden" onChange={handleLoadModel} />
         </div>
 
       </div>
@@ -311,20 +311,20 @@ const MLTrainingPanel: React.FC = () => {
           </div>
 
           {/* Model Type Selection */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {([
               { type: 'xgboost' as const, label: 'XGBoost', desc: 'Gradient Boosted Trees', icon: TrendingUp, color: 'emerald' },
               { type: 'deeplearning' as const, label: 'Deep Learning', desc: 'Neural Network (MLP)', icon: Brain, color: 'violet' },
+              { type: 'webml_tflite' as const, label: 'WebML + TFLite', desc: 'Quantized Neural Inference', icon: Cpu, color: 'sky' },
               { type: 'ensemble' as const, label: 'Ensemble', desc: 'RF + XGB + NN Combined', icon: Layers, color: 'indigo' },
             ]).map(m => (
               <button
                 key={m.type}
                 onClick={() => setConfig(prev => ({ ...prev, modelType: m.type }))}
-                className={`p-4 rounded-xl border-2 transition-all text-left ${
-                  config.modelType === m.type
+                className={`p-4 rounded-xl border-2 transition-all text-left ${config.modelType === m.type
                     ? `border-${m.color}-500 bg-${m.color}-50 dark:bg-${m.color}-900/20`
                     : 'border-slate-200 dark:border-slate-600 hover:border-slate-300'
-                }`}
+                  }`}
               >
                 <m.icon className={`w-5 h-5 mb-2 ${config.modelType === m.type ? `text-${m.color}-600` : 'text-slate-400'}`} />
                 <p className={`text-xs font-black uppercase tracking-widest ${config.modelType === m.type ? `text-${m.color}-700 dark:text-${m.color}-300` : 'text-slate-600 dark:text-slate-400'}`}>{m.label}</p>
@@ -392,7 +392,13 @@ const MLTrainingPanel: React.FC = () => {
             ) : (
               <>
                 <Play className="w-5 h-5" />
-                Train {config.modelType === 'ensemble' ? 'Ensemble' : config.modelType === 'xgboost' ? 'XGBoost' : 'Neural Network'} Model
+                Train {config.modelType === 'ensemble'
+                  ? 'Ensemble'
+                  : config.modelType === 'xgboost'
+                    ? 'XGBoost'
+                    : config.modelType === 'webml_tflite'
+                      ? 'WebML + TFLite'
+                      : 'Neural Network'} Model
               </>
             )}
           </button>
