@@ -20,7 +20,7 @@ interface MLTrainingPanelProps {
   onModelReady?: () => void;
 }
 
-const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
+const MLTrainingPanel = ({ onModelReady }: MLTrainingPanelProps) => {
   // Data state
   const [rawData, setRawData] = useState<Record<string, unknown>[]>([]);
   const [autoDetect, setAutoDetect] = useState<AutoDetectResult | null>(null);
@@ -130,7 +130,7 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
       setAutoDetect(detected);
       setSelectedFeatures(detected.features);
       setSelectedLabel(detected.label);
-      setConfig(prev => ({ ...prev, modelType: detected.suggestedModelType }));
+      setConfig((prev: any) => ({ ...prev, modelType: detected.suggestedModelType }));
 
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse CSV file.');
@@ -159,7 +159,7 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
         config,
         customDetect,
         (metrics) => {
-          setTrainingProgress(prev => [...prev, metrics]);
+          setTrainingProgress((prev: any) => [...prev, metrics]);
         }
       );
 
@@ -220,13 +220,13 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
   }, [autoRetrainEnabled, autoRetrainMinutes]);
 
   const featureCandidates = (autoDetect?.columns || [])
-    .filter(c => c.type === 'numeric' || c.type === 'categorical')
-    .map(c => c.name)
-    .filter(name => name !== selectedLabel);
+    .filter((c: any) => c.type === 'numeric' || c.type === 'categorical')
+    .map((c: any) => c.name)
+    .filter((name: any) => name !== selectedLabel);
 
   const toggleFeature = (feature: string) => {
-    setSelectedFeatures(prev => prev.includes(feature)
-      ? prev.filter(f => f !== feature)
+    setSelectedFeatures((prev: any) => prev.includes(feature)
+      ? prev.filter((f: any) => f !== feature)
       : [...prev, feature]
     );
   };
@@ -371,7 +371,7 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
                 onChange={(e) => {
                   const nextLabel = e.target.value;
                   setSelectedLabel(nextLabel);
-                  setSelectedFeatures(prev => prev.filter(f => f !== nextLabel));
+                  setSelectedFeatures((prev: any) => prev.filter((f: any) => f !== nextLabel));
                 }}
                 className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white"
               >
@@ -456,7 +456,7 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
             ]).map(m => (
               <button
                 key={m.type}
-                onClick={() => setConfig(prev => ({ ...prev, modelType: m.type }))}
+                onClick={() => setConfig((prev: any) => ({ ...prev, modelType: m.type }))}
                 className={`p-4 rounded-xl border-2 transition-all text-left ${config.modelType === m.type
                   ? `border-${m.color}-500 bg-${m.color}-50 dark:bg-${m.color}-900/20`
                   : 'border-slate-200 dark:border-slate-600 hover:border-slate-300'
@@ -483,32 +483,32 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 p-4 bg-slate-50 dark:bg-slate-700/50 rounded-xl animate-fade-in">
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Epochs</label>
-                <input type="number" value={config.epochs} onChange={e => setConfig(prev => ({ ...prev, epochs: parseInt(e.target.value) || 50 }))}
+                <input type="number" value={config.epochs} onChange={e => setConfig((prev: any) => ({ ...prev, epochs: parseInt(e.target.value) || 50 }))}
                   className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white" />
               </div>
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Learning Rate</label>
-                <input type="number" step="0.001" value={config.learningRate} onChange={e => setConfig(prev => ({ ...prev, learningRate: parseFloat(e.target.value) || 0.01 }))}
+                <input type="number" step="0.001" value={config.learningRate} onChange={e => setConfig((prev: any) => ({ ...prev, learningRate: parseFloat(e.target.value) || 0.01 }))}
                   className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white" />
               </div>
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Batch Size</label>
-                <input type="number" value={config.batchSize} onChange={e => setConfig(prev => ({ ...prev, batchSize: parseInt(e.target.value) || 32 }))}
+                <input type="number" value={config.batchSize} onChange={e => setConfig((prev: any) => ({ ...prev, batchSize: parseInt(e.target.value) || 32 }))}
                   className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white" />
               </div>
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Validation Split</label>
-                <input type="number" step="0.05" value={config.validationSplit} onChange={e => setConfig(prev => ({ ...prev, validationSplit: parseFloat(e.target.value) || 0.2 }))}
+                <input type="number" step="0.05" value={config.validationSplit} onChange={e => setConfig((prev: any) => ({ ...prev, validationSplit: parseFloat(e.target.value) || 0.2 }))}
                   className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white" />
               </div>
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">N Estimators (Trees)</label>
-                <input type="number" value={config.nEstimators} onChange={e => setConfig(prev => ({ ...prev, nEstimators: parseInt(e.target.value) || 100 }))}
+                <input type="number" value={config.nEstimators} onChange={e => setConfig((prev: any) => ({ ...prev, nEstimators: parseInt(e.target.value) || 100 }))}
                   className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white" />
               </div>
               <div>
                 <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Max Depth</label>
-                <input type="number" value={config.maxDepth} onChange={e => setConfig(prev => ({ ...prev, maxDepth: parseInt(e.target.value) || 6 }))}
+                <input type="number" value={config.maxDepth} onChange={e => setConfig((prev: any) => ({ ...prev, maxDepth: parseInt(e.target.value) || 6 }))}
                   className="w-full mt-1 p-2 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg text-xs font-bold text-slate-800 dark:text-white" />
               </div>
             </div>
@@ -637,10 +637,14 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
           </div>
 
           {/* Metrics Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <div className="p-4 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 rounded-xl border border-emerald-200 dark:border-emerald-800">
               <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Accuracy</p>
               <p className="text-2xl font-black text-emerald-700 dark:text-emerald-300">{(trainingResult.accuracy * 100).toFixed(1)}%</p>
+            </div>
+            <div className="p-4 bg-gradient-to-br from-rose-50 to-red-50 dark:from-rose-900/20 dark:to-red-900/20 rounded-xl border border-rose-200 dark:border-rose-800">
+              <p className="text-[9px] font-black text-rose-400 uppercase tracking-widest">Loss</p>
+              <p className="text-2xl font-black text-rose-700 dark:text-rose-300">{trainingResult.loss.toFixed(4)}</p>
             </div>
             <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
               <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest">F1 Score</p>
@@ -653,6 +657,10 @@ const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
             <div className="p-4 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20 rounded-xl border border-amber-200 dark:border-amber-800">
               <p className="text-[9px] font-black text-amber-400 uppercase tracking-widest">Recall</p>
               <p className="text-2xl font-black text-amber-700 dark:text-amber-300">{(trainingResult.recall * 100).toFixed(1)}%</p>
+            </div>
+            <div className="p-4 bg-gradient-to-br from-cyan-50 to-sky-50 dark:from-cyan-900/20 dark:to-sky-900/20 rounded-xl border border-cyan-200 dark:border-cyan-800">
+              <p className="text-[9px] font-black text-cyan-400 uppercase tracking-widest">Train Time</p>
+              <p className="text-2xl font-black text-cyan-700 dark:text-cyan-300">{trainingResult.trainTime.toFixed(1)}s</p>
             </div>
           </div>
 

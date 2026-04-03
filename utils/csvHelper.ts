@@ -1,5 +1,31 @@
 import { HealthRecord, DatasetStats, ColumnStats } from '../types';
 
+export const parseCSVString = (text: string): Record<string, unknown>[] => {
+  if (!text) return [];
+  const lines = text.split(/\r\n|\n/).map(line => line.trim()).filter(line => line.length > 0);
+  if (lines.length < 2) return [];
+
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const data: Record<string, unknown>[] = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const currentLine = lines[i].split(',');
+    if (currentLine.length < headers.length) continue;
+
+    const record: Record<string, unknown> = {};
+    headers.forEach((header, index) => {
+      let value = currentLine[index] ? currentLine[index].trim().replace(/^"|"$/g, '') : '';
+      if (['n/a', 'na', 'null', 'undefined', '-', 'nan'].includes(value.toLowerCase())) {
+        value = '';
+      }
+      const numValue = parseFloat(value);
+      record[header] = !isNaN(numValue) && value !== '' ? numValue : value;
+    });
+    if (Object.keys(record).length > 0) data.push(record);
+  }
+  return data;
+};
+
 export const parseCSV = async (file: File): Promise<HealthRecord[]> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

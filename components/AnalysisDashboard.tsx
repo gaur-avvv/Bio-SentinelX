@@ -10,7 +10,9 @@ import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, re
 import { ReportRenderer } from './ReportRenderer';
 import MLTrainingPanel from './MLTrainingPanel';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
-import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo, getTrainedModelPerformanceMetrics } from '../services/realtimeMLService';
+import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo, getTrainedModelPerformanceMetrics, trainModel, DEFAULT_TRAINING_CONFIG, autoDetectFeaturesAndLabel } from '../services/realtimeMLService';
+import { parseCSVString } from '../utils/csvHelper';
+import defaultCsvData from '../Weather-related disease prediction.csv?raw';
 import { performWebLLMTraining, predictOutbreak, OutbreakPrediction } from '../services/webLLMTrainingService';
 
 interface AnalysisDashboardProps {
@@ -123,7 +125,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
           <input
             type="number"
             value={data.age}
-            onChange={(e) => onChange({ ...data, age: e.target.value })}
+            onChange={(e: any) => onChange({ ...data, age: e.target.value })}
             placeholder="e.g. 32"
             className="w-full p-2.5 sm:p-3 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-teal-500 outline-none"
           />
@@ -133,7 +135,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
           <input
             type="number"
             value={data.height || ''}
-            onChange={(e) => onChange({ ...data, height: e.target.value })}
+            onChange={(e: any) => onChange({ ...data, height: e.target.value })}
             placeholder="e.g. 175"
             className="w-full p-2.5 sm:p-3 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-teal-500 outline-none"
           />
@@ -143,7 +145,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
           <input
             type="number"
             value={data.weight || ''}
-            onChange={(e) => onChange({ ...data, weight: e.target.value })}
+            onChange={(e: any) => onChange({ ...data, weight: e.target.value })}
             placeholder="e.g. 70"
             className="w-full p-2.5 sm:p-3 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-teal-500 outline-none"
           />
@@ -231,7 +233,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
             <input
               type="text"
               value={data[field] as string}
-              onChange={(e) => onChange({ ...data, [field]: e.target.value })}
+              onChange={(e: any) => onChange({ ...data, [field]: e.target.value })}
               placeholder={`Custom ${field}...`}
               className="w-full p-2.5 sm:p-3 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-teal-500 outline-none"
             />
@@ -655,6 +657,27 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   aiKey,
   onOpenAssistant,
 }) => {
+  // Auto-train default model on mount
+  useEffect(() => {
+    if (!isModelTrained() && defaultCsvData) {
+      const initDefaultModel = async () => {
+        try {
+          const rawData = parseCSVString(defaultCsvData);
+          if (rawData.length === 0) return;
+          const detected = autoDetectFeaturesAndLabel(rawData, 'prognosis');
+          if (!detected || !detected.label) return;
+          console.log('[Bio-SentinelX] Pre-training local disease prediction model...', { samples: rawData.length });
+          const config = { ...DEFAULT_TRAINING_CONFIG, modelType: 'ensemble' as const, epochs: 20, nEstimators: 50 };
+          await trainModel(rawData, config, { ...detected, label: 'prognosis' });
+          console.log('[Bio-SentinelX] Default model training complete.');
+        } catch (err) {
+          console.error('[Bio-SentinelX] Failed to train default model:', err);
+        }
+      };
+      initDefaultModel();
+    }
+  }, []);
+
   const [userFeedback, setUserFeedback] = useState<string>(() => {
     try { return localStorage.getItem('biosentinel_user_feedback') || ''; } catch { return ''; }
   });
@@ -1072,7 +1095,33 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           has_smoke: (userFeedback || '').toLowerCase().includes('smoke') ? 1 : 0,
           has_pollen: (userFeedback || '').toLowerCase().includes('pollen') ? 1 : 0,
           has_water_stagnation: (userFeedback || '').toLowerCase().includes('standing water') ? 1 : 0,
+
+          // Map specifically to Weather-related disease prediction CSV
+          'Age': age,
+          'Gender': (lifestyleData?.gender === 'Male' || lifestyleData?.gender === '1') ? 1 : 0,
+          'Temperature (C)': weather.temp,
+          'Humidity': weather.humidity,
+          'Wind Speed (km/h)': weather.windSpeed,
         };
+        
+        // Auto-extract 45 symptoms as binary flags 0 or 1 for the local model from user text
+        const symptomsList = [
+          'nausea', 'joint_pain', 'abdominal_pain', 'high_fever', 'chills', 'fatigue', 'runny_nose',
+          'pain_behind_the_eyes', 'dizziness', 'headache', 'chest_pain', 'vomiting', 'cough',
+          'shivering', 'asthma_history', 'high_cholesterol', 'diabetes', 'obesity', 'hiv_aids',
+          'nasal_polyps', 'asthma', 'high_blood_pressure', 'severe_headache', 'weakness', 'trouble_seeing',
+          'fever', 'body_aches', 'sore_throat', 'sneezing', 'diarrhea', 'rapid_breathing', 'rapid_heart_rate',
+          'pain_behind_eyes', 'swollen_glands', 'rashes', 'sinus_headache', 'facial_pain', 'shortness_of_breath',
+          'reduced_smell_and_taste', 'skin_irritation', 'itchiness', 'throbbing_headache', 'confusion',
+          'back_pain', 'knee_ache'
+        ];
+        
+        const feedbackLower = (userFeedback || '').toLowerCase() + ' ' + (lifestyleData?.medicalHistory || '').toLowerCase();
+        for (const symptom of symptomsList) {
+          const symptomWords = symptom.replace(/_/g, ' ');
+          fullModelInput[symptom] = (feedbackLower.includes(symptomWords) || feedbackLower.includes(symptom)) ? 1 : 0;
+        }
+
         let modelInput = fullModelInput;
         try {
           const useSelectedOnly = localStorage.getItem('biosentinel_live_features_only') === 'true';
