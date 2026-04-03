@@ -10,7 +10,7 @@ import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, re
 import { ReportRenderer } from './ReportRenderer';
 import MLTrainingPanel from './MLTrainingPanel';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
-import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo } from '../services/realtimeMLService';
+import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo, getTrainedModelPerformanceMetrics } from '../services/realtimeMLService';
 import { performWebLLMTraining, predictOutbreak, OutbreakPrediction } from '../services/webLLMTrainingService';
 
 interface AnalysisDashboardProps {
@@ -285,6 +285,7 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
   };
 
   const triggerSeverity = getTriggerSeverity(prediction.primaryTrigger);
+  const trainedPerf = getTrainedModelPerformanceMetrics();
   // Adjusted weighted combination logic
   const weightedScore = (prediction.riskScore * 0.4) + (prediction.confidence * 0.4) + (triggerSeverity * 0.2);
 
@@ -384,6 +385,43 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
       </div>
 
       <div className="flex flex-col gap-6 sm:gap-12 relative z-10">
+        {trainedPerf && (
+          <div className="p-4 sm:p-6 bg-slate-800/60 rounded-2xl border border-slate-700/60">
+            <div className="flex items-center gap-2 mb-3">
+              <BarChart3 className="w-4 h-4 text-teal-400" />
+              <h4 className="text-[10px] sm:text-xs font-black text-teal-300 uppercase tracking-widest">Model Performance Metrics</h4>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
+              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Accuracy</p>
+                <p className="text-sm sm:text-base font-black text-emerald-300">{(trainedPerf.accuracy * 100).toFixed(2)}%</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Loss</p>
+                <p className="text-sm sm:text-base font-black text-amber-300">{trainedPerf.loss.toFixed(4)}</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">F1 Score</p>
+                <p className="text-sm sm:text-base font-black text-cyan-300">{(trainedPerf.f1Score * 100).toFixed(2)}%</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Train Time</p>
+                <p className="text-sm sm:text-base font-black text-violet-300">{trainedPerf.trainTime.toFixed(1)}s</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-2">
+              <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-700">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Precision</p>
+                <p className="text-sm font-black text-slate-200">{(trainedPerf.precision * 100).toFixed(2)}%</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-700">
+                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Recall</p>
+                <p className="text-sm font-black text-slate-200">{(trainedPerf.recall * 100).toFixed(2)}%</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-12">
           <div className="p-5 sm:p-8 bg-slate-800/50 rounded-[1.5rem] sm:rounded-[2.5rem] border border-slate-700/50 backdrop-blur-sm h-full flex flex-col justify-center">
             <h4 className="text-[9px] sm:text-xs font-black text-slate-300 uppercase tracking-widest mb-3 sm:mb-6 flex items-center gap-2">
@@ -1158,6 +1196,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       let augmentedAnalysis = stripHiddenModelReasoning(geminiMarkdown);
       if (prediction && !geminiMarkdown.includes("AI Model Insights")) {
         const modelInfo = getTrainedModelInfo();
+        const perf = getTrainedModelPerformanceMetrics();
         const modelType = modelInfo ? `${modelInfo.type.toUpperCase()} (${modelInfo.featureNames.length} features, ${modelInfo.numClasses} classes)` : 'Bio-Sentinel API';
         const probSection = prediction.allProbabilities
           ? Object.entries(prediction.allProbabilities)
@@ -1170,6 +1209,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           ? prediction.topFactors.slice(0, 5).map(f => `  - **${f.feature}:** ${f.value?.toFixed(2) ?? 'N/A'} (${f.impact} risk, importance: ${(f.importance * 100).toFixed(0)}%)`).join('\n')
           : '  - Feature-level attributions are unavailable for this model output. Retrain with explicit predictor columns for richer explanations.';
         augmentedAnalysis += `\n\n### 8. Realtime ML Model Insights\n- **Model:** ${modelType}\n- **Prediction:** ${prediction.disease || 'General Assessment'}\n- **Risk Score:** ${(prediction.riskScore * 100).toFixed(0)}%\n- **Confidence:** ${(prediction.confidence * 100).toFixed(0)}%\n- **Primary Trigger:** ${prediction.primaryTrigger}`;
+        if (perf) {
+          augmentedAnalysis += `\n- **Model Accuracy:** ${(perf.accuracy * 100).toFixed(2)}%\n- **Model Loss:** ${perf.loss.toFixed(4)}\n- **F1 Score:** ${(perf.f1Score * 100).toFixed(2)}%\n- **Precision / Recall:** ${(perf.precision * 100).toFixed(2)}% / ${(perf.recall * 100).toFixed(2)}%\n- **Training Time:** ${perf.trainTime.toFixed(1)}s`;
+        }
         if (probSection) augmentedAnalysis += `\n- **Class Probabilities:**\n${probSection}`;
         if (factorsSection) augmentedAnalysis += `\n- **Top Contributing Factors:**\n${factorsSection}`;
         if (prediction.recommendation) augmentedAnalysis += `\n- **Recommendation:** ${prediction.recommendation}`;

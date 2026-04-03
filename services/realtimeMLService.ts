@@ -987,6 +987,15 @@ let _trainedModel: {
   tfliteLayers?: QuantizedNNLayer[];
   categoricalEncoders?: Record<string, string[]>;
   featureImportance?: Array<{ feature: string; importance: number }>;
+  performance?: {
+    modelType: string;
+    accuracy: number;
+    loss: number;
+    f1Score: number;
+    precision: number;
+    recall: number;
+    trainTime: number;
+  };
   numClasses: number;
   learningRate: number;
   featureNames: string[];
@@ -1119,11 +1128,24 @@ export async function trainModel(
   }
 
   const trainTime = (Date.now() - startTime) / 1000;
+  const loss = history.length > 0 ? history[history.length - 1].valLoss : 1 - metrics.accuracy;
+
+  if (_trainedModel) {
+    _trainedModel.performance = {
+      modelType: config.modelType,
+      accuracy: metrics.accuracy,
+      loss,
+      f1Score: metrics.f1,
+      precision: metrics.precision,
+      recall: metrics.recall,
+      trainTime,
+    };
+  }
 
   return {
     modelType: config.modelType,
     accuracy: metrics.accuracy,
-    loss: history.length > 0 ? history[history.length - 1].valLoss : 1 - metrics.accuracy,
+    loss,
     f1Score: metrics.f1,
     precision: metrics.precision,
     recall: metrics.recall,
@@ -1304,6 +1326,19 @@ export function getTrainedModelInfo(): { type: string; numClasses: number; featu
     featureNames: _trainedModel.featureNames,
     classNames: _trainedModel.classNames,
   };
+}
+
+export function getTrainedModelPerformanceMetrics(): {
+  modelType: string;
+  accuracy: number;
+  loss: number;
+  f1Score: number;
+  precision: number;
+  recall: number;
+  trainTime: number;
+} | null {
+  if (!_trainedModel?.performance) return null;
+  return { ..._trainedModel.performance };
 }
 
 
