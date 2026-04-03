@@ -214,10 +214,13 @@ function encodeLabel(values: unknown[], classNames: string[]): number[] {
   return values.map(v => labelMap.get(String(v)) ?? 0);
 }
 
-function encodeCategoricalFeature(values: unknown[]): number[] {
-  const uniqueVals = [...new Set(values.map(String))];
-  const map = new Map(uniqueVals.map((v, i) => [v, i]));
-  return values.map(v => map.get(String(v)) ?? 0);
+function encodeCategoricalFeature(values: unknown[]): { encoded: number[]; categories: string[] } {
+  const categories = [...new Set(values.map(v => String(v)))];
+  const map = new Map(categories.map((v, i) => [v, i]));
+  return {
+    encoded: values.map(v => map.get(String(v)) ?? 0),
+    categories,
+  };
 }
 
 function normalizeFeature(values: number[]): { normalized: number[]; min: number; max: number } {
@@ -237,10 +240,11 @@ export function preprocessData(
   label: string,
   columnInfos: ColumnInfo[],
   classNames?: string[]
-): { X: number[][]; y: number[]; featureNames: string[] } {
+): { X: number[][]; y: number[]; featureNames: string[]; categoricalEncoders: Record<string, string[]> } {
   const numRows = data.length;
   const featureArrays: number[][] = [];
   const actualFeatureNames: string[] = [];
+  const categoricalEncoders: Record<string, string[]> = {};
 
   for (const feat of features) {
     const info = columnInfos.find(c => c.name === feat);
@@ -255,10 +259,11 @@ export function preprocessData(
       featureArrays.push(normalized);
       actualFeatureNames.push(feat);
     } else if (info?.type === 'categorical') {
-      const encoded = encodeCategoricalFeature(rawValues);
+      const { encoded, categories } = encodeCategoricalFeature(rawValues);
       const { normalized } = normalizeFeature(encoded);
       featureArrays.push(normalized);
       actualFeatureNames.push(feat);
+      categoricalEncoders[feat] = categories;
     }
     // Skip text and datetime columns
   }
@@ -280,7 +285,7 @@ export function preprocessData(
     return isNaN(n) ? 0 : n;
   });
 
-  return { X, y, featureNames: actualFeatureNames };
+  return { X, y, featureNames: actualFeatureNames, categoricalEncoders };
 }
 
 // ─── Shuffle & Split ────────────────────────────────────────────────────────
@@ -980,6 +985,7 @@ let _trainedModel: {
   xgbTrees?: GBTreeNode[][];
   nnLayers?: NNLayer[];
   tfliteLayers?: QuantizedNNLayer[];
+  categoricalEncoders?: Record<string, string[]>;
   numClasses: number;
   learningRate: number;
   featureNames: string[];
@@ -1000,7 +1006,7 @@ export async function trainModel(
   const numClasses = classNames?.length || 2;
 
   // Preprocess
-  const { X, y, featureNames } = preprocessData(data, features, label, columns, classNames);
+  const { X, y, featureNames, categoricalEncoders } = preprocessData(data, features, label, columns, classNames);
 
   // Split
   const { XTrain, yTrain, XTest, yTest } = trainTestSplit(X, y, config.validationSplit);
@@ -1034,7 +1040,7 @@ export async function trainModel(
       onProgress?.(metrics);
     }
 
-    _trainedModel = { type: 'xgboost', xgbTrees: trees, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns };
+    _trainedModel = { type: 'xgboost', xgbTrees: trees, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns, categoricalEncoders };
 
   } else if (config.modelType === 'deeplearning') {
     // Neural network
@@ -1046,7 +1052,7 @@ export async function trainModel(
     );
 
     yPred = XTest.map(x => predictNN(layers, x).class);
-    _trainedModel = { type: 'deeplearning', nnLayers: layers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns };
+    _trainedModel = { type: 'deeplearning', nnLayers: layers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns, categoricalEncoders };
 
   } else if (config.modelType === 'webml_tflite') {
     // WebML + TensorFlow Lite-style path: train neural layers, then quantize for lightweight inference
@@ -1068,6 +1074,7 @@ export async function trainModel(
       classNames: classNames || [],
       autoDetect,
       columnInfos: columns,
+      categoricalEncoders,
     };
   } else {
     // Ensemble: RF + XGBoost + NN
@@ -1100,7 +1107,7 @@ export async function trainModel(
       return avgProbs.indexOf(Math.max(...avgProbs));
     });
 
-    _trainedModel = { type: 'ensemble', rfTrees, xgbTrees, nnLayers, tfliteLayers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns };
+    _trainedModel = { type: 'ensemble', rfTrees, xgbTrees, nnLayers, tfliteLayers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns, categoricalEncoders };
   }
 
   // Compute metrics
@@ -1131,7 +1138,7 @@ export function predictWithTrainedModel(
 ): { prediction: string; confidence: number; probabilities: Record<string, number>; topFactors: Array<{ feature: string; value: number; impact: string; importance: number }> } | null {
   if (!_trainedModel) return null;
 
-  const { featureNames, classNames, numClasses, autoDetect, columnInfos } = _trainedModel;
+  const { featureNames, classNames, numClasses, autoDetect, columnInfos, categoricalEncoders } = _trainedModel;
 
   // Build feature vector
   const x: number[] = [];
@@ -1145,6 +1152,14 @@ export function predictWithTrainedModel(
       // Normalize
       const range = (info.max ?? 1) - (info.min ?? 0) || 1;
       x.push((n - (info.min ?? 0)) / range);
+    } else if (info?.type === 'categorical') {
+      const categories = categoricalEncoders?.[feat] || [];
+      const raw = String(val ?? '');
+      const exactIdx = categories.indexOf(raw);
+      const loweredIdx = exactIdx >= 0 ? exactIdx : categories.findIndex(c => c.toLowerCase() === raw.toLowerCase());
+      const idx = loweredIdx >= 0 ? loweredIdx : 0;
+      const range = Math.max(categories.length - 1, 1);
+      x.push(idx / range);
     } else {
       x.push(0); // Default for non-numeric
     }

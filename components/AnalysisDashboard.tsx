@@ -820,14 +820,104 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
 
       // Use locally trained model if available, otherwise call Bio-Sentinel API
       const localModelPrediction = isModelTrained() ? (() => {
-        const weatherInput: Record<string, unknown> = {
-          temp: weather.temp, feels_like: weather.feelsLike, pressure: weather.pressure,
-          humidity: weather.humidity, wind_speed: weather.windSpeed, wind_deg: weather.windDeg,
-          clouds: weather.clouds || 50, visibility: (weather.visibility || 10000) / 1000,
-          uv_index: weather.uvIndex || 0, 'air_quality_PM2.5': weather.advancedData?.pm2_5 || 15,
-          'air_quality_PM10': weather.advancedData?.pm10 || 25, aqi: weather.aqi || 1,
+        const age = Number(lifestyleData?.age || 0);
+        const heightCm = Number(lifestyleData?.height || 0);
+        const weightKg = Number(lifestyleData?.weight || 0);
+        const bmi = heightCm > 0 && weightKg > 0 ? weightKg / Math.pow(heightCm / 100, 2) : 0;
+
+        const fullModelInput: Record<string, unknown> = {
+          // Core weather
+          temp: weather.temp,
+          temperature: weather.temp,
+          feels_like: weather.feelsLike,
+          feelsLike: weather.feelsLike,
+          pressure: weather.pressure,
+          humidity: weather.humidity,
+          dew_point: weather.dewPoint ?? 0,
+          wind_speed: weather.windSpeed,
+          windSpeed: weather.windSpeed,
+          wind_deg: weather.windDeg,
+          windDeg: weather.windDeg,
+          clouds: weather.clouds || 50,
+          visibility: (weather.visibility || 10000) / 1000,
+          uv_index: weather.uvIndex || 0,
+          uvIndex: weather.uvIndex || 0,
+          aqi: weather.aqi || 1,
+          rawAqi: weather.rawAqi || 0,
+
+          // Pollutants + advanced atmospherics
+          pm2_5: weather.advancedData?.pm2_5 ?? 15,
+          pm10: weather.advancedData?.pm10 ?? 25,
+          'air_quality_PM2.5': weather.advancedData?.pm2_5 ?? 15,
+          'air_quality_PM10': weather.advancedData?.pm10 ?? 25,
+          o3: weather.advancedData?.o3 ?? 0,
+          no2: weather.advancedData?.no2 ?? 0,
+          so2: weather.advancedData?.so2 ?? 0,
+          co: weather.advancedData?.co ?? 0,
+          co2: weather.advancedData?.co2 ?? 0,
+          dust: weather.advancedData?.dust ?? 0,
+          ammonia: weather.advancedData?.ammonia ?? 0,
+          methane: weather.advancedData?.methane ?? 0,
+          boundary_layer_height: weather.advancedData?.boundaryLayerHeight ?? 0,
+          cape: weather.advancedData?.cape ?? 0,
+          lifted_index: weather.advancedData?.liftedIndex ?? 0,
+          convective_inhibition: weather.advancedData?.convectiveInhibition ?? 0,
+          freezing_level_height: weather.advancedData?.freezingLevelHeight ?? 0,
+          wind_gusts: weather.advancedData?.windGusts ?? 0,
+          vapour_pressure_deficit: weather.advancedData?.vapourPressureDeficit ?? 0,
+          wet_bulb_temperature: weather.advancedData?.wetBulbTemperature ?? 0,
+          shortwave_radiation: weather.advancedData?.shortwaveRadiation ?? 0,
+          sunshine_duration: weather.advancedData?.sunshineDurationHourly ?? 0,
+          cloud_cover_low: weather.advancedData?.cloudCoverLow ?? 0,
+          cloud_cover_mid: weather.advancedData?.cloudCoverMid ?? 0,
+          cloud_cover_high: weather.advancedData?.cloudCoverHigh ?? 0,
+          soil_temperature: weather.advancedData?.soilTemperature ?? 0,
+          soil_moisture: weather.advancedData?.soilMoisture ?? 0,
+          evapotranspiration: weather.advancedData?.evapotranspiration ?? 0,
+
+          // Pollen/allergen signals
+          alder_pollen: weather.advancedData?.alder_pollen ?? 0,
+          birch_pollen: weather.advancedData?.birch_pollen ?? 0,
+          grass_pollen: weather.advancedData?.grass_pollen ?? 0,
+          mugwort_pollen: weather.advancedData?.mugwort_pollen ?? 0,
+          olive_pollen: weather.advancedData?.olive_pollen ?? 0,
+          ragweed_pollen: weather.advancedData?.ragweed_pollen ?? 0,
+
+          // Location/context/time
+          city: weather.city,
+          condition: weather.description,
+          description: weather.description,
+          lat: weather.lat,
+          lon: weather.lon,
+          latitude: weather.lat,
+          longitude: weather.lon,
+          hour: new Date().getHours(),
+          day_of_week: new Date().getDay(),
+          month: new Date().getMonth() + 1,
+
+          // User/lifestyle context for personalized models
+          age,
+          height_cm: heightCm,
+          weight_kg: weightKg,
+          bmi,
+          smoking: lifestyleData?.smoking ? 'Yes' : 'No',
+          lifestyle: lifestyleData?.lifestyle || '',
+          medication: lifestyleData?.medication || '',
+          food_habits: lifestyleData?.foodHabits || '',
+          allergies: lifestyleData?.allergies || '',
+          medical_history: lifestyleData?.medicalHistory || '',
+          exercise: lifestyleData?.exercise || '',
+          alcohol_consumption: lifestyleData?.alcoholConsumption || '',
+
+          // Local intel text features
+          user_feedback: userFeedback || '',
+          feedback_length: (userFeedback || '').length,
+          has_fog: (userFeedback || '').toLowerCase().includes('fog') ? 1 : 0,
+          has_smoke: (userFeedback || '').toLowerCase().includes('smoke') ? 1 : 0,
+          has_pollen: (userFeedback || '').toLowerCase().includes('pollen') ? 1 : 0,
+          has_water_stagnation: (userFeedback || '').toLowerCase().includes('standing water') ? 1 : 0,
         };
-        return predictWithTrainedModel(weatherInput);
+        return predictWithTrainedModel(fullModelInput);
       })() : null;
 
       // Trigger Custom ML Model Prediction alongside Gemini in parallel
@@ -836,7 +926,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           ? Promise.resolve({
             riskScore: localModelPrediction.confidence,
             primaryTrigger: localModelPrediction.topFactors[0]?.feature || 'Environmental Factors',
-            recommendation: `Real-time ML prediction: ${localModelPrediction.prediction} (${(localModelPrediction.confidence * 100).toFixed(1)}% confidence). Top factors: ${localModelPrediction.topFactors.map(f => f.feature).join(', ')}.`,
+            recommendation: `Real-time ML prediction: ${localModelPrediction.prediction} (${(localModelPrediction.confidence * 100).toFixed(1)}% confidence). ${localModelPrediction.topFactors.length > 0 ? `Top factors: ${localModelPrediction.topFactors.map(f => f.feature).join(', ')}.` : 'Top factors unavailable for current trained feature set.'}`,
             confidence: localModelPrediction.confidence,
             disease: localModelPrediction.prediction,
             riskLevel: (localModelPrediction.confidence > 0.7 ? 'HIGH' : localModelPrediction.confidence > 0.4 ? 'MODERATE' : 'LOW') as 'HIGH' | 'MODERATE' | 'LOW',
@@ -907,7 +997,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           : '';
         const factorsSection = prediction.topFactors && prediction.topFactors.length > 0
           ? prediction.topFactors.slice(0, 5).map(f => `  - **${f.feature}:** ${f.value?.toFixed(2) ?? 'N/A'} (${f.impact} risk, importance: ${(f.importance * 100).toFixed(0)}%)`).join('\n')
-          : '';
+          : '  - Feature-level attributions are unavailable for this model output. Retrain with explicit predictor columns for richer explanations.';
         augmentedAnalysis += `\n\n### 8. Realtime ML Model Insights\n- **Model:** ${modelType}\n- **Prediction:** ${prediction.disease || 'General Assessment'}\n- **Risk Score:** ${(prediction.riskScore * 100).toFixed(0)}%\n- **Confidence:** ${(prediction.confidence * 100).toFixed(0)}%\n- **Primary Trigger:** ${prediction.primaryTrigger}`;
         if (probSection) augmentedAnalysis += `\n- **Class Probabilities:**\n${probSection}`;
         if (factorsSection) augmentedAnalysis += `\n- **Top Contributing Factors:**\n${factorsSection}`;
