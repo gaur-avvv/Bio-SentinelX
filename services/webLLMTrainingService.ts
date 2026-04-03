@@ -43,14 +43,11 @@ export async function performWebLLMTraining(
     features: ['temp', 'humidity', 'aqi', 'uv_index', 'pressure'],
     label: 'risk_label',
     classNames: ['Normal', 'Alert', 'Outbreak'],
-    columns: [
-      { name: 'temp', type: 'numeric' },
-      { name: 'humidity', type: 'numeric' },
-      { name: 'aqi', type: 'numeric' },
-      { name: 'uv_index', type: 'numeric' },
-      { name: 'pressure', type: 'numeric' },
-      { name: 'risk_label', type: 'categorical' }
-    ]
+    suggestedModelType: 'ensemble',
+    taskType: 'classification',
+    numSamples: 100,
+    numFeatures: 5,
+    columns: [] as any[]
   };
 
   try {

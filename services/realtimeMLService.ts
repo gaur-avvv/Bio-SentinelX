@@ -1116,3 +1116,23 @@ export function getTrainedModelInfo(): { type: string; numClasses: number; featu
     classNames: _trainedModel.classNames,
   };
 }
+
+
+export function saveTrainedModel(): string | null {
+  if (!_trainedModel) return null;
+  return JSON.stringify(_trainedModel);
+}
+
+export function loadTrainedModel(modelData: string): boolean {
+  try {
+    const parsed = JSON.parse(modelData);
+    if (!parsed || !parsed.type || !parsed.numClasses || !parsed.featureNames || !parsed.classNames) {
+      return false;
+    }
+    _trainedModel = parsed;
+    return true;
+  } catch (err) {
+    console.error("Failed to load model:", err);
+    return false;
+  }
+}

@@ -1,3 +1,4 @@
+import type { OutbreakAlert } from './outbreakPredictionService';
 /**
  * Bio-SentinelX — Hugging Face MedGemma Integration Service
  *

@@ -1,3 +1,4 @@
+import ReactMarkdown from 'react-markdown';
 /**
  * Indian Syndromic Surveillance Dashboard
  * Unified UI for Bio-SentinelX's Indian healthcare surveillance features:
@@ -1170,11 +1171,10 @@ const KnowledgeGraphPanel: React.FC<{ weather?: WeatherData | null }> = ({ weath
         humidity: weather.humidity,
         aqi: weather.rawAqi || weather.aqi,
         pm25: weather.advancedData?.pm2_5,
-        uvIndex: weather.uvIndex,
-        precipitation: weather.precipitationSum,
-        soilMoisture: weather.advancedData?.soilMoisture,
+        uvIndex: weather.uvIndex || undefined,
+        soilMoisture: weather.advancedData?.soilMoisture || undefined,
         pressure: weather.pressure,
-        evapotranspiration: weather.advancedData?.evapotranspiration
+        evapotranspiration: weather.advancedData?.evapotranspiration || undefined
       });
       setEnvResult(envResult.chains.length > 0 ? envResult : null);
     }

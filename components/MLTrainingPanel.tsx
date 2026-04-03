@@ -8,6 +8,8 @@ import {
   DEFAULT_TRAINING_CONFIG,
   isModelTrained,
   getTrainedModelInfo,
+  saveTrainedModel,
+  loadTrainedModel,
   type TrainingConfig,
   type AutoDetectResult,
   type TrainingResult,
@@ -18,6 +20,8 @@ const MLTrainingPanel: React.FC = () => {
   // Data state
   const [rawData, setRawData] = useState<Record<string, unknown>[]>([]);
   const [autoDetect, setAutoDetect] = useState<AutoDetectResult | null>(null);
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
+  const [selectedLabel, setSelectedLabel] = useState<string>('');
   const [fileName, setFileName] = useState('');
 
   // Config state
@@ -31,6 +35,47 @@ const MLTrainingPanel: React.FC = () => {
   const [error, setError] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadModelInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExportModel = useCallback(() => {
+    const modelData = saveTrainedModel();
+    if (!modelData) return;
+    const blob = new Blob([modelData], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `biosentinel_model_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleLoadModel = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const data = event.target?.result as string;
+      const success = loadTrainedModel(data);
+      if (success) {
+        setError('');
+        // Trigger a re-render or notification if needed.
+        // We'll just reset some states to show it's loaded.
+        setTrainingResult(null);
+        setAutoDetect(null);
+        setRawData([]);
+        setFileName('Loaded from JSON');
+      } else {
+        setError('Failed to load model. Invalid JSON format.');
+      }
+    };
+    reader.readAsText(file);
+    if (loadModelInputRef.current) loadModelInputRef.current.value = '';
+  }, []);
+
 
   // ── File Upload Handler ────────────────────────────────────────────
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -51,33 +96,45 @@ const MLTrainingPanel: React.FC = () => {
 
       setRawData(parsed as Record<string, unknown>[]);
 
+
       // Auto-detect features and label
       const detected = autoDetectFeaturesAndLabel(parsed as Record<string, unknown>[]);
       setAutoDetect(detected);
+      setSelectedFeatures(detected.features);
+      setSelectedLabel(detected.label);
       setConfig(prev => ({ ...prev, modelType: detected.suggestedModelType }));
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to parse CSV file.');
     }
   }, []);
 
+
   // ── Train Model ────────────────────────────────────────────────────
   const handleTrain = useCallback(async () => {
-    if (!autoDetect || rawData.length === 0) return;
+    if (!autoDetect || rawData.length === 0 || !selectedLabel || selectedFeatures.length === 0) return;
 
     setIsTraining(true);
     setError('');
     setTrainingProgress([]);
     setTrainingResult(null);
 
+    const customDetect = {
+      ...autoDetect,
+      features: selectedFeatures,
+      label: selectedLabel
+    };
+
     try {
       const result = await trainModel(
         rawData,
         config,
-        autoDetect,
+        customDetect,
         (metrics) => {
           setTrainingProgress(prev => [...prev, metrics]);
         }
       );
+
       setTrainingResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Training failed.');
@@ -113,14 +170,29 @@ const MLTrainingPanel: React.FC = () => {
             <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Train models directly from your CSV data</p>
           </div>
         </div>
+
         {isModelTrained() && modelInfo && (
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 rounded-xl">
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-            <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest">
-              {modelInfo.type} Model Active
-            </span>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 rounded-xl">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase tracking-widest">
+                {modelInfo.type} Model Active
+              </span>
+            </div>
+            <button onClick={handleExportModel} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-xl hover:bg-blue-100 transition-colors">
+              <FileDown className="w-3.5 h-3.5 text-blue-600" />
+              <span className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-widest">Export</span>
+            </button>
           </div>
         )}
+        <div className="flex items-center gap-2">
+           <button onClick={() => loadModelInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+              <Upload className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+              <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Load Model</span>
+           </button>
+           <input type="file" ref={loadModelInputRef} accept=".json" className="hidden" onChange={handleLoadModel} />
+        </div>
+
       </div>
 
       {/* Error Display */}
