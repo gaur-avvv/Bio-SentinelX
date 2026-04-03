@@ -16,7 +16,11 @@ import {
   type TrainingMetrics,
 } from '../services/realtimeMLService';
 
-const MLTrainingPanel: React.FC = () => {
+interface MLTrainingPanelProps {
+  onModelReady?: () => void;
+}
+
+const MLTrainingPanel: React.FC<MLTrainingPanelProps> = ({ onModelReady }) => {
   // Data state
   const [rawData, setRawData] = useState<Record<string, unknown>[]>([]);
   const [autoDetect, setAutoDetect] = useState<AutoDetectResult | null>(null);
@@ -68,13 +72,14 @@ const MLTrainingPanel: React.FC = () => {
         setAutoDetect(null);
         setRawData([]);
         setFileName('Loaded from JSON');
+        onModelReady?.();
       } else {
         setError('Failed to load model. Invalid JSON format.');
       }
     };
     reader.readAsText(file);
     if (loadModelInputRef.current) loadModelInputRef.current.value = '';
-  }, []);
+  }, [onModelReady]);
 
 
   // ── File Upload Handler ────────────────────────────────────────────
@@ -136,12 +141,13 @@ const MLTrainingPanel: React.FC = () => {
       );
 
       setTrainingResult(result);
+      onModelReady?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Training failed.');
     } finally {
       setIsTraining(false);
     }
-  }, [rawData, config, autoDetect]);
+  }, [rawData, config, autoDetect, onModelReady]);
 
   // ── Reset ──────────────────────────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -322,8 +328,8 @@ const MLTrainingPanel: React.FC = () => {
                 key={m.type}
                 onClick={() => setConfig(prev => ({ ...prev, modelType: m.type }))}
                 className={`p-4 rounded-xl border-2 transition-all text-left ${config.modelType === m.type
-                    ? `border-${m.color}-500 bg-${m.color}-50 dark:bg-${m.color}-900/20`
-                    : 'border-slate-200 dark:border-slate-600 hover:border-slate-300'
+                  ? `border-${m.color}-500 bg-${m.color}-50 dark:bg-${m.color}-900/20`
+                  : 'border-slate-200 dark:border-slate-600 hover:border-slate-300'
                   }`}
               >
                 <m.icon className={`w-5 h-5 mb-2 ${config.modelType === m.type ? `text-${m.color}-600` : 'text-slate-400'}`} />

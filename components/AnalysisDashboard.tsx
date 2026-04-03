@@ -8,6 +8,7 @@ import { generateHealthRiskAssessment, chatWithWeatherAssistant } from '../servi
 import { predictBioRisks, MLPrediction, formatExplanations, submitFeedback, quickHealthCheck } from '../services/mlService';
 import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, reconstructReportContent } from '../services/memoryService';
 import { ReportRenderer } from './ReportRenderer';
+import MLTrainingPanel from './MLTrainingPanel';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo } from '../services/realtimeMLService';
 import { performWebLLMTraining, predictOutbreak, OutbreakPrediction } from '../services/webLLMTrainingService';
@@ -217,8 +218,8 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
                   key={opt}
                   onClick={() => toggleOption(field, opt)}
                   className={`px-3 sm:px-4 py-2 sm:py-2 rounded-xl text-[10px] sm:text-xs font-black transition-all border ${isActive
-                      ? 'bg-teal-600 border-teal-500 text-white shadow-lg shadow-teal-200'
-                      : 'bg-white dark:bg-slate-600 border-slate-200 dark:border-slate-500 text-slate-500 dark:text-slate-200 hover:border-teal-400'
+                    ? 'bg-teal-600 border-teal-500 text-white shadow-lg shadow-teal-200'
+                    : 'bg-white dark:bg-slate-600 border-slate-200 dark:border-slate-500 text-slate-500 dark:text-slate-200 hover:border-teal-400'
                     }`}
                 >
                   {opt}
@@ -690,7 +691,9 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, boolean>>({});
   const [feedbackComments, setFeedbackComments] = useState<Record<number, string>>({});
   const [showCommentInput, setShowCommentInput] = useState<number | null>(null);
-  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'intel' | 'assistant'>('profile');
+  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'intel' | 'ml-train' | 'assistant'>(() =>
+    isModelTrained() ? 'profile' : 'ml-train'
+  );
   const [addedObs, setAddedObs] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -1115,6 +1118,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 {[
                   { id: 'profile', label: 'Health Profile', icon: Activity },
                   { id: 'intel', label: 'Local Intel', icon: MessageSquarePlus },
+                  { id: 'ml-train', label: 'ML Train', icon: BarChart3 },
                   { id: 'assistant', label: 'Bio-Assistant', icon: Bot }
                 ].map((tab) => (
                   <button
@@ -1126,8 +1130,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                     tabIndex={activeInputTab === tab.id ? 0 : -1}
                     onClick={() => setActiveInputTab(tab.id as any)}
                     className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-teal-500 ${activeInputTab === tab.id
-                        ? 'bg-white dark:bg-slate-600 text-teal-600 dark:text-teal-300 shadow-sm'
-                        : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'
+                      ? 'bg-white dark:bg-slate-600 text-teal-600 dark:text-teal-300 shadow-sm'
+                      : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'
                       }`}
                   >
                     <tab.icon className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -1245,8 +1249,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                       chatMessages.map((msg, idx) => (
                         <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                           <div className={`max-w-[85%] p-4 rounded-2xl text-xs font-bold ${msg.role === 'user'
-                              ? 'bg-teal-600 text-white rounded-br-none'
-                              : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700'
+                            ? 'bg-teal-600 text-white rounded-br-none'
+                            : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700'
                             }`}>
                             {msg.text}
                           </div>
@@ -1262,6 +1266,15 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                       <ExternalLink className="w-3 h-3" /> View Full Report
                     </button>
                   </div>
+                </div>
+              )}
+
+              {activeInputTab === 'ml-train' && (
+                <div className="space-y-6 animate-fade-in" id="panel-ml-train" role="tabpanel" aria-labelledby="tab-ml-train">
+                  <label className="text-[11px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4" /> ML Training (CSV Upload + Auto Feature/Label)
+                  </label>
+                  <MLTrainingPanel onModelReady={() => setActiveInputTab('profile')} />
                 </div>
               )}
             </div>
@@ -1327,8 +1340,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                           <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg">{new Date(viewingReport.timestamp).toLocaleString()}</span>
                           {viewingReport.riskScore !== undefined && (
                             <span className={`px-2.5 py-1 rounded-lg border ${viewingReport.riskScore >= 70 ? 'bg-red-50 text-red-700 border-red-200' :
-                                viewingReport.riskScore >= 40 ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                                  'bg-green-50 text-green-700 border-green-200'
+                              viewingReport.riskScore >= 40 ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                'bg-green-50 text-green-700 border-green-200'
                               }`}>Risk: {viewingReport.riskScore.toFixed(0)}%</span>
                           )}
                           {viewingReport.primaryRisk && (
@@ -1381,8 +1394,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                                   <span className="font-black text-sm text-slate-900 dark:text-slate-100 truncate">{report.title}</span>
                                   {report.riskScore !== undefined && (
                                     <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${report.riskScore >= 70 ? 'bg-red-100 text-red-600' :
-                                        report.riskScore >= 40 ? 'bg-amber-100 text-amber-600' :
-                                          'bg-green-100 text-green-600'
+                                      report.riskScore >= 40 ? 'bg-amber-100 text-amber-600' :
+                                        'bg-green-100 text-green-600'
                                       }`}>{report.riskScore.toFixed(0)}% risk</span>
                                   )}
                                   {report.sectionCount !== undefined && (
@@ -2271,8 +2284,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                   onClick={() => handleDashboardFeedback(true)}
                   disabled={dashboardFeedbackSubmitted}
                   className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${dashboardFeedback === 'helpful'
-                      ? 'bg-teal-600 text-white shadow-lg shadow-teal-200 scale-105'
-                      : 'bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:border-teal-400 hover:text-teal-600'
+                    ? 'bg-teal-600 text-white shadow-lg shadow-teal-200 scale-105'
+                    : 'bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:border-teal-400 hover:text-teal-600'
                     }`}
                 >
                   <ThumbsUp className="w-4 h-4" /> Helpful
@@ -2281,8 +2294,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                   onClick={() => handleDashboardFeedback(false)}
                   disabled={dashboardFeedbackSubmitted}
                   className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${dashboardFeedback === 'not-helpful'
-                      ? 'bg-rose-500 text-white shadow-lg shadow-rose-200 scale-105'
-                      : 'bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:border-rose-400 hover:text-rose-600'
+                    ? 'bg-rose-500 text-white shadow-lg shadow-rose-200 scale-105'
+                    : 'bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-300 hover:border-rose-400 hover:text-rose-600'
                     }`}
                 >
                   <ThumbsDown className="w-4 h-4" /> Not Helpful
