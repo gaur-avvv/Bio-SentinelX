@@ -803,6 +803,11 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     
     try {
       const summary = "";
+      
+      // 0. Perform Real-time WebLLM Training (Edge Fine-tuning)
+      await performWebLLMTraining(weather);
+      const outbreaks = predictOutbreak(weather);
+      setOutbreakPredictions(outbreaks);
 
       // 0. Perform Real-time WebLLM Training (Edge Fine-tuning)
       await performWebLLMTraining(weather);
@@ -845,7 +850,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           : predictBioRisks(weather, [], lifestyleData),
         generateHealthRiskAssessment(
           weather, 
-          augmentedSummary || summary,
+          augmentedSummary || summary, 
           userFeedback, 
           weatherFeedback,
           lifestyleData,
@@ -1152,7 +1157,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                     </div>
                     <h4 className="text-xl font-black text-white uppercase tracking-tighter mb-1">{op.syndrome}</h4>
                     <p className="text-[10px] font-bold text-teal-400 uppercase tracking-widest mb-4">Expected: {op.expectedDate}</p>
-
+                    
                     <div className="space-y-4">
                       <div>
                         <div className="flex justify-between text-[9px] font-black text-slate-400 uppercase mb-1">
@@ -1160,7 +1165,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                           <span>{Math.round(op.probability * 100)}%</span>
                         </div>
                         <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div
+                          <div 
                             className={`h-full rounded-full ${op.riskLevel === 'CRITICAL' ? 'bg-rose-500' : 'bg-teal-500'}`}
                             style={{ width: `${op.probability * 100}%` }}
                           />
