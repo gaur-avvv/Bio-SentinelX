@@ -8,12 +8,11 @@ import { generateHealthRiskAssessment, chatWithWeatherAssistant } from '../servi
 import { predictBioRisks, MLPrediction, formatExplanations, submitFeedback, quickHealthCheck } from '../services/mlService';
 import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, reconstructReportContent } from '../services/memoryService';
 import { ReportRenderer } from './ReportRenderer';
-import MLTrainingPanel from './MLTrainingPanel';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
+
+import { checkCloudEarlyWarning, type CloudEarlyWarning } from '../services/outbreakPredictionService';
+
 import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo, getTrainedModelPerformanceMetrics, trainModel, DEFAULT_TRAINING_CONFIG, autoDetectFeaturesAndLabel } from '../services/realtimeMLService';
-import { parseCSVString } from '../utils/csvHelper';
-import defaultCsvData from '../Weather-related disease prediction.csv?raw';
-import { performWebLLMTraining, predictOutbreak, OutbreakPrediction } from '../services/webLLMTrainingService';
 
 interface AnalysisDashboardProps {
   weather: WeatherData | null;
@@ -657,27 +656,6 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   aiKey,
   onOpenAssistant,
 }) => {
-  // Auto-train default model on mount
-  useEffect(() => {
-    if (!isModelTrained() && defaultCsvData) {
-      const initDefaultModel = async () => {
-        try {
-          const rawData = parseCSVString(defaultCsvData);
-          if (rawData.length === 0) return;
-          const detected = autoDetectFeaturesAndLabel(rawData, 'prognosis');
-          if (!detected || !detected.label) return;
-          console.log('[Bio-SentinelX] Pre-training local disease prediction model...', { samples: rawData.length });
-          const config = { ...DEFAULT_TRAINING_CONFIG, modelType: 'ensemble' as const, epochs: 20, nEstimators: 50 };
-          await trainModel(rawData, config, { ...detected, label: 'prognosis' });
-          console.log('[Bio-SentinelX] Default model training complete.');
-        } catch (err) {
-          console.error('[Bio-SentinelX] Failed to train default model:', err);
-        }
-      };
-      initDefaultModel();
-    }
-  }, []);
-
   const [userFeedback, setUserFeedback] = useState<string>(() => {
     try { return localStorage.getItem('biosentinel_user_feedback') || ''; } catch { return ''; }
   });
@@ -688,8 +666,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [mlPrediction, setMlPrediction] = useState<MLPrediction | null>(() => cacheValid ? analysisCache.mlPrediction : null);
   const [mlWarnings, setMlWarnings] = useState<string[]>([]);
   const [groundingChunks, setGroundingChunks] = useState<GroundingChunk[]>([]);
-  const [outbreakPredictions, setOutbreakPredictions] = useState<OutbreakPrediction[]>([]);
   const [error, setError] = useState<string>("");
+
+  const [cloudWarnings, setCloudWarnings] = useState<CloudEarlyWarning[]>([]);
+
 
   // Dashboard Feedback State
   const [dashboardComment, setDashboardComment] = useState("");
@@ -825,13 +805,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [feedbackStatus, setFeedbackStatus] = useState<Record<number, boolean>>({});
   const [feedbackComments, setFeedbackComments] = useState<Record<number, string>>({});
   const [showCommentInput, setShowCommentInput] = useState<number | null>(null);
-  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'intel' | 'ml-train' | 'assistant'>(() =>
-    isModelTrained() ? 'profile' : 'ml-train'
-  );
+  const [activeInputTab, setActiveInputTab] = useState<'profile' | 'intel' | 'assistant'>('profile');
   const [addedObs, setAddedObs] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const autoRetrainLastRunRef = useRef<number>(0);
 
   // Stable ref so sendMessage callback never changes reference during typing
   const chatCtxRef = useRef({ weather, isChatLoading, aiKey, mlPrediction, aiProvider, aiModel, chatMessages } as any);
@@ -866,50 +843,6 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     { label: 'Smoke/Haze', icon: CloudFog, value: 'Smoke or haze from unknown source.' },
     { label: 'Heat Island', icon: ThermometerSun, value: 'Urban heat island effect felt strongly.' }
   ];
-
-  useEffect(() => {
-    if (!weather) return;
-
-    let cancelled = false;
-    const runAutoRetrainTick = async () => {
-      let enabled = false;
-      let intervalMin = 15;
-      try {
-        enabled = localStorage.getItem('biosentinel_auto_retrain_enabled') === 'true';
-        const stored = Number(localStorage.getItem('biosentinel_auto_retrain_interval_min') || 15);
-        intervalMin = Number.isFinite(stored) && stored > 0 ? stored : 15;
-      } catch {
-        return;
-      }
-
-      if (!enabled) return;
-
-      const now = Date.now();
-      const minGapMs = intervalMin * 60 * 1000;
-      if (now - autoRetrainLastRunRef.current < minGapMs) return;
-      autoRetrainLastRunRef.current = now;
-
-      try {
-        await performWebLLMTraining(weather);
-        if (cancelled) return;
-        try {
-          localStorage.setItem('biosentinel_auto_retrain_last_run_ts', String(Date.now()));
-        } catch {
-          // ignore storage errors
-        }
-        setOutbreakPredictions(predictOutbreak(weather));
-      } catch (e) {
-        console.warn('Auto-retrain tick failed:', e);
-      }
-    };
-
-    runAutoRetrainTick();
-    const timer = setInterval(runAutoRetrainTick, 60 * 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [weather]);
 
   const handleAddCustomObs = () => {
     if (!customObs.trim()) return;
@@ -982,13 +915,16 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     setGroundingChunks([]);
     setMlWarnings([]);
 
+      // 1. Fetch Cloud-Enhanced Outbreak Early Warnings
+      if (weather.city) {
+        checkCloudEarlyWarning(weather.city, 15).then(warnings => {
+          setCloudWarnings(warnings);
+        }).catch(err => console.error("Cloud warning fetch error:", err));
+      }
+
+
     try {
       const summary = "";
-
-      // 0. Perform Real-time WebLLM Training (Edge Fine-tuning)
-      await performWebLLMTraining(weather);
-      let updatedOutbreaks = predictOutbreak(weather);
-      setOutbreakPredictions(updatedOutbreaks);
 
       // Quick warnings check (fast, no model call)
       const check = await quickHealthCheck(weather, [], lifestyleData).catch(e => {
@@ -1470,7 +1406,6 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 {[
                   { id: 'profile', label: 'Health Profile', icon: Activity },
                   { id: 'intel', label: 'Local Intel', icon: MessageSquarePlus },
-                  { id: 'ml-train', label: 'ML Train', icon: BarChart3 },
                   { id: 'assistant', label: 'Bio-Assistant', icon: Bot }
                 ].map((tab) => (
                   <button
@@ -1494,41 +1429,44 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
             </div>
 
             <div className="min-h-[300px] sm:min-h-[400px]">
-              <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
-                {outbreakPredictions.map((op, idx) => (
-                  <div key={idx} className="bg-slate-900 border border-teal-500/30 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                      <Bug className="w-12 h-12 text-teal-400" />
-                    </div>
-                    <div className="flex items-center gap-2 mb-4">
-                      <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${op.riskLevel === 'CRITICAL' ? 'bg-rose-500 text-white' : 'bg-teal-500 text-slate-900'
-                        }`}>WebLLM Prediction</span>
-                    </div>
-                    <h4 className="text-xl font-black text-white uppercase tracking-tighter mb-1">{op.syndrome}</h4>
-                    <p className="text-[10px] font-bold text-teal-400 uppercase tracking-widest mb-4">Expected: {op.expectedDate}</p>
 
-                    <div className="space-y-4">
-                      <div>
-                        <div className="flex justify-between text-[9px] font-black text-slate-400 uppercase mb-1">
-                          <span>Risk Probability</span>
-                          <span>{Math.round(op.probability * 100)}%</span>
-                        </div>
-                        <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${op.riskLevel === 'CRITICAL' ? 'bg-rose-500' : 'bg-teal-500'}`}
-                            style={{ width: `${op.probability * 100}%` }}
-                          />
-                        </div>
+
+
+              {/* Cloud-Enhanced Early Outbreak Warnings */}
+              {cloudWarnings.length > 0 && (
+                <div className="mb-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in">
+                  {cloudWarnings.map((cw, idx) => (
+                    <div key={idx} className="bg-rose-900 border border-rose-500/30 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                        <Bug className="w-12 h-12 text-rose-400" />
                       </div>
-                      <div className="flex flex-wrap gap-1">
-                        {op.factors.map(f => (
-                          <span key={f} className="px-2 py-0.5 bg-slate-800 text-[8px] font-bold text-slate-300 rounded-md border border-slate-700">{f}</span>
-                        ))}
+                      <div className="flex items-center gap-2 mb-4">
+                        <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-rose-500 text-white">
+                          Cloud Outbreak Warning
+                        </span>
+                      </div>
+                      <h4 className="text-xl font-black text-white uppercase tracking-tighter mb-1">{cw.syndromeName}</h4>
+                      <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mb-4">Location: {cw.city}</p>
+
+                      <div className="space-y-4">
+                        <div>
+                          <div className="flex justify-between text-[9px] font-black text-rose-200 uppercase mb-1">
+                            <span>Reported Cases</span>
+                            <span>{cw.caseCount} / 15 threshold</span>
+                          </div>
+                          <div className="h-1.5 bg-rose-950 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-rose-500"
+                              style={{ width: `${Math.min((cw.caseCount / 15) * 100, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-rose-300 font-bold leading-tight">{cw.message}</p>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
 
               {activeInputTab === 'profile' && (
                 <div className="space-y-6 animate-fade-in" id="panel-profile" role="tabpanel" aria-labelledby="tab-profile">
@@ -1621,14 +1559,6 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 </div>
               )}
 
-              {activeInputTab === 'ml-train' && (
-                <div className="space-y-6 animate-fade-in" id="panel-ml-train" role="tabpanel" aria-labelledby="tab-ml-train">
-                  <label className="text-[11px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2">
-                    <BarChart3 className="w-4 h-4" /> ML Training (CSV Upload + Auto Feature/Label)
-                  </label>
-                  <MLTrainingPanel onModelReady={() => setActiveInputTab('profile')} />
-                </div>
-              )}
             </div>
 
             {weather && (
