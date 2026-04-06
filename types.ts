@@ -384,3 +384,19 @@ export const DEFAULT_EMAIL_ALERT_SETTINGS: EmailAlertSettings = {
   sentAlertKeys: [],
 };
 
+
+
+// ─── Database Integration Settings ──────────────────────────────────────────
+export interface DatabaseSettings {
+  preferredDb: 'none' | 'supabase' | 'firebase';
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  firebaseConfigJson: string;
+}
+
+export const DEFAULT_DATABASE_SETTINGS: DatabaseSettings = {
+  preferredDb: 'none',
+  supabaseUrl: '',
+  supabaseAnonKey: '',
+  firebaseConfigJson: ''
+};

@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { useDataCache, isCacheValid } from '../contexts/DataCacheContext';
-import { Activity, AlertCircle, AlertOctagon, AlertTriangle, ArrowRight, BrainCircuit, CheckCircle, ChevronDown, ChevronRight, ChevronUp, Cpu, Database, FileDown, HeartPulse, Info, Loader2, MessageSquarePlus, RefreshCw, Send, ShieldAlert, ShieldCheck, Sparkles, Thermometer, ThermometerSun, ThumbsDown, ThumbsUp, TrendingUp, XCircle, Zap, Printer, List, Search, Waves, Bug, Wind, CloudFog, CloudSun, Bot, User, Hospital, MapPinned, Phone, Navigation, Droplets, ListChecks, RefreshCcw, ShieldX, Download, Camera, RotateCcw, Trash2, BarChart3, Calendar, Copy, Check, Clock, HelpCircle, BarChart2, ExternalLink, Glasses, PersonStanding, Umbrella, Dumbbell, Flame, FlaskConical, Brain, Heart, Leaf, Moon, Apple, Pill, Coffee, Sun } from 'lucide-react';
+import { Activity, AlertCircle, CloudRain, AlertOctagon, AlertTriangle, ArrowRight, BrainCircuit, CheckCircle, ChevronDown, ChevronRight, ChevronUp, Cpu, Database, FileDown, HeartPulse, Info, Loader2, MessageSquarePlus, RefreshCw, Send, ShieldAlert, ShieldCheck, Sparkles, Thermometer, ThermometerSun, ThumbsDown, ThumbsUp, TrendingUp, XCircle, Zap, Printer, List, Search, Waves, Bug, Wind, CloudFog, CloudSun, Bot, User, Hospital, MapPinned, Phone, Navigation, Droplets, ListChecks, RefreshCcw, ShieldX, Download, Camera, RotateCcw, Trash2, BarChart3, Calendar, Copy, Check, Clock, HelpCircle, BarChart2, ExternalLink, Glasses, PersonStanding, Umbrella, Dumbbell, Flame, FlaskConical, Brain, Heart, Leaf, Moon, Apple, Pill, Coffee, Sun } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, AreaChart, Area, BarChart, Bar, Cell, ReferenceLine } from 'recharts';
-import { WeatherData, LoadingState, GroundingChunk, RiskItem, SeverityLevel, ChatMessage, LifestyleData } from '../types';
+import { WeatherData, LoadingState, GroundingChunk, RiskItem, SeverityLevel, ChatMessage, LifestyleData, DatabaseSettings } from '../types';
 import { generateHealthRiskAssessment, chatWithWeatherAssistant } from '../services/geminiService';
 import { predictBioRisks, MLPrediction, formatExplanations, submitFeedback, quickHealthCheck } from '../services/mlService';
 import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, reconstructReportContent } from '../services/memoryService';
+import { saveSymptomData, UserSymptomData } from '../services/dbService';
 import { ReportRenderer } from './ReportRenderer';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 
@@ -22,6 +23,7 @@ interface AnalysisDashboardProps {
   aiModel?: string;
   aiKey?: string;
   onOpenAssistant?: () => void;
+  databaseSettings?: DatabaseSettings;
 }
 
 interface UserProfileProps {
@@ -648,6 +650,7 @@ const ChatInputForm = memo(({ onSubmit, disabled }: { onSubmit: (msg: string) =>
 });
 
 export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
+  databaseSettings,
   weather,
   loadingState,
   setLoadingState,
@@ -831,17 +834,69 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   };
   const [customObs, setCustomObs] = useState("");
 
+  // Quick Surveillance States
+  const [showSurveillanceForm, setShowSurveillanceForm] = useState(false);
+  const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
+  const [symptomSeverity, setSymptomSeverity] = useState<number>(3);
+  const [symptomDetails, setSymptomDetails] = useState('');
+  const [isSubmittingSymptom, setIsSubmittingSymptom] = useState(false);
+  const [symptomSuccess, setSymptomSuccess] = useState(false);
+
+  const initialQuickSymptoms = ['Feeling unwell', 'Headache', 'Cough', 'Fever', 'Nausea'];
+  const advancedSymptoms = ['Chills', 'Fatigue', 'Body Ache', 'Shortness of breath', 'Diarrhea', 'Rash', 'Sore Throat', 'Vomiting'];
+
+  const handleSymptomToggle = (symptom: string) => {
+    setSelectedSymptoms(prev =>
+      prev.includes(symptom) ? prev.filter(s => s !== symptom) : [...prev, symptom]
+    );
+    if (!showSurveillanceForm) {
+      setShowSurveillanceForm(true);
+    }
+  };
+
+  const submitSymptoms = async () => {
+    if (!weather?.city || selectedSymptoms.length === 0) return;
+
+    setIsSubmittingSymptom(true);
+
+    const data: UserSymptomData = {
+      city: weather.city,
+      symptoms: selectedSymptoms,
+      severity: symptomSeverity,
+      location: { lat: weather.lat, lon: weather.lon },
+      timestamp: new Date().toISOString(),
+      additionalDetails: symptomDetails
+    };
+
+    try {
+      if (databaseSettings) {
+         await saveSymptomData(databaseSettings, data);
+      }
+      setSymptomSuccess(true);
+      setTimeout(() => {
+        setSymptomSuccess(false);
+        setShowSurveillanceForm(false);
+        setSelectedSymptoms([]);
+        setSymptomDetails('');
+      }, 3000);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSubmittingSymptom(false);
+    }
+  };
+
+
   const quickObservations = [
-    { label: 'Heavy Fog', icon: CloudFog, value: 'Localized heavy fog reported.' },
-    { label: 'Standing Water', icon: Waves, value: 'Noticed standing water nearby (mosquito breeding risk).' },
-    { label: 'Pest Activity', icon: Bug, value: 'High pest/insect activity observed.' },
-    { label: 'Strong Gusts', icon: Wind, value: 'Frequent strong wind gusts.' },
-    { label: 'Sudden Chill', icon: Thermometer, value: 'Unexpected sharp drop in temperature.' },
-    { label: 'Poor Visibility', icon: Search, value: 'Air feels thick or hazy with low visibility.' },
-    { label: 'Pollen Surge', icon: CloudSun, value: 'Visible pollen dust in air.' },
-    { label: 'Moldy Odor', icon: Droplets, value: 'Damp, moldy smell detected outdoors.' },
-    { label: 'Smoke/Haze', icon: CloudFog, value: 'Smoke or haze from unknown source.' },
-    { label: 'Heat Island', icon: ThermometerSun, value: 'Urban heat island effect felt strongly.' }
+    { label: 'Mosquitoes ↑', value: 'High mosquito activity noticed in the area', icon: Bug },
+    { label: 'Stagnant Water', value: 'Stagnant water pools visible after recent rains', icon: Droplets },
+    { label: 'Air Quality ↓', value: 'Air feels heavy, visible smog/dust', icon: Wind },
+    { label: 'Fever Cases ↑', value: 'Multiple neighbors reporting fever', icon: ThermometerSun },
+    { label: 'It\'s raining here today', value: 'It\'s raining here today', icon: CloudRain },
+    { label: 'High humidity', value: 'High humidity', icon: CloudFog },
+    { label: 'Heat wave', value: 'Heat wave', icon: Flame },
+    { label: 'Unusually Cold', value: 'Unusually Cold', icon: Thermometer },
+    { label: 'Water Contamination', value: 'Water looks/smells contaminated', icon: Waves },
   ];
 
   const handleAddCustomObs = () => {
@@ -1481,10 +1536,89 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
               )}
 
 
-              {activeInputTab === 'intel' && (
+                            {activeInputTab === 'intel' && (
                 <div className="space-y-6 animate-fade-in" id="panel-intel" role="tabpanel" aria-labelledby="tab-intel">
-                  <label className="text-[11px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2"><MessageSquarePlus className="w-4 h-4" /> Local Intelligence</label>
-                  <div className="flex flex-col h-full space-y-4">
+                  <label className="text-[11px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2"><MessageSquarePlus className="w-4 h-4" /> Local Intelligence & Surveillance</label>
+
+                  {/* QUICK SYMPTOM CHECKER */}
+                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">How are you feeling?</p>
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      {initialQuickSymptoms.map(symptom => (
+                        <button
+                          key={symptom}
+                          onClick={() => handleSymptomToggle(symptom)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+                            selectedSymptoms.includes(symptom)
+                              ? 'bg-rose-500 text-white border-rose-600'
+                              : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-rose-300'
+                          }`}
+                        >
+                          {symptom}
+                        </button>
+                      ))}
+                    </div>
+
+                    {showSurveillanceForm && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 animate-fade-in space-y-4">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Additional Symptoms</p>
+                        <div className="flex flex-wrap gap-2">
+                          {advancedSymptoms.map(symptom => (
+                            <button
+                              key={symptom}
+                              onClick={() => handleSymptomToggle(symptom)}
+                              className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all border ${
+                                selectedSymptoms.includes(symptom)
+                                  ? 'bg-rose-500 text-white border-rose-600'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-rose-300'
+                              }`}
+                            >
+                              {symptom}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Severity (1-5)</p>
+                          <input
+                            type="range" min="1" max="5"
+                            value={symptomSeverity}
+                            onChange={(e) => setSymptomSeverity(Number(e.target.value))}
+                            className="w-full accent-rose-500"
+                          />
+                          <div className="flex justify-between text-[9px] font-bold text-slate-400 mt-1">
+                            <span>Mild</span>
+                            <span>Severe</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Details (Optional)</p>
+                          <textarea
+                            value={symptomDetails}
+                            onChange={(e) => setSymptomDetails(e.target.value)}
+                            placeholder="Any other details about how you are feeling or where you have been..."
+                            className="w-full p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium focus:border-rose-500 outline-none resize-none"
+                            rows={3}
+                          />
+                        </div>
+
+                        <button
+                          onClick={submitSymptoms}
+                          disabled={isSubmittingSymptom || selectedSymptoms.length === 0}
+                          className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isSubmittingSymptom ? <Loader2 className="w-4 h-4 animate-spin" /> : symptomSuccess ? <Check className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
+                          {symptomSuccess ? 'Report Submitted' : 'Submit Health Report'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* REGULAR LOCAL OBSERVATIONS */}
+                  <div className="flex flex-col h-full space-y-4 pt-2 border-t border-slate-200 dark:border-slate-700">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Environmental Observations</p>
+
                     <div className="flex flex-wrap gap-2">
                       {quickObservations.map((obs) => (
                         <button
