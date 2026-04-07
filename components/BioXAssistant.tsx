@@ -313,8 +313,8 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
             type="button"
             onClick={() => setShowSessionHistory(v => !v)}
             className={`p-2 sm:p-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-teal-500 ${showSessionHistory
-                ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
+              ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
+              : 'hover:bg-white/10 text-slate-300 hover:text-white'
               }`}
             title="View past sessions"
             aria-label="Session history"
@@ -488,8 +488,8 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
                     </div>
                   )}
                   <div className={`group relative max-w-[92%] sm:max-w-[80%] p-3 sm:p-5 rounded-2xl text-xs sm:text-sm ${msg.role === 'user'
-                      ? 'bg-teal-600 text-white shadow-lg shadow-teal-900/20 rounded-br-none'
-                      : 'bg-slate-800 text-slate-100 border border-slate-700 shadow-xl rounded-bl-none'
+                    ? 'bg-teal-600 text-white shadow-lg shadow-teal-900/20 rounded-br-none'
+                    : 'bg-slate-800 text-slate-100 border border-slate-700 shadow-xl rounded-bl-none'
                     }`}>
                     <div className={`prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${msg.role === 'user' ? 'prose-invert text-white' : 'prose-invert text-slate-100'}
                     prose-p:leading-relaxed prose-p:my-1 prose-li:my-0.5 prose-strong:text-teal-300 prose-strong:font-black prose-headings:text-white prose-a:text-teal-400`}>

@@ -64,7 +64,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
   const handleDateRange = (range: 'week' | 'month' | '3months' | 'year') => {
     const end = new Date();
     const start = new Date();
-    
+
     // Archive API usually has a delay of a few days. Let's set end date to yesterday to be safe, 
     // or keep it as today but handle missing data. Open-Meteo ERA5T is usually 5 days behind, 
     // but they have seamless integration with forecast for recent days in some endpoints.
@@ -86,13 +86,13 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
         start.setFullYear(end.getFullYear() - 1);
         break;
     }
-    
+
     setEndDate(end.toISOString().split('T')[0]);
     setStartDate(start.toISOString().split('T')[0]);
   };
 
   const toggleVariable = (id: string) => {
-    setSelectedVariables(prev => 
+    setSelectedVariables(prev =>
       prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]
     );
   };
@@ -110,7 +110,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
     try {
       // Base weather variables
       let dailyParams = ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'wind_speed_10m_max', 'weather_code'];
-      
+
       // Add selected variables if they are standard weather params
       if (selectedVariables.includes('humidity')) dailyParams.push('relative_humidity_2m_mean');
       if (selectedVariables.includes('heatstress')) {
@@ -122,7 +122,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
 
       // Construct URLs
       const weatherUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${weather.lat}&longitude=${weather.lon}&start_date=${startDate}&end_date=${endDate}&daily=${dailyParams.join(',')}&timezone=auto`;
-      
+
       // Fetch Weather Data
       const weatherRes = await fetch(weatherUrl);
       if (!weatherRes.ok) {
@@ -243,11 +243,11 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
         } : undefined,
         forecast: weather?.dailyForecast
           ? weather.dailyForecast.slice(0, 7).map(d => ({
-              date: d.date,
-              maxTemp: d.maxTemp,
-              minTemp: d.minTemp,
-              desc: d.description,
-            }))
+            date: d.date,
+            maxTemp: d.maxTemp,
+            minTemp: d.minTemp,
+            desc: d.description,
+          }))
           : undefined,
       };
 
@@ -289,7 +289,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="flex items-center gap-4">
-        <button 
+        <button
           onClick={onBack}
           className="p-3 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-slate-500 dark:text-slate-400"
         >
@@ -305,8 +305,8 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Start Date</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               className="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-teal-500 transition-all"
@@ -314,15 +314,15 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
           </div>
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">End Date</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               className="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-teal-500 transition-all"
             />
           </div>
           <div className="flex items-end">
-            <button 
+            <button
               onClick={fetchHistoricalData}
               disabled={loading}
               className="w-full p-3 bg-teal-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-teal-500 transition-all shadow-lg shadow-teal-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -339,11 +339,10 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
             <button
               key={opt.id}
               onClick={() => toggleVariable(opt.id)}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${
-                selectedVariables.includes(opt.id)
+              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${selectedVariables.includes(opt.id)
                   ? 'bg-slate-900 text-white border-slate-900 shadow-md'
                   : 'bg-white dark:bg-slate-700 text-slate-400 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500'
-              }`}
+                }`}
             >
               {opt.label}
             </button>
@@ -366,17 +365,17 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
-                    tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 700}} 
-                    tickLine={false} 
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                    tickLine={false}
                     axisLine={false}
                     minTickGap={30}
                   />
                   <YAxis hide domain={['auto', 'auto']} />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold'}}
+                  <Tooltip
+                    contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold' }}
                     labelFormatter={(label) => new Date(label).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                   />
                   <Legend />
@@ -397,18 +396,18 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
-                    tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 700}} 
-                    tickLine={false} 
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                    tickLine={false}
                     axisLine={false}
                     minTickGap={30}
                   />
                   <YAxis yAxisId="left" hide />
                   <YAxis yAxisId="right" orientation="right" hide />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold'}}
+                  <Tooltip
+                    contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold' }}
                     labelFormatter={(label) => new Date(label).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                   />
                   <Legend />

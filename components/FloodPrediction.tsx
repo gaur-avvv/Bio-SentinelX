@@ -158,9 +158,9 @@ function computeGiStar(
   if (S === 0) return []; // No variation — Gi* undefined
 
   const GI_Z_THRESHOLDS = [
-    { z: 2.576, bin: 3  as const, color: '#ff0066', label: '99% Hot Spot'  },
-    { z: 1.960, bin: 2  as const, color: '#ff3399', label: '95% Hot Spot'  },
-    { z: 1.645, bin: 1  as const, color: '#ff99cc', label: '90% Hot Spot'  },
+    { z: 2.576, bin: 3 as const, color: '#ff0066', label: '99% Hot Spot' },
+    { z: 1.960, bin: 2 as const, color: '#ff3399', label: '95% Hot Spot' },
+    { z: 1.645, bin: 1 as const, color: '#ff99cc', label: '90% Hot Spot' },
     { z: -1.645, bin: -1 as const, color: '#00e5ff', label: '90% Cold Spot' },
     { z: -1.960, bin: -2 as const, color: '#00aaff', label: '95% Cold Spot' },
     { z: -2.576, bin: -3 as const, color: '#8800ff', label: '99% Cold Spot' },
@@ -172,13 +172,13 @@ function computeGiStar(
     for (let j = 0; j < n; j++) {
       const fj = features[j];
       const wij = fi === fj ? 1 : (haversineKm(fi.lat, fi.lon, fj.lat, fj.lon) <= distanceBandKm ? 1 : 0);
-      sumW  += wij;
+      sumW += wij;
       sumWx += wij * fj.value;
       sumW2 += wij * wij;
     }
 
     // Gi* z-score formula
-    const numerator   = sumWx - X̄ * sumW;
+    const numerator = sumWx - X̄ * sumW;
     const denominator = S * Math.sqrt((n * sumW2 - sumW * sumW) / (n - 1));
     const zScore = denominator === 0 ? 0 : numerator / denominator;
 
@@ -187,9 +187,9 @@ function computeGiStar(
     let color = 'rgba(255,255,255,0.08)'; // near-transparent — not significant
     let label = 'Not Significant';
 
-    if (zScore >= 2.576)       { confidenceBin = 3;  color = '#ff0066'; label = '99% Hot Spot';  }
-    else if (zScore >= 1.960)  { confidenceBin = 2;  color = '#ff3399'; label = '95% Hot Spot';  }
-    else if (zScore >= 1.645)  { confidenceBin = 1;  color = '#ff80c0'; label = '90% Hot Spot';  }
+    if (zScore >= 2.576) { confidenceBin = 3; color = '#ff0066'; label = '99% Hot Spot'; }
+    else if (zScore >= 1.960) { confidenceBin = 2; color = '#ff3399'; label = '95% Hot Spot'; }
+    else if (zScore >= 1.645) { confidenceBin = 1; color = '#ff80c0'; label = '90% Hot Spot'; }
     else if (zScore <= -2.576) { confidenceBin = -3; color = '#8800ff'; label = '99% Cold Spot'; }
     else if (zScore <= -1.960) { confidenceBin = -2; color = '#00aaff'; label = '95% Cold Spot'; }
     else if (zScore <= -1.645) { confidenceBin = -1; color = '#00e5ff'; label = '90% Cold Spot'; }
@@ -208,45 +208,45 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const cacheValid = isCacheValid(floodCache.lastFetched, floodCache.lastLocation, weather?.city ?? '');
 
   // ── Data state ──────────────────────────────────────────────────────────────
-  const [rawData,   setRawData]   = useState<FloodDataPoint[]>(() => cacheValid ? floodCache.rawData : []);
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState('');
+  const [rawData, setRawData] = useState<FloodDataPoint[]>(() => cacheValid ? floodCache.rawData : []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   // ── Analysis state ──────────────────────────────────────────────────────────
-  const [analysis,      setAnalysis]      = useState(() => cacheValid ? floodCache.analysis : '');
-  const [analyzing,     setAnalyzing]     = useState(false);
+  const [analysis, setAnalysis] = useState(() => cacheValid ? floodCache.analysis : '');
+  const [analyzing, setAnalyzing] = useState(false);
   const [analysisPhase, setAnalysisPhase] = useState('');
 
   // ── ML API config ───────────────────────────────────────────────────────────
-  const [mlApiUrl,       setMlApiUrl]       = useState(() =>
+  const [mlApiUrl, setMlApiUrl] = useState(() =>
     localStorage.getItem('floodMlApiUrl') || (process.env.FLOOD_ML_API as string | undefined) || 'http://localhost:8000');
-  const [showApiConfig,  setShowApiConfig]  = useState(false);
-  const [mlApiUrlInput,  setMlApiUrlInput]  = useState(mlApiUrl);
+  const [showApiConfig, setShowApiConfig] = useState(false);
+  const [mlApiUrlInput, setMlApiUrlInput] = useState(mlApiUrl);
 
   // ── ML prediction state ─────────────────────────────────────────────────────
-  const [mlPrediction,   setMlPrediction]   = useState<MLPredictionResult | null>(() => cacheValid ? floodCache.mlPrediction : null);
-  const [mlStatus,       setMlStatus]       = useState<MLTrainingStatus | null>(() => cacheValid ? floodCache.mlStatus : null);
-  const [mlLoading,      setMlLoading]      = useState(false);
-  const [mlError,        setMlError]        = useState('');
-  const [retraining,     setRetraining]     = useState(false);
-  const [retrainMsg,     setRetrainMsg]     = useState('');
+  const [mlPrediction, setMlPrediction] = useState<MLPredictionResult | null>(() => cacheValid ? floodCache.mlPrediction : null);
+  const [mlStatus, setMlStatus] = useState<MLTrainingStatus | null>(() => cacheValid ? floodCache.mlStatus : null);
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlError, setMlError] = useState('');
+  const [retraining, setRetraining] = useState(false);
+  const [retrainMsg, setRetrainMsg] = useState('');
 
   // ── Ward readiness + hotspots (API) ───────────────────────────────────────
   const [wardReadiness, setWardReadiness] = useState<WardReadinessItem[] | null>(null);
-  const [wardsLoading,  setWardsLoading]  = useState(false);
-  const [wardsError,    setWardsError]    = useState('');
+  const [wardsLoading, setWardsLoading] = useState(false);
+  const [wardsError, setWardsError] = useState('');
 
-  const [hotspots,      setHotspots]      = useState<MicroHotspotResponse | null>(null);
+  const [hotspots, setHotspots] = useState<MicroHotspotResponse | null>(null);
   const [hotspotsLoading, setHotspotsLoading] = useState(false);
-  const [hotspotsError,   setHotspotsError]   = useState('');
+  const [hotspotsError, setHotspotsError] = useState('');
 
   // Getis-Ord Gi* results — computed from ward data when available
   const [giStarResults, setGiStarResults] = useState<GiStarFeature[]>([]);
 
   // India Ward Boundaries — official ESRI ArcGIS Living Atlas polygons
-  const [indiaWards,       setIndiaWards]       = useState<IndiaWardFeature[]>([]);
+  const [indiaWards, setIndiaWards] = useState<IndiaWardFeature[]>([]);
   const [indiaWardsLoading, setIndiaWardsLoading] = useState(false);
-  const [indiaWardsError,  setIndiaWardsError]  = useState('');
+  const [indiaWardsError, setIndiaWardsError] = useState('');
   const [indiaWardsSource, setIndiaWardsSource] = useState<'esri' | 'overpass'>('esri');
   const [overpassWaterways, setOverpassWaterways] = useState<{ type: string; features: Array<{ type: string; properties: Record<string, unknown>; geometry: unknown }> } | null>(null);
   const [queryingOverpass, setQueryingOverpass] = useState(false);
@@ -273,21 +273,21 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   const [showWardMarkers, setShowWardMarkers] = useState(true);
   const [isSatellite, setIsSatellite] = useState(false);
 
-  const wardMapContainerRef  = useRef<HTMLDivElement | null>(null);
-  const mapRef               = useRef<any>(null);      // Map instance (mappls or maplibre)
-  const markersRef           = useRef<any[]>([]);      // Marker instances
-  const circlesRef           = useRef<any[]>([]);      // Hotspot circle/polygon instances
-  const heatmapRef           = useRef<any>(null);      // Heatmap layer instance
+  const wardMapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any>(null);      // Map instance (mappls or maplibre)
+  const markersRef = useRef<any[]>([]);      // Marker instances
+  const circlesRef = useRef<any[]>([]);      // Hotspot circle/polygon instances
+  const heatmapRef = useRef<any>(null);      // Heatmap layer instance
 
   // Legend aliases for backward compatibility with existing code
-  const mapplsMapRef         = mapRef;
-  const mapplsMarkersRef     = markersRef;
-  const mapplsCirclesRef     = circlesRef;
-  const mapplsHeatmapRef     = heatmapRef;
+  const mapplsMapRef = mapRef;
+  const mapplsMarkersRef = markersRef;
+  const mapplsCirclesRef = circlesRef;
+  const mapplsHeatmapRef = heatmapRef;
   // Keep legacy alias names so later JSX refs still compile
-  const leafletMapRef        = mapplsMapRef;
-  const leafletMarkersRef    = mapplsMarkersRef;
-  const leafletCirclesRef    = mapplsCirclesRef;
+  const leafletMapRef = mapplsMapRef;
+  const leafletMarkersRef = mapplsMarkersRef;
+  const leafletCirclesRef = mapplsCirclesRef;
 
   // ── Geocoding loading state ─────────────────────────────────────────────
   const [geocoding, setGeocoding] = useState(false);
@@ -325,15 +325,15 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
     /** Build a data-URI SVG circle used as the ward pin icon */
     const makeSvgUrl = (grade: string) => {
-      const col  = gradeColor[grade] ?? '#94a3b8';
-      const svg  = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="34"><circle cx="17" cy="17" r="15" fill="${col}" stroke="white" stroke-width="3"/><text x="17" y="22" text-anchor="middle" font-size="13" font-weight="900" font-family="Inter,sans-serif" fill="white">${grade}</text></svg>`;
+      const col = gradeColor[grade] ?? '#94a3b8';
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="34" height="34"><circle cx="17" cy="17" r="15" fill="${col}" stroke="white" stroke-width="3"/><text x="17" y="22" text-anchor="middle" font-size="13" font-weight="900" font-family="Inter,sans-serif" fill="white">${grade}</text></svg>`;
       return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
     };
 
     // ─ Init map & Render Wards as Polygons ───────────────────────────────────
     const renderWards = () => {
       // Clear previous markers
-      mapplsMarkersRef.current.forEach(m => { try { m.remove(); } catch { try { m.setMap(null); } catch {} } });
+      mapplsMarkersRef.current.forEach(m => { try { m.remove(); } catch { try { m.setMap(null); } catch { } } });
       mapplsMarkersRef.current = [];
 
       // Remove existing ward polygon layer if any
@@ -370,8 +370,8 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         // Here we render the markers as fallback and also try the polygon API.
         const match = w.ward_id.match(/\d+/);
         if (match) {
-           const wNo = match[0].padStart(4, '0');
-           wardIdsForApi.push(wNo);
+          const wNo = match[0].padStart(4, '0');
+          wardIdsForApi.push(wNo);
         }
 
         const colHex = '#' + (gradeColor[w.readiness_grade] ?? '94a3b8');
@@ -415,7 +415,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
               const el = document.createElement('div');
               el.className = 'ward-marker-pin';
               el.innerHTML = `<img src="${makeSvgUrl(w.readiness_grade)}" width="34" height="34" style="cursor:pointer; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1))" />`;
-              
+
               marker = new mapboxgl.Marker({ element: el })
                 .setLngLat([w.lon, w.lat])
                 .setPopup(new mapboxgl.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml))
@@ -425,7 +425,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
               const el = document.createElement('div');
               el.className = 'ward-marker-pin';
               el.innerHTML = `<img src="${makeSvgUrl(w.readiness_grade)}" width="34" height="34" style="cursor:pointer; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1))" />`;
-              
+
               marker = new maptilersdk.Marker({ element: el })
                 .setLngLat([w.lon, w.lat])
                 .setPopup(new maptilersdk.Popup({ offset: 25, closeButton: false }).setHTML(popupHtml))
@@ -441,17 +441,17 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       // mGIS GeoAnalytics Polygon layer (Mappls only)
       if (isMappls && wardIdsForApi.length > 0 && typeof mappls.geoAnalytics !== 'undefined' && showWardMarkers) {
         const geoParams = {
-          "AccessToken": mapplsToken, 
+          "AccessToken": mapplsToken,
           "GeoBoundType": "ward_no",
           "GeoBound": wardIdsForApi,
           "Attribute": "t_p",
           "Query": ">0",
           "Style": {
-              BorderColor: "3b82f6",
-              BorderWidth: 1,
-              FillColor: "3b82f6",
-              Geometry: "polygon",
-              Opacity: 0.15,
+            BorderColor: "3b82f6",
+            BorderWidth: 1,
+            FillColor: "3b82f6",
+            Geometry: "polygon",
+            Opacity: 0.15,
           },
           "SpatialLayer": "geoAnalyticsWard",
           "SpatialLayer1": "ward"
@@ -484,20 +484,20 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           const lons = validWards.map(w => w.lon);
           const swLat = Math.min(...lats); const neLat = Math.max(...lats);
           const swLon = Math.min(...lons); const neLon = Math.max(...lons);
-          
+
           if (isMappls && typeof mappls.geoAnalytics !== 'undefined' && wardIdsForApi.length > 0) {
             // Attempt to use mGIS getBounds
-             const geoParams = {
-               "AccessToken": mapplsToken,
-               "GeoBoundType": "ward_no",
-               "GeoBound": wardIdsForApi,
-             };
-             try {
-                map.fitBounds(mappls.geoAnalytics.getBounds('ward', geoParams));
-                return;
-             } catch {}
+            const geoParams = {
+              "AccessToken": mapplsToken,
+              "GeoBoundType": "ward_no",
+              "GeoBound": wardIdsForApi,
+            };
+            try {
+              map.fitBounds(mappls.geoAnalytics.getBounds('ward', geoParams));
+              return;
+            } catch { }
           }
-          
+
           map.fitBounds([[swLon, swLat], [neLon, neLat]], { padding: { top: 60, bottom: 60, left: 60, right: 60 }, maxZoom: 14 });
         } catch {
           const c = validWards[0];
@@ -505,7 +505,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           try {
             if (isMappls) map.setCenter([c.lat, c.lon]);
             else map.setCenter([c.lon, c.lat]);
-          } catch {}
+          } catch { }
           map.setZoom(12);
         }
       }
@@ -569,12 +569,12 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   // ── Auto-fetch India Ward Boundaries (ESRI or Overpass) ─────────────────
   useEffect(() => {
     if (!weather?.lat || !weather?.lon) return;
-    
+
     const fetchWards = async () => {
       setIndiaWardsLoading(true);
       setIndiaWardsError('');
       setQueryingOverpass(mapProvider === 'osm');
-      
+
       try {
         if (mapProvider === 'osm') {
           setIndiaWardsSource('overpass');
@@ -594,11 +594,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         setIndiaWardsError(err instanceof Error ? err.message : 'Failed to load ward boundaries');
         // Fallback to Overpass if ESRI fails and we haven't tried it yet
         if (mapProvider !== 'osm') {
-           try {
-             setIndiaWardsSource('overpass');
-             const wards = await fetchOverpassWards(weather.lat, weather.lon, 15);
-             setIndiaWards(wards);
-           } catch {}
+          try {
+            setIndiaWardsSource('overpass');
+            const wards = await fetchOverpassWards(weather.lat, weather.lon, 15);
+            setIndiaWards(wards);
+          } catch { }
         }
       } finally {
         setIndiaWardsLoading(false);
@@ -617,10 +617,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
     // Clean up previous ward polygon and waterway layers
     ['india-wards-fill', 'india-wards-stroke', 'india-wards-label', 'waterways-stroke', 'waterways-glow'].forEach(id => {
-      try { if (map.getLayer?.(id)) map.removeLayer(id); } catch {}
+      try { if (map.getLayer?.(id)) map.removeLayer(id); } catch { }
     });
     ['india-wards-source', 'waterways-source'].forEach(id => {
-      try { if (map.getSource?.(id)) map.removeSource(id); } catch {}
+      try { if (map.getSource?.(id)) map.removeSource(id); } catch { }
     });
 
     if (!showWardPolygons) return;
@@ -643,13 +643,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             type: 'Feature' as const,
             geometry: w.geometry,
             properties: {
-              wardId:   w.wardId,
+              wardId: w.wardId,
               wardName: w.wardName,
               cityName: w.cityName,
               grade,
               fillColor,
               floodProbability: mlWard?.flood_probability ?? 0,
-              source:   indiaWardsSource,
+              source: indiaWardsSource,
             }
           };
         });
@@ -704,7 +704,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             type: 'geojson',
             data: overpassWaterways
           });
-          
+
           map.addLayer({
             id: 'waterways-glow',
             type: 'line',
@@ -734,8 +734,8 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           const props = e.features[0].properties;
           const PopupClass =
             mapProvider === 'maptiler' ? maptilersdk.Popup
-            : mapProvider === 'mapbox' ? mapboxgl.Popup
-            : maplibregl.Popup;
+              : mapProvider === 'mapbox' ? mapboxgl.Popup
+                : maplibregl.Popup;
 
           new PopupClass({ maxWidth: '260px' })
             .setLngLat(e.lngLat)
@@ -789,13 +789,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     const map = mapRef.current;
 
     // ── Clean up previous Gi* layers ──
-    mapplsCirclesRef.current.forEach(c => { try { c.remove(); } catch { try { c.setMap(null); } catch {} } });
+    mapplsCirclesRef.current.forEach(c => { try { c.remove(); } catch { try { c.setMap(null); } catch { } } });
     mapplsCirclesRef.current = [];
     ['gi-star-glow-layer', 'gi-star-layer', 'gi-star-nonsig-layer'].forEach(id => {
-      try { if (map.getLayer?.(id)) map.removeLayer(id); } catch {}
+      try { if (map.getLayer?.(id)) map.removeLayer(id); } catch { }
     });
     ['gi-star-source'].forEach(id => {
-      try { if (map.getSource?.(id)) map.removeSource(id); } catch {}
+      try { if (map.getSource?.(id)) map.removeSource(id); } catch { }
     });
 
     if (!showHotspotZones) return;
@@ -849,7 +849,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             strokeWidth: 1,
           });
           mapplsCirclesRef.current.push(circle);
-        } catch {}
+        } catch { }
       });
     } else {
       // ── MapTiler/Mapbox: GeoJSON neon glow circle layers ──
@@ -860,9 +860,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         properties: {
           color: f.color,
           // Core radius: 16px (bin±1) → 28px (bin±3)
-          radius:      f.confidenceBin !== 0 ? 16 + Math.abs(f.confidenceBin) * 6 : 5,
+          radius: f.confidenceBin !== 0 ? 16 + Math.abs(f.confidenceBin) * 6 : 5,
           // Glow radius: 2× core
-          glowRadius:  f.confidenceBin !== 0 ? (16 + Math.abs(f.confidenceBin) * 6) * 2.5 : 8,
+          glowRadius: f.confidenceBin !== 0 ? (16 + Math.abs(f.confidenceBin) * 6) * 2.5 : 8,
           coreOpacity: f.confidenceBin !== 0 ? 0.75 : 0.04,
           glowOpacity: f.confidenceBin !== 0 ? 0.18 + Math.abs(f.confidenceBin) * 0.05 : 0.01,
           strokeOpacity: f.confidenceBin !== 0 ? 1.0 : 0.0,
@@ -911,8 +911,8 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       map.on('click', 'gi-star-layer', (e: any) => {
         const PopupClass =
           mapProvider === 'maptiler' ? maptilersdk.Popup
-          : mapProvider === 'mapbox' ? mapboxgl.Popup
-          : maplibregl.Popup;  // 'osm' also uses MapLibre
+            : mapProvider === 'mapbox' ? mapboxgl.Popup
+              : maplibregl.Popup;  // 'osm' also uses MapLibre
         new PopupClass({ maxWidth: '280px' })
           .setLngLat(e.lngLat)
           .setHTML(e.features[0].properties.popup)
@@ -931,9 +931,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     const map = mapRef.current;
 
     // Cleanup
-    if (mapplsHeatmapRef.current) { try { mapplsHeatmapRef.current.remove(); } catch {} mapplsHeatmapRef.current = null; }
-    try { if (map.getLayer?.('flood-heatmap-layer')) map.removeLayer('flood-heatmap-layer'); } catch {}
-    try { if (map.getSource?.('flood-heatmap-source')) map.removeSource('flood-heatmap-source'); } catch {}
+    if (mapplsHeatmapRef.current) { try { mapplsHeatmapRef.current.remove(); } catch { } mapplsHeatmapRef.current = null; }
+    try { if (map.getLayer?.('flood-heatmap-layer')) map.removeLayer('flood-heatmap-layer'); } catch { }
+    try { if (map.getSource?.('flood-heatmap-source')) map.removeSource('flood-heatmap-source'); } catch { }
 
     if (!showHeatmap || !giStarResults.length) return;
 
@@ -974,12 +974,12 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
           'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 10, 1, 14, 4],
           'heatmap-color': [
             'interpolate', ['linear'], ['heatmap-density'],
-            0,   'rgba(59,130,246,0)',
+            0, 'rgba(59,130,246,0)',
             0.2, 'rgba(59,130,246,0.6)',
             0.4, 'rgba(234,179,8,0.8)',
             0.6, 'rgba(249,115,22,1)',
             0.8, 'rgba(215,25,28,1)',
-            1,   'rgba(127,0,0,1)',
+            1, 'rgba(127,0,0,1)',
           ],
           'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 10, 30, 14, 70],
           'heatmap-opacity': 0.72,
@@ -1034,7 +1034,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   useEffect(() => {
     return () => {
       if (mapplsMapRef.current) {
-        try { mapplsMapRef.current.remove(); } catch {}
+        try { mapplsMapRef.current.remove(); } catch { }
         mapplsMapRef.current = null;
       }
     };
@@ -1082,13 +1082,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   }, [refreshMlStatus, stopStatusPolling]);
 
   // ── Derived metrics ─────────────────────────────────────────────────────────
-  const [riskScore,      setRiskScore]      = useState<FloodRiskScore | null>(null);
-  const [seasonCtx,      setSeasonCtx]      = useState<SeasonalContext | null>(null);
-  const [histStats,      setHistStats]      = useState<HistoricalStats | null>(null);
-  const [trend,          setTrend]          = useState<TrendResult | null>(null);
-  const [todayIdx,       setTodayIdx]       = useState(0);
-  const [chartData,      setChartData]      = useState<FloodDataPoint[]>([]);
-  const [todayChartIdx,  setTodayChartIdx]  = useState(0);
+  const [riskScore, setRiskScore] = useState<FloodRiskScore | null>(null);
+  const [seasonCtx, setSeasonCtx] = useState<SeasonalContext | null>(null);
+  const [histStats, setHistStats] = useState<HistoricalStats | null>(null);
+  const [trend, setTrend] = useState<TrendResult | null>(null);
+  const [todayIdx, setTodayIdx] = useState(0);
+  const [chartData, setChartData] = useState<FloodDataPoint[]>([]);
+  const [todayChartIdx, setTodayChartIdx] = useState(0);
 
   // ── Forecast view mode (daily vs derived monthly) ─────────────────────────
   const [forecastView, setForecastView] = useState<'daily' | 'monthly'>('daily');
@@ -1119,20 +1119,20 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     setTodayIdx(idx);
 
     const month = new Date().getMonth() + 1; // 1-based
-    const sc    = getSeasonalContext(month, weather.lat);
+    const sc = getSeasonalContext(month, weather.lat);
     setSeasonCtx(sc);
 
     const historical = rawData.slice(0, idx + 1);
-    const stats      = computeHistoricalStats(historical);
+    const stats = computeHistoricalStats(historical);
     setHistStats(stats);
 
     setRiskScore(computeFloodRisk(rawData, idx, sc));
     setTrend(computeTrend(historical, stats.p50));
 
     // Chart window: 60 past days + dynamic forecast days
-    const pastStart    = Math.max(0, idx - 59);
-    const chartPast    = rawData.slice(pastStart, idx + 1);
-    const chartFuture  = rawData.slice(idx + 1, idx + 1 + forecastWindowDays);
+    const pastStart = Math.max(0, idx - 59);
+    const chartPast = rawData.slice(pastStart, idx + 1);
+    const chartFuture = rawData.slice(idx + 1, idx + 1 + forecastWindowDays);
     setChartData([...chartPast, ...chartFuture]);
     setTodayChartIdx(chartPast.length - 1);
   }, [rawData, weather?.lat, forecastWindowDays]);
@@ -1275,7 +1275,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 const json = await res.json();
                 const a = json.address ?? {};
                 const name = a.neighbourhood || a.suburb || a.city_district || a.quarter ||
-                             a.district || a.county || a.village || a.town || null;
+                  a.district || a.county || a.village || a.town || null;
                 enriched.push({ ...w, ward_name: name ?? w.ward_name ?? w.ward_id });
               } else { enriched.push(w); }
             } catch { enriched.push(w); }
@@ -1325,12 +1325,12 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     setAnalysisPhase('Connecting to GloFAS v4 hydrological database...');
 
     const historical = rawData.slice(0, todayIdx + 1);
-    const forecast   = rawData.slice(todayIdx + 1);
+    const forecast = rawData.slice(todayIdx + 1);
 
     const fcMedians = forecast
       .map(d => d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge ?? 0)
       .filter(v => v > 0);
-    const peakMedian    = fcMedians.length > 0 ? Math.max(...fcMedians) : 0;
+    const peakMedian = fcMedians.length > 0 ? Math.max(...fcMedians) : 0;
     const peakMedianDate = fcMedians.length > 0
       ? (forecast[fcMedians.indexOf(Math.max(...fcMedians))]?.date ?? 'N/A')
       : 'N/A';
@@ -1390,34 +1390,34 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
     const input: FloodAnalysisInput = {
       detailLevel,
-      locationName:          weather.city,
-      lat:                   weather.lat,
-      lon:                   weather.lon,
-      pastDays:              92,
-      forecastDays:          183,
-      histAvgDischarge:      fmt(histStats.mean),
-      histMaxDischarge:      fmt(histStats.max),
-      histMinDischarge:      fmt(histStats.min),
-      histP50:               fmt(histStats.p50),
-      histP75:               fmt(histStats.p75),
-      histP90:               fmt(histStats.p90),
-      forecastPeakMedian:    fmt(peakMedian),
-      forecastPeakDate:      peakMedianDate,
+      locationName: weather.city,
+      lat: weather.lat,
+      lon: weather.lon,
+      pastDays: 92,
+      forecastDays: 183,
+      histAvgDischarge: fmt(histStats.mean),
+      histMaxDischarge: fmt(histStats.max),
+      histMinDischarge: fmt(histStats.min),
+      histP50: fmt(histStats.p50),
+      histP75: fmt(histStats.p75),
+      histP90: fmt(histStats.p90),
+      forecastPeakMedian: fmt(peakMedian),
+      forecastPeakDate: peakMedianDate,
       forecastMeanDischarge: fmt(fcMean),
-      seasonLabel:           seasonCtx.seasonLabel,
-      isFloodSeason:         seasonCtx.isFloodSeason,
-      seasonNote:            seasonCtx.note,
-      riskLevel:             riskScore.level,
-      riskScore:             riskScore.score,
+      seasonLabel: seasonCtx.seasonLabel,
+      isFloodSeason: seasonCtx.isFloodSeason,
+      seasonNote: seasonCtx.note,
+      riskLevel: riskScore.level,
+      riskScore: riskScore.score,
       todayDischarge,
-      recentTrend:           trend?.direction ?? 'STABLE',
-      trendWithinNorm:       trend?.withinNorm ?? true,
-      p75Exceedance:         p75Exceeded.toString(),
+      recentTrend: trend?.direction ?? 'STABLE',
+      trendWithinNorm: trend?.withinNorm ?? true,
+      p75Exceedance: p75Exceeded.toString(),
       currentWeather: {
-        temp:          weather.temp,
+        temp: weather.temp,
         precipitation: weather.precipitationSum,
-        humidity:      weather.humidity,
-        description:   weather.description,
+        humidity: weather.humidity,
+        description: weather.description,
       },
       futureWeather: {
         days: precipForecast.length,
@@ -1445,10 +1445,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
       // Inject ML prediction + model stats if available
       mlPrediction: mlPrediction ?? undefined,
       mlModelStats: mlStatus ? {
-        accuracy:           mlStatus.accuracy,
-        f1_score:           mlStatus.f1_score,
-        roc_auc:            mlStatus.roc_auc,
-        training_samples:   mlStatus.training_samples,
+        accuracy: mlStatus.accuracy,
+        f1_score: mlStatus.f1_score,
+        roc_auc: mlStatus.roc_auc,
+        training_samples: mlStatus.training_samples,
         feature_importances: mlStatus.feature_importances,
       } : undefined,
     };
@@ -1483,21 +1483,21 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   // ── Trend icon (no panic colouring for normal seasonal rises) ───────────────
   const TrendIcon = trend?.direction === 'INCREASING'
-    ? <TrendingUp  className={`w-4 h-4 ${trend.withinNorm ? 'text-slate-500' : 'text-amber-500'}`} />
+    ? <TrendingUp className={`w-4 h-4 ${trend.withinNorm ? 'text-slate-500' : 'text-amber-500'}`} />
     : trend?.direction === 'DECREASING'
-    ? <TrendingDown className="w-4 h-4 text-green-500" />
-    : <Minus        className="w-4 h-4 text-slate-400" />;
+      ? <TrendingDown className="w-4 h-4 text-green-500" />
+      : <Minus className="w-4 h-4 text-slate-400" />;
 
-  const trendBg   = trend?.direction === 'INCREASING' && !trend.withinNorm ? 'bg-amber-50 dark:bg-amber-900/30'  :
-                    trend?.direction === 'DECREASING' ? 'bg-green-50 dark:bg-green-900/30' : 'bg-slate-50 dark:bg-slate-700/60';
+  const trendBg = trend?.direction === 'INCREASING' && !trend.withinNorm ? 'bg-amber-50 dark:bg-amber-900/30' :
+    trend?.direction === 'DECREASING' ? 'bg-green-50 dark:bg-green-900/30' : 'bg-slate-50 dark:bg-slate-700/60';
   const trendText = trend?.direction === 'INCREASING' && !trend.withinNorm ? 'text-amber-700 dark:text-amber-300' :
-                    trend?.direction === 'DECREASING' ? 'text-green-700 dark:text-green-300' : 'text-slate-500 dark:text-slate-400';
+    trend?.direction === 'DECREASING' ? 'text-green-700 dark:text-green-300' : 'text-slate-500 dark:text-slate-400';
 
   // ── Forecast peak (use median, not ensemble max) ────────────────────────────
   const forecastPeakMedian = rawData.length > 0 && todayIdx >= 0
     ? Math.max(0, ...rawData.slice(todayIdx + 1)
-        .map(d => d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge ?? 0)
-        .filter(v => v > 0))
+      .map(d => d.river_discharge_median ?? d.river_discharge_mean ?? d.river_discharge ?? 0)
+      .filter(v => v > 0))
     : 0;
 
   // ── Today reference-line date ───────────────────────────────────────────────
@@ -1784,13 +1784,13 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         {/* ── Weather snapshot (requested metrics) ─────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           {([
-            { label: 'Humidity',     value: `${Math.round(weather.humidity)} %`, sub: 'Relative humidity' },
-            { label: 'Rain Chance',  value: `${Math.round(weather.pop ?? 0)} %`, sub: 'POP (prob. of precip)' },
-            { label: 'Wind Speed',   value: `${fmt(weather.windSpeed, 1)} km/h${windDir16(weather.windDeg) ? ` ${windDir16(weather.windDeg)}` : ''}`, sub: 'Sustained wind' },
-            { label: 'Pressure',     value: `${fmt(weather.pressure, 1)} hPa`, sub: 'Barometric' },
-            { label: 'Visibility',   value: `${weather.visibility != null ? (weather.visibility / 1000).toFixed(1) : 'N/A'} km`, sub: 'Line-of-sight' },
-            { label: 'Dew Point',    value: `${weather.dewPoint != null ? Math.round(weather.dewPoint) : 'N/A'} °`, sub: 'Comfort index' },
-            { label: 'Wind Gusts',   value: `${weather.windGusts != null ? fmt(weather.windGusts, 1) : 'N/A'} km/h`, sub: 'Peak gusts' },
+            { label: 'Humidity', value: `${Math.round(weather.humidity)} %`, sub: 'Relative humidity' },
+            { label: 'Rain Chance', value: `${Math.round(weather.pop ?? 0)} %`, sub: 'POP (prob. of precip)' },
+            { label: 'Wind Speed', value: `${fmt(weather.windSpeed, 1)} km/h${windDir16(weather.windDeg) ? ` ${windDir16(weather.windDeg)}` : ''}`, sub: 'Sustained wind' },
+            { label: 'Pressure', value: `${fmt(weather.pressure, 1)} hPa`, sub: 'Barometric' },
+            { label: 'Visibility', value: `${weather.visibility != null ? (weather.visibility / 1000).toFixed(1) : 'N/A'} km`, sub: 'Line-of-sight' },
+            { label: 'Dew Point', value: `${weather.dewPoint != null ? Math.round(weather.dewPoint) : 'N/A'} °`, sub: 'Comfort index' },
+            { label: 'Wind Gusts', value: `${weather.windGusts != null ? fmt(weather.windGusts, 1) : 'N/A'} km/h`, sub: 'Peak gusts' },
             { label: 'Precip Today', value: `${weather.precipitationSum != null ? fmt(weather.precipitationSum, 1) : '0.0'} mm`, sub: 'Daily total' },
           ] as const).map(s => (
             <div key={s.label} className="bg-slate-50 dark:bg-slate-700/60 p-4 rounded-xl border border-slate-100 dark:border-slate-600">
@@ -1901,17 +1901,17 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             const prob = mlPrediction.flood_probability;
             const probPct = (prob * 100).toFixed(1);
             const riskColor =
-              prob >= 0.85 ? 'text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-700'   :
-              prob >= 0.65 ? 'text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-900/30 border-orange-200 dark:border-orange-700' :
-              prob >= 0.40 ? 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700'   :
-              prob >= 0.20 ? 'text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-700' :
-              'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-700';
+              prob >= 0.85 ? 'text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-700' :
+                prob >= 0.65 ? 'text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-900/30 border-orange-200 dark:border-orange-700' :
+                  prob >= 0.40 ? 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700' :
+                    prob >= 0.20 ? 'text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-700' :
+                      'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-700';
             const barColor =
-              prob >= 0.85 ? 'bg-red-500'    :
-              prob >= 0.65 ? 'bg-orange-500' :
-              prob >= 0.40 ? 'bg-amber-500'  :
-              prob >= 0.20 ? 'bg-yellow-500' :
-              'bg-green-500';
+              prob >= 0.85 ? 'bg-red-500' :
+                prob >= 0.65 ? 'bg-orange-500' :
+                  prob >= 0.40 ? 'bg-amber-500' :
+                    prob >= 0.20 ? 'bg-yellow-500' :
+                      'bg-green-500';
 
             return (
               <div className="space-y-5">
@@ -2078,19 +2078,19 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                     const prob = w.flood_probability;
                     const riskLabel =
                       prob >= 0.80 ? 'CRITICAL' : prob >= 0.60 ? 'HIGH' :
-                      prob >= 0.35 ? 'MEDIUM'   : prob >= 0.15 ? 'LOW' : 'SAFE';
+                        prob >= 0.35 ? 'MEDIUM' : prob >= 0.15 ? 'LOW' : 'SAFE';
                     const gradeColor =
                       w.readiness_grade === 'A' ? 'bg-green-100 text-green-800 border-green-200' :
-                      w.readiness_grade === 'B' ? 'bg-lime-100 text-lime-800 border-lime-200' :
-                      w.readiness_grade === 'C' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
-                      w.readiness_grade === 'D' ? 'bg-orange-100 text-orange-800 border-orange-200' :
-                                                  'bg-red-100 text-red-800 border-red-200';
+                        w.readiness_grade === 'B' ? 'bg-lime-100 text-lime-800 border-lime-200' :
+                          w.readiness_grade === 'C' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                            w.readiness_grade === 'D' ? 'bg-orange-100 text-orange-800 border-orange-200' :
+                              'bg-red-100 text-red-800 border-red-200';
                     const riskBadge =
-                      riskLabel === 'CRITICAL' ? 'bg-red-600 text-white'     :
-                      riskLabel === 'HIGH'     ? 'bg-orange-500 text-white'  :
-                      riskLabel === 'MEDIUM'   ? 'bg-yellow-400 text-black'  :
-                      riskLabel === 'LOW'      ? 'bg-blue-400 text-white'    :
-                                                  'bg-green-500 text-white';
+                      riskLabel === 'CRITICAL' ? 'bg-red-600 text-white' :
+                        riskLabel === 'HIGH' ? 'bg-orange-500 text-white' :
+                          riskLabel === 'MEDIUM' ? 'bg-yellow-400 text-black' :
+                            riskLabel === 'LOW' ? 'bg-blue-400 text-white' :
+                              'bg-green-500 text-white';
                     const barW = Math.round(w.risk_score ?? 0);
                     return (
                       <div key={w.ward_id} className="p-3 rounded-2xl border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800">
@@ -2102,9 +2102,8 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                             <div className="flex items-center gap-2 mt-1">
                               <div className="flex-1 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
                                 <div
-                                  className={`h-1.5 rounded-full ${
-                                    barW >= 75 ? 'bg-red-500' : barW >= 55 ? 'bg-orange-500' : barW >= 35 ? 'bg-yellow-400' : 'bg-green-500'
-                                  }`}
+                                  className={`h-1.5 rounded-full ${barW >= 75 ? 'bg-red-500' : barW >= 55 ? 'bg-orange-500' : barW >= 35 ? 'bg-yellow-400' : 'bg-green-500'
+                                    }`}
                                   style={{ width: `${barW}%` }}
                                 />
                               </div>
@@ -2150,7 +2149,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 </div>
               )}
               <span className="ml-auto flex items-center gap-3 text-[9px] font-black uppercase tracking-widest">
-                {(['A','B','C','D','F'] as const).map(g => {
+                {(['A', 'B', 'C', 'D', 'F'] as const).map(g => {
                   const col = g === 'A' ? '#22c55e' : g === 'B' ? '#84cc16' : g === 'C' ? '#eab308' : g === 'D' ? '#f97316' : '#dc2626';
                   const lbl = g === 'A' ? 'Safe' : g === 'B' ? 'Low' : g === 'C' ? 'Medium' : g === 'D' ? 'High' : 'Critical';
                   return (
@@ -2276,21 +2275,21 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                         const prob = h.flood_probability;
                         const riskLabel =
                           prob >= 0.85 ? 'CRITICAL' : prob >= 0.65 ? 'HIGH' :
-                          prob >= 0.40 ? 'MEDIUM'   : 'LOW';
+                            prob >= 0.40 ? 'MEDIUM' : 'LOW';
                         const riskStyle =
                           prob >= 0.85 ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700' :
-                          prob >= 0.65 ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-700' :
-                          prob >= 0.40 ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-700' :
-                                        'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700';
+                            prob >= 0.65 ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-700' :
+                              prob >= 0.40 ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-700' :
+                                'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700';
                         const riskBadge =
-                          prob >= 0.85 ? 'bg-red-600 text-white'    :
-                          prob >= 0.65 ? 'bg-orange-500 text-white' :
-                          prob >= 0.40 ? 'bg-yellow-400 text-black' :
-                                        'bg-blue-500 text-white';
+                          prob >= 0.85 ? 'bg-red-600 text-white' :
+                            prob >= 0.65 ? 'bg-orange-500 text-white' :
+                              prob >= 0.40 ? 'bg-yellow-400 text-black' :
+                                'bg-blue-500 text-white';
                         const barColor =
-                          prob >= 0.85 ? 'bg-red-500'    :
-                          prob >= 0.65 ? 'bg-orange-500' :
-                          prob >= 0.40 ? 'bg-yellow-400' : 'bg-blue-400';
+                          prob >= 0.85 ? 'bg-red-500' :
+                            prob >= 0.65 ? 'bg-orange-500' :
+                              prob >= 0.40 ? 'bg-yellow-400' : 'bg-blue-400';
                         return (
                           <div key={h.cell_id} className={`p-3 rounded-xl border ${riskStyle}`}>
                             <div className="flex items-center justify-between gap-2">
@@ -2339,11 +2338,10 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
         <div className="space-y-8">
 
           {/* ── Seasonal context banner ───────────────────────── */}
-          <div className={`p-4 rounded-2xl border flex items-start gap-3 ${
-            seasonCtx.isFloodSeason
+          <div className={`p-4 rounded-2xl border flex items-start gap-3 ${seasonCtx.isFloodSeason
               ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-100 dark:border-blue-700 text-blue-800 dark:text-blue-200'
               : 'bg-slate-50 dark:bg-slate-700 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200'
-          }`}>
+            }`}>
             <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest mb-0.5">
@@ -2367,12 +2365,12 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               {[
-                { label: 'Min',  value: fmt(histStats.min),  bg: 'bg-blue-50 dark:bg-blue-900/30',     text: 'text-blue-700 dark:text-blue-300'   },
-                { label: 'P50',  value: fmt(histStats.p50),  bg: 'bg-green-50 dark:bg-green-900/30',   text: 'text-green-700 dark:text-green-300'  },
-                { label: 'P75',  value: fmt(histStats.p75),  bg: 'bg-yellow-50 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-300'},
-                { label: 'P90',  value: fmt(histStats.p90),  bg: 'bg-orange-50 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300'},
-                { label: 'Max',  value: fmt(histStats.max),  bg: 'bg-red-50 dark:bg-red-900/30',       text: 'text-red-700 dark:text-red-300'     },
-                { label: 'Mean', value: fmt(histStats.mean), bg: 'bg-slate-50 dark:bg-slate-700/60',   text: 'text-slate-700 dark:text-slate-200'  },
+                { label: 'Min', value: fmt(histStats.min), bg: 'bg-blue-50 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300' },
+                { label: 'P50', value: fmt(histStats.p50), bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-300' },
+                { label: 'P75', value: fmt(histStats.p75), bg: 'bg-yellow-50 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-300' },
+                { label: 'P90', value: fmt(histStats.p90), bg: 'bg-orange-50 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300' },
+                { label: 'Max', value: fmt(histStats.max), bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-300' },
+                { label: 'Mean', value: fmt(histStats.mean), bg: 'bg-slate-50 dark:bg-slate-700/60', text: 'text-slate-700 dark:text-slate-200' },
               ].map(s => (
                 <div key={s.label} className={`${s.bg} dark:bg-slate-700/60 rounded-xl p-3 text-center border border-slate-100 dark:border-slate-600`}>
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
@@ -2397,9 +2395,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             </div>
             <div className="h-4 bg-gradient-to-r from-green-200 via-yellow-200 via-orange-300 to-red-400 rounded-full relative overflow-hidden">
               <div className="absolute top-0 right-0 h-full bg-white/60 dark:bg-slate-800/60 transition-all duration-700"
-                   style={{ width: `${100 - riskScore.score}%` }} />
+                style={{ width: `${100 - riskScore.score}%` }} />
               <div className="absolute top-0 h-full w-1 bg-slate-900 dark:bg-white rounded-full transition-all duration-700"
-                   style={{ left: `calc(${riskScore.score}% - 2px)` }} />
+                style={{ left: `calc(${riskScore.score}% - 2px)` }} />
             </div>
             <div className="flex justify-between text-[9px] font-black text-slate-400 uppercase tracking-widest mt-2">
               <span>Normal</span><span>Moderate</span><span>Elevated</span><span>Watch</span>
@@ -2483,11 +2481,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                   <AreaChart data={rawData.slice(todayIdx + 1, todayIdx + 61)}>
                     <defs>
                       <linearGradient id="maxEnv" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#ef4444" stopOpacity={0.2}  />
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
                         <stop offset="95%" stopColor="#ef4444" stopOpacity={0.02} />
                       </linearGradient>
                       <linearGradient id="minEnv" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.18} />
+                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.18} />
                         <stop offset="95%" stopColor="#22c55e" stopOpacity={0.02} />
                       </linearGradient>
                     </defs>
@@ -2501,9 +2499,9 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                     <Tooltip contentStyle={tooltipStyle} labelFormatter={labelFmt}
                       formatter={(v: number, name: string) => [`${v?.toFixed(2)} m³/s`, name]} />
                     <Legend />
-                    <Area type="monotone" dataKey="river_discharge_max"    stroke="#ef4444" strokeWidth={1.5} fill="url(#maxEnv)" dot={false} name="Ensemble Max"    connectNulls />
-                    <Line  type="monotone" dataKey="river_discharge_median" stroke="#8b5cf6" strokeWidth={2.5}                     dot={false} name="Ensemble Median" connectNulls />
-                    <Area type="monotone" dataKey="river_discharge_min"    stroke="#22c55e" strokeWidth={1.5} fill="url(#minEnv)" dot={false} name="Ensemble Min"    connectNulls />
+                    <Area type="monotone" dataKey="river_discharge_max" stroke="#ef4444" strokeWidth={1.5} fill="url(#maxEnv)" dot={false} name="Ensemble Max" connectNulls />
+                    <Line type="monotone" dataKey="river_discharge_median" stroke="#8b5cf6" strokeWidth={2.5} dot={false} name="Ensemble Median" connectNulls />
+                    <Area type="monotone" dataKey="river_discharge_min" stroke="#22c55e" strokeWidth={1.5} fill="url(#minEnv)" dot={false} name="Ensemble Min" connectNulls />
                   </AreaChart>
                 ) : (
                   <LineChart data={monthlySeries.slice(0, 8)}>
@@ -2527,7 +2525,7 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                       formatter={(v: number, name: string) => [`${v?.toFixed(2)} m³/s`, name]} />
                     <Legend />
                     <Line type="monotone" dataKey="discharge_median_mean" stroke="#8b5cf6" strokeWidth={2.5} dot={false} name="Monthly Mean (Median)" connectNulls />
-                    <Line type="monotone" dataKey="discharge_median_max"  stroke="#ef4444" strokeWidth={1.8} dot={false} name="Monthly Max (Median)"  connectNulls />
+                    <Line type="monotone" dataKey="discharge_median_max" stroke="#ef4444" strokeWidth={1.8} dot={false} name="Monthly Max (Median)" connectNulls />
                   </LineChart>
                 )}
               </ResponsiveContainer>
@@ -2579,39 +2577,38 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
             {/* ── Dataset stat strip ── */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: 'Total Points',    value: rawData.length.toString(),                                                               sub: 'Historical + forecast rows'    },
-                { label: 'Date Window',     value: `${rawData[0]?.date ?? '—'} → ${rawData[rawData.length - 1]?.date ?? '—'}`,              sub: '92 past + 183 forecast days'   },
-                { label: 'Today Discharge', value: `${fmt(rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean)} m³/s`, sub: 'Current observed value'        },
-                { label: 'P90 − P50 Spread', value: `${fmt(histStats.p90 - histStats.p50)} m³/s`,                                          sub: 'Upper tail variability (m³/s)' },
+                { label: 'Total Points', value: rawData.length.toString(), sub: 'Historical + forecast rows' },
+                { label: 'Date Window', value: `${rawData[0]?.date ?? '—'} → ${rawData[rawData.length - 1]?.date ?? '—'}`, sub: '92 past + 183 forecast days' },
+                { label: 'Today Discharge', value: `${fmt(rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean)} m³/s`, sub: 'Current observed value' },
+                { label: 'P90 − P50 Spread', value: `${fmt(histStats.p90 - histStats.p50)} m³/s`, sub: 'Upper tail variability (m³/s)' },
               ].map(s => (
                 <div key={s.label} className="bg-slate-50 dark:bg-slate-700/60 p-4 rounded-xl border border-slate-100 dark:border-slate-600">
                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
                   <p className="text-sm font-black text-slate-800 dark:text-slate-100 mt-1 break-all">{s.value}</p>
                   <p className="text-[9px] text-slate-400 font-bold mt-0.5">{s.sub}</p>
                   {/* Interactive Horizon Controls */}
-            {forecastView === 'daily' && (
-              <div className="flex bg-white dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm border border-slate-200 dark:border-slate-700 w-full sm:w-auto mt-4 sm:mt-0">
-                {[
-                  { label: '7 Days', val: 7 },
-                  { label: '15 Days', val: 15 },
-                  { label: '30 Days', val: 30 },
-                  { label: 'All', val: 183 }
-                ].map(opt => (
-                  <button
-                    key={opt.val}
-                    onClick={() => setForecastWindowDays(opt.val)}
-                    className={`flex-1 sm:px-5 py-2.5 text-xs font-black uppercase tracking-widest transition-colors ${
-                      forecastWindowDays === opt.val
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+                  {forecastView === 'daily' && (
+                    <div className="flex bg-white dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm border border-slate-200 dark:border-slate-700 w-full sm:w-auto mt-4 sm:mt-0">
+                      {[
+                        { label: '7 Days', val: 7 },
+                        { label: '15 Days', val: 15 },
+                        { label: '30 Days', val: 30 },
+                        { label: 'All', val: 183 }
+                      ].map(opt => (
+                        <button
+                          key={opt.val}
+                          onClick={() => setForecastWindowDays(opt.val)}
+                          className={`flex-1 sm:px-5 py-2.5 text-xs font-black uppercase tracking-widest transition-colors ${forecastWindowDays === opt.val
+                              ? 'bg-blue-600 text-white'
+                              : 'text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-700'
+                            }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
 
@@ -2623,22 +2620,22 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                   {((): Array<{ label: string; value: string }> => {
-                    const precip  = weather?.precipitationSum ?? 0;
-                    const todayQ  = rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean ?? 0;
-                    const api     = histStats.p50 > 0 ? Math.min((todayQ / histStats.p50) * 30, 150) : 0;
+                    const precip = weather?.precipitationSum ?? 0;
+                    const todayQ = rawData[todayIdx]?.river_discharge ?? rawData[todayIdx]?.river_discharge_mean ?? 0;
+                    const api = histStats.p50 > 0 ? Math.min((todayQ / histStats.p50) * 30, 150) : 0;
                     return [
-                      { label: 'Rainfall 1h',       value: `${fmt(precip, 2)} mm`                  },
-                      { label: 'Rainfall 3h',       value: `${fmt(precip * 2.5, 2)} mm`            },
-                      { label: 'Rainfall 6h',       value: `${fmt(precip * 4, 2)} mm`              },
-                      { label: 'Rainfall 24h',      value: `${fmt(precip * 8, 2)} mm`              },
-                      { label: 'Rainfall 48h',      value: `${fmt(precip * 12, 2)} mm`             },
-                      { label: 'Rainfall 72h',      value: `${fmt(precip * 15, 2)} mm`             },
-                      { label: 'Antecedent PI',     value: fmt(api, 2)                             },
-                      { label: 'Temperature',       value: weather ? `${fmt(weather.temp, 1)}°C` : 'N/A' },
-                      { label: 'Humidity',          value: weather ? `${weather.humidity}%` : 'N/A'     },
-                      { label: 'Pressure',          value: weather ? `${weather.pressure ?? 1013} hPa` : 'N/A' },
-                      { label: 'Month',             value: new Date().toLocaleString('default', { month: 'long' }) },
-                      { label: 'Hour of Day',       value: `${new Date().getHours()}:00`           },
+                      { label: 'Rainfall 1h', value: `${fmt(precip, 2)} mm` },
+                      { label: 'Rainfall 3h', value: `${fmt(precip * 2.5, 2)} mm` },
+                      { label: 'Rainfall 6h', value: `${fmt(precip * 4, 2)} mm` },
+                      { label: 'Rainfall 24h', value: `${fmt(precip * 8, 2)} mm` },
+                      { label: 'Rainfall 48h', value: `${fmt(precip * 12, 2)} mm` },
+                      { label: 'Rainfall 72h', value: `${fmt(precip * 15, 2)} mm` },
+                      { label: 'Antecedent PI', value: fmt(api, 2) },
+                      { label: 'Temperature', value: weather ? `${fmt(weather.temp, 1)}°C` : 'N/A' },
+                      { label: 'Humidity', value: weather ? `${weather.humidity}%` : 'N/A' },
+                      { label: 'Pressure', value: weather ? `${weather.pressure ?? 1013} hPa` : 'N/A' },
+                      { label: 'Month', value: new Date().toLocaleString('default', { month: 'long' }) },
+                      { label: 'Hour of Day', value: `${new Date().getHours()}:00` },
                     ];
                   })().map(f => (
                     <div key={f.label} className="flex justify-between items-center px-3 py-2 bg-violet-50 dark:bg-violet-900/20 rounded-lg border border-violet-100 dark:border-violet-800/40 text-[10px]">
@@ -2742,17 +2739,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                       ...rawData.slice(Math.max(0, todayIdx - 13), todayIdx + 1).map(d => ({ ...d, _type: 'hist' as const })),
                       ...rawData.slice(todayIdx + 1, todayIdx + 15).map(d => ({ ...d, _type: 'fc' as const })),
                     ].map((d, i) => {
-                      const q     = d.river_discharge ?? d.river_discharge_mean ?? d.river_discharge_median ?? null;
+                      const q = d.river_discharge ?? d.river_discharge_mean ?? d.river_discharge_median ?? null;
                       const ratio = q != null && histStats.p50 > 0 ? q / histStats.p50 : null;
-                      const flag  = ratio == null ? '—' : ratio > 2 ? '▲ HIGH' : ratio > 1.5 ? '▲ ELEV' : ratio < 0.5 ? '▼ LOW' : '—';
+                      const flag = ratio == null ? '—' : ratio > 2 ? '▲ HIGH' : ratio > 1.5 ? '▲ ELEV' : ratio < 0.5 ? '▼ LOW' : '—';
                       const flagCls = flag === '▲ HIGH' ? 'text-red-600 dark:text-red-400' :
-                                      flag === '▲ ELEV' ? 'text-amber-600 dark:text-amber-400' :
-                                      flag === '▼ LOW'  ? 'text-blue-500 dark:text-blue-400' : 'text-slate-400';
+                        flag === '▲ ELEV' ? 'text-amber-600 dark:text-amber-400' :
+                          flag === '▼ LOW' ? 'text-blue-500 dark:text-blue-400' : 'text-slate-400';
                       const isToday = d.date === (chartData[todayChartIdx]?.date ?? '');
                       return (
-                        <tr key={i} className={`${
-                          d._type === 'fc' ? 'bg-violet-50/40 dark:bg-violet-900/10' : ''
-                        } hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors`}>
+                        <tr key={i} className={`${d._type === 'fc' ? 'bg-violet-50/40 dark:bg-violet-900/10' : ''
+                          } hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors`}>
                           <td className="px-3 py-1.5 text-slate-700 dark:text-slate-300 whitespace-nowrap">
                             {new Date(d.date + 'T00:00:00').toLocaleDateString(undefined, {
                               weekday: 'short', month: 'short', day: 'numeric',
@@ -2820,16 +2816,16 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data and Model Sources</p>
                 <div className="flex flex-wrap gap-2">
                   {[
-                    { label: 'GloFAS v4 Reanalysis',   sub: '1984–2022 · 0.05° (~5 km) · Daily',        color: 'bg-blue-50   text-blue-700   border-blue-200'   },
-                    { label: 'GloFAS v4 Forecast',      sub: '30-day ensemble · Daily updates',           color: 'bg-blue-50   text-blue-700   border-blue-200'   },
-                    { label: 'GloFAS v4 Seasonal',      sub: '7-month probabilistic · Monthly updates',  color: 'bg-violet-50 text-violet-700 border-violet-200' },
-                    { label: 'P25–P75 Ensemble Band',   sub: '50-member uncertainty quantification',     color: 'bg-purple-50 text-purple-700 border-purple-200' },
+                    { label: 'GloFAS v4 Reanalysis', sub: '1984–2022 · 0.05° (~5 km) · Daily', color: 'bg-blue-50   text-blue-700   border-blue-200' },
+                    { label: 'GloFAS v4 Forecast', sub: '30-day ensemble · Daily updates', color: 'bg-blue-50   text-blue-700   border-blue-200' },
+                    { label: 'GloFAS v4 Seasonal', sub: '7-month probabilistic · Monthly updates', color: 'bg-violet-50 text-violet-700 border-violet-200' },
+                    { label: 'P25–P75 Ensemble Band', sub: '50-member uncertainty quantification', color: 'bg-purple-50 text-purple-700 border-purple-200' },
                     ...(mlPrediction ? [
-                      { label: 'Bio-SentinelX ML',    sub: 'RF + XGBoost + LightGBM stacked ensemble',  color: 'bg-violet-100 text-violet-800 border-violet-300' },
+                      { label: 'Bio-SentinelX ML', sub: 'RF + XGBoost + LightGBM stacked ensemble', color: 'bg-violet-100 text-violet-800 border-violet-300' },
                       { label: 'ML Inundation Depth', sub: `${mlPrediction.estimated_inundation_depth_m.toFixed(3)}m estimated urban depth`, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
                     ] : []),
-                    { label: 'Seasonal Flood Calendar', sub: 'Latitude-based flood regime context',       color: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600' },
-                    { label: 'WHO / UNDRR',             sub: 'Flood health impact and vulnerability',    color: 'bg-teal-50   text-teal-700   border-teal-200'   },
+                    { label: 'Seasonal Flood Calendar', sub: 'Latitude-based flood regime context', color: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600' },
+                    { label: 'WHO / UNDRR', sub: 'Flood health impact and vulnerability', color: 'bg-teal-50   text-teal-700   border-teal-200' },
                   ].map(s => (
                     <span key={s.label} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${s.color}`}>
                       {s.label}
