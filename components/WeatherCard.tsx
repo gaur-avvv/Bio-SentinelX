@@ -251,6 +251,7 @@ export const WeatherCard: React.FC<WeatherCardProps> = ({ data }) => {
   const chartData = generateChartData();
 
   const hasAlerts = data.alerts && data.alerts.length > 0;
+  const placeLabel = data.city || 'Unknown Location';
 
   // Format sunrise/sunset for chart
   const getTimestamp = (isoString?: string) => {
@@ -361,7 +362,7 @@ export const WeatherCard: React.FC<WeatherCardProps> = ({ data }) => {
                   </div>
                   <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-3">
                     <p className={`font-black text-xs sm:text-base uppercase tracking-tight ${cardTextSecondary}`}>
-                      {data.description} &bull; {data.lat.toFixed(2)}, {data.lon.toFixed(2)}
+                      {data.description} &bull; {placeLabel}
                     </p>
                     <span className={`px-2.5 py-1 text-[10px] font-black rounded-lg uppercase tracking-[0.2em] flex items-center gap-1.5 ${cardMetaBadge}`}>
                       {cardMetaIcon}
