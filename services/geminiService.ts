@@ -1,9 +1,13 @@
 import { GoogleGenAI } from "@google/genai";
 import { WeatherData, AnalysisResponse, ChatMessage, LifestyleData } from '../types';
-import { retrieveRelevant } from './vectorDB';
+import { retrieveRelevant, getAllDocuments } from './vectorDB';
 import { buildMemoryContext } from './memoryService';
 import { promptCache } from './promptCacheService';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
+import { analyzeEnvironmentalImpact, initializeKnowledgeGraph } from './knowledgeGraphService';
+import { MEDGEMMA_MODELS, chatCompletion, checkModelAvailability, getHFToken } from './huggingFaceService';
+import { executeMcpOutbreakSweep } from './mcpOrchestrationService';
+import { McpSettings, DEFAULT_MCP_SETTINGS } from '../types';
 
 // ============================================================
 // UTILITY: Strip reasoning-model <think> / <thinking> blocks
@@ -16,6 +20,30 @@ import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
  */
 function stripThinkingBlocks(text: string): string {
   return stripHiddenModelReasoning(text);
+}
+
+interface OrchestrationTrace {
+  deepAnalysis: boolean;
+  kgUsed: boolean;
+  ragUsed: boolean;
+  docsIndexed: number;
+  mcpUsed: boolean;
+  mcpSignals: number;
+  medgemmaAttempted: boolean;
+  medgemmaUsed: boolean;
+  fallbackUsed: boolean;
+  fallbackProvider: string;
+  finalProvider: string;
+  finalModel: string;
+}
+
+function withOrchestrationTrace(
+  responseText: string,
+  trace: OrchestrationTrace,
+  includeTrace?: boolean,
+): string {
+  if (!includeTrace) return responseText;
+  return `[ORCH_TRACE]${JSON.stringify(trace)}[/ORCH_TRACE]\n${responseText}`;
 }
 
 // ============================================================
@@ -260,6 +288,35 @@ async function generateWithSiliconFlow(
   return data.choices?.[0]?.message?.content || '';
 }
 
+async function tryMedGemmaFirst(
+  systemInstruction: string,
+  userPrompt: string,
+  preferredModel?: string,
+  maxTokens: number = 2048,
+): Promise<string | null> {
+  const token = getHFToken();
+  if (!token) return null;
+
+  const modelId = preferredModel && preferredModel.includes('medgemma')
+    ? preferredModel
+    : (MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id);
+
+  try {
+    const status = await checkModelAvailability(modelId);
+    if (!status.available && !status.loading) return null;
+    const text = await chatCompletion(
+      [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userPrompt },
+      ],
+      { modelId, maxTokens, temperature: 0.3 }
+    );
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
 async function chatWithSiliconFlow(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   model: string,
@@ -306,8 +363,8 @@ export const generateHealthRiskAssessment = async (
   weatherFeedback: string,
   lifestyleData?: LifestyleData,
   reportImage?: string, // Base64 image
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash',
+  aiProvider: string,
+  aiModel: string,
   apiKey?: string,
   mlPrediction?: any,
 ): Promise<AnalysisResponse> => {
@@ -503,7 +560,15 @@ export const generateHealthRiskAssessment = async (
   // ROUTE TO PROVIDER
   // ============================================================
 
-  if (aiProvider === 'groq') {
+  // MedGemma is always attempted first for report generation when HF token is configured.
+  const medgemmaFirst = await tryMedGemmaFirst(systemInstruction, userPrompt, aiModel, 3072);
+  if (medgemmaFirst) {
+    return { markdown: stripThinkingBlocks(medgemmaFirst) || 'Analysis unavailable.', groundingChunks: [] };
+  }
+
+  const routeProvider = aiProvider === 'huggingface' ? 'gemini' : aiProvider;
+
+  if (routeProvider === 'groq') {
     if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
     try {
       const text = await generateWithGroq(systemInstruction, userPrompt, aiModel, apiKey);
@@ -513,7 +578,7 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
-  if (aiProvider === 'pollinations') {
+  if (routeProvider === 'pollinations') {
     try {
       const text = await generateWithPollinations(systemInstruction, userPrompt, aiModel, apiKey);
       return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
@@ -522,7 +587,7 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
-  if (aiProvider === 'openrouter') {
+  if (routeProvider === 'openrouter') {
     if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
     try {
       const text = await generateWithOpenRouter(systemInstruction, userPrompt, aiModel, apiKey);
@@ -532,7 +597,7 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
-  if (aiProvider === 'siliconflow') {
+  if (routeProvider === 'siliconflow') {
     if (!apiKey) throw new Error('SiliconFlow API key is missing. Please add it in the sidebar.');
     try {
       const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey!));
@@ -544,7 +609,7 @@ export const generateHealthRiskAssessment = async (
   }
 
   // ---- Ollama (Small Models) ----
-  if (aiProvider === 'ollama') {
+  if (routeProvider === 'ollama') {
     try {
       const { runSmallModelPipeline } = await import('./smallModelService');
       const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Generate health risk assessment', '', 'health_assessment', 1024, systemInstruction);
@@ -555,7 +620,9 @@ export const generateHealthRiskAssessment = async (
   }
 
   // ---- Gemini (default) ----
-  const geminiKey = apiKey || process.env.API_KEY;
+  const geminiKey = routeProvider === 'gemini' && aiProvider === 'huggingface'
+    ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+    : (apiKey || process.env.API_KEY);
   if (!geminiKey) {
     throw new Error('Gemini API Key is missing. Please configure it in the sidebar.');
   }
@@ -584,6 +651,16 @@ export const generateHealthRiskAssessment = async (
     return { markdown: text, groundingChunks };
 
   } catch (error: any) {
+    try {
+      const groqFallbackKey = localStorage.getItem('biosentinel_groq_key') || '';
+      if (groqFallbackKey) {
+        const groqText = await generateWithGroq(systemInstruction, userPrompt, 'llama-3.1-8b-instant', groqFallbackKey);
+        return { markdown: stripThinkingBlocks(groqText) || 'Analysis unavailable.', groundingChunks: [] };
+      }
+    } catch {
+      // Continue to mapped error below.
+    }
+
     console.error('Gemini API Error:', error);
     let userMessage = 'Neural core computation error.';
     if (error?.message?.includes('API_KEY_INVALID') || error?.status === 'INVALID_ARGUMENT') {
@@ -630,8 +707,8 @@ export interface HistoricalResearchInput {
 
 export const analyzeHistoricalClimateHealth = async (
   input: HistoricalResearchInput,
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash',
+  aiProvider: string,
+  aiModel: string,
   apiKey?: string
 ): Promise<string> => {
 
@@ -854,9 +931,38 @@ export const chatWithWeatherAssistant = async (
   message: string,
   apiKey?: string,
   mlPrediction?: any,
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash'
+  aiProvider: string,
+  aiModel: string,
+  options?: {
+    deepAnalysis?: boolean;
+    agenticMode?: boolean;
+    useMcpTools?: boolean;
+    llamaCloudEnabled?: boolean;
+    includeTrace?: boolean;
+    mcpSettings?: McpSettings;
+  }
 ): Promise<string> => {
+  const deepAnalysis = Boolean(options?.deepAnalysis);
+  const trace: OrchestrationTrace = {
+    deepAnalysis,
+    kgUsed: false,
+    ragUsed: false,
+    docsIndexed: 0,
+    mcpUsed: false,
+    mcpSignals: 0,
+    medgemmaAttempted: false,
+    medgemmaUsed: false,
+    fallbackUsed: false,
+    fallbackProvider: 'none',
+    finalProvider: 'gemini',
+    finalModel: aiModel,
+  };
+
+  const finish = (text: string, provider: string, model?: string) => {
+    trace.finalProvider = provider;
+    trace.finalModel = model || aiModel;
+    return withOrchestrationTrace(stripThinkingBlocks(text || "I'm sorry, I couldn't process that request."), trace, options?.includeTrace);
+  };
   const weatherContext = `
     Current context for ${weather.city}:
     - Temp: ${weather.temp}°C
@@ -903,10 +1009,74 @@ export const chatWithWeatherAssistant = async (
   ].filter(Boolean).join(' ');
 
   let _chatRagContext = '';
+  let docsCatalogContext = '';
+
+  if (deepAnalysis) {
+    try {
+      const docs = getAllDocuments();
+      trace.docsIndexed = docs.length;
+      if (docs.length > 0) {
+        const topDocs = docs.slice(0, 6).map((d, i) => `${i + 1}. ${d.title} (${d.source})`).join('\n');
+        docsCatalogContext = `\nRESEARCH DOCUMENT INDEX (auto-loaded for deep analysis):\n${topDocs}`;
+      }
+    } catch {
+      trace.docsIndexed = 0;
+    }
+  }
+
   try {
     _chatRagContext = await retrieveRelevant(_chatRagQuery, 4, apiKey || undefined);
+    trace.ragUsed = Boolean(_chatRagContext && _chatRagContext.trim());
   } catch (_e) {
     // Non-fatal
+  }
+
+  if (deepAnalysis && !_chatRagContext && trace.docsIndexed > 0) {
+    try {
+      const fallbackQuery = [weather.city, weather.description, 'health risks', 'clinical guidance', message].join(' ');
+      _chatRagContext = await retrieveRelevant(fallbackQuery, 8, apiKey || undefined);
+      trace.ragUsed = Boolean(_chatRagContext && _chatRagContext.trim());
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  let kgContext = '';
+  let mcpContext = '';
+  if (deepAnalysis) {
+    try {
+      initializeKnowledgeGraph();
+      const kg = analyzeEnvironmentalImpact({
+        temperature: weather.temp,
+        humidity: weather.humidity,
+        aqi: weather.aqi,
+        pm25: weather.advancedData?.pm2_5,
+        uvIndex: weather.uvIndex ?? undefined,
+      });
+      const topChains = kg.chains.slice(0, 3).map((chain, idx) => {
+        const labels = chain.nodes.map(n => n.label).join(' -> ');
+        return `${idx + 1}. ${labels} (strength ${chain.totalStrength.toFixed(2)})`;
+      }).join('\n');
+      trace.kgUsed = kg.chains.length > 0;
+      kgContext = `\nKNOWLEDGE GRAPH FINDINGS:\n${kg.summary}${topChains ? `\nTop causal pathways:\n${topChains}` : ''}`;
+    } catch {
+      kgContext = '';
+    }
+
+    if (options?.useMcpTools) {
+      trace.mcpUsed = true;
+      try {
+        const mcp = await executeMcpOutbreakSweep(weather.city, options?.mcpSettings || DEFAULT_MCP_SETTINGS);
+        trace.mcpSignals = mcp.trace.signals;
+        if (!mcp.trace.success && mcp.trace.error) {
+          trace.fallbackUsed = true;
+          trace.fallbackProvider = `mcp:${mcp.trace.error}`;
+        }
+        mcpContext = `\n${mcp.context}`;
+      } catch {
+        mcpContext = '\nMCP TOOL SIGNALS: regional sweep unavailable.';
+      }
+    }
   }
 
   // ── Lifestyle & feedback context from localStorage ──────────────────────────
@@ -988,17 +1158,38 @@ export const chatWithWeatherAssistant = async (
       ${mlContext}
       ${memoryContext}
       ${lifestyleContext}
+      ${docsCatalogContext}
+      ${deepAnalysis ? `\nDEEP ANALYSIS MODE: ACTIVE${options?.agenticMode ? ' (AGENTIC ORCHESTRATION ENABLED)' : ''}${options?.useMcpTools ? ' (MCP TOOLS ENABLED)' : ''}${options?.llamaCloudEnabled ? ' (LLAMAINDEX PARSER READY)' : ''}` : ''}
       ${_chatRagContext ? `\nRESEARCH LIBRARY CONTEXT (use to ground your response in user-uploaded evidence):\n${_chatRagContext}` : ''}`;
+
+  const userMessage = deepAnalysis
+    ? `${message}\n\n${kgContext}${mcpContext}\n\nRespond with sections: 1) Causal Pathway 2) Evidence Summary 3) Actions.`
+    : message;
 
   // ---- Build OpenAI-format messages (shared by Groq & Pollinations) ----
   const oaiMessages = [
     { role: 'system', content: systemInstruction },
     ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text })),
-    { role: 'user', content: message },
+    { role: 'user', content: userMessage },
   ];
 
+  if (deepAnalysis || aiProvider === 'huggingface') {
+    trace.medgemmaAttempted = true;
+    if (aiProvider === 'huggingface' && !getHFToken()) {
+      trace.fallbackUsed = true;
+      trace.fallbackProvider = 'missing_hf_token';
+    }
+    const medgemmaFirst = await tryMedGemmaFirst(systemInstruction, userMessage, aiModel, 2048);
+    if (medgemmaFirst) {
+      trace.medgemmaUsed = true;
+      return finish(medgemmaFirst, 'huggingface', aiModel.includes('medgemma') ? aiModel : (MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id));
+    }
+  }
+
+  const routeProvider = aiProvider === 'huggingface' ? 'gemini' : aiProvider;
+
   // ---- Groq ----
-  if (aiProvider === 'groq') {
+  if (routeProvider === 'groq') {
     if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -1014,11 +1205,11 @@ export const chatWithWeatherAssistant = async (
     }
     const data = await res.json() as any;
     promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-    return stripThinkingBlocks(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.");
+    return finish(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'groq', aiModel);
   }
 
   // ---- Pollinations ----
-  if (aiProvider === 'pollinations') {
+  if (routeProvider === 'pollinations') {
     const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) pollinationsHeaders['Authorization'] = `Bearer ${apiKey}`;
     const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
@@ -1036,11 +1227,11 @@ export const chatWithWeatherAssistant = async (
     }
     const data = await res.json() as any;
     promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-    return stripThinkingBlocks(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.");
+    return finish(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'pollinations', aiModel);
   }
 
   // ---- OpenRouter ----
-  if (aiProvider === 'openrouter') {
+  if (routeProvider === 'openrouter') {
     if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -1062,42 +1253,44 @@ export const chatWithWeatherAssistant = async (
     }
     const orData = await res.json() as any;
     promptCache.recordServerCacheHit(promptCache.extractCachedTokens(orData));
-    return stripThinkingBlocks(orData.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.");
+    return finish(orData.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'openrouter', aiModel);
   }
 
   // ---- SiliconFlow ----
-  if (aiProvider === 'siliconflow') {
+  if (routeProvider === 'siliconflow') {
     const text = await withRetry(() => chatWithSiliconFlow(
       oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
       aiModel,
       apiKey || ''
     ));
-    return stripThinkingBlocks(text);
+    return finish(text, 'siliconflow', aiModel);
   }
 
   // ---- Cerebras ----
-  if (aiProvider === 'cerebras') {
+  if (routeProvider === 'cerebras') {
     const text = await chatWithCerebras(
       oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
       aiModel,
       apiKey || ''
     );
-    return stripThinkingBlocks(text);
+    return finish(text, 'cerebras', aiModel);
   }
 
   // ---- Ollama (Small Models) ----
-  if (aiProvider === 'ollama') {
+  if (routeProvider === 'ollama') {
     const { chatWithOllama } = await import('./smallModelService');
     const text = await chatWithOllama(
       oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
       aiModel,
       1024
     );
-    return stripThinkingBlocks(text);
+    return finish(text, 'ollama', aiModel);
   }
 
   // ---- Gemini (default) ----
-  const key = apiKey || process.env.API_KEY;
+  const key = routeProvider === 'gemini' && aiProvider === 'huggingface'
+    ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+    : (apiKey || process.env.API_KEY);
   if (!key) throw new Error('Gemini API Key missing. Please configure it in the sidebar.');
   const ai = new GoogleGenAI({ apiKey: key });
 
@@ -1112,9 +1305,19 @@ export const chatWithWeatherAssistant = async (
     history: chatHistory,
     config: { systemInstruction },
   });
-
-  const response = await chat.sendMessage({ message });
-  return stripThinkingBlocks(response.text || "I'm sorry, I couldn't process that request.");
+  try {
+    const response = await chat.sendMessage({ message: userMessage });
+    return finish(response.text || "I'm sorry, I couldn't process that request.", 'gemini', aiModel);
+  } catch (error: any) {
+    const groqFallbackKey = localStorage.getItem('biosentinel_groq_key') || '';
+    if (groqFallbackKey) {
+      trace.fallbackUsed = true;
+      trace.fallbackProvider = 'groq';
+      const groqText = await generateWithGroq(systemInstruction, userMessage, 'llama-3.1-8b-instant', groqFallbackKey);
+      return finish(groqText || "I'm sorry, I couldn't process that request.", 'groq', 'llama-3.1-8b-instant');
+    }
+    throw error;
+  }
 };
 
 // ============================================================
@@ -1203,8 +1406,8 @@ export interface FloodAnalysisInput {
 
 export const analyzeFloodRisk = async (
   input: FloodAnalysisInput,
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash',
+  aiProvider: string,
+  aiModel: string,
   apiKey?: string
 ): Promise<string> => {
   const systemInstruction = `You are an expert hydrologist, flood risk analyst, and urban disaster management specialist with deep knowledge of GloFAS v4 global river discharge models, precipitation-driven catchment response, machine learning flood prediction systems, river catchment hydrology, urban drainage infrastructure, and WHO/UNDRR disaster risk frameworks. When ML model data is available, synthesise it with hydrological data for a combined multi-model consensus view. Always cite specific numerical values and be direct about uncertainty.

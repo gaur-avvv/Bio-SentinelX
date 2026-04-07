@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { WeatherData } from '../types';
+import { WeatherData, AiProvider } from '../types';
 
 // Map SDK globals — loaded dynamically via script tags in App.tsx
 declare const mappls: any;
@@ -54,8 +54,8 @@ import { analyzeFloodRisk, FloodAnalysisInput } from '../services/geminiService'
 interface FloodPredictionProps {
   weather: WeatherData | null;
   onBack: () => void;
-  aiProvider?: string;
-  aiModel?: string;
+  aiProvider: AiProvider;
+  aiModel: string;
   aiKey?: string;
   mapProvider?: 'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis';
   mapplsToken?: string;
@@ -200,7 +200,7 @@ function computeGiStar(
 
 
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
-  weather, onBack, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey,
+  weather, onBack, aiProvider, aiModel, aiKey,
   mapProvider = 'arcgis', mapplsToken, mapTilerKey, mapboxToken, arcGisKey,
 }) => {
   // ── Cache ───────────────────────────────────────────────────────────────────

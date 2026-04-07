@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Component, ReactNode } from 'react';
 import { Settings, MapPin, Key, CheckCircle2, Crosshair, HelpCircle, Zap, ShieldCheck, Info, Loader2, Server, Wifi, WifiOff, AlertTriangle, ChevronDown, Brain, X, Sun, Sunset, Moon, Palette, Wand2 } from 'lucide-react';
-import { LoadingState, AiProvider, AI_MODELS } from '../types';
+import { LoadingState, AiProvider, AI_MODELS, DatabaseSettings, EmailAlertSettings } from '../types';
 import { geocodeLocation } from '../services/weatherService';
 import { checkBioSentinelHealth } from '../services/mlService';
 import { TokenBudgetPanel } from './TokenBudgetPanel';
@@ -51,8 +51,14 @@ interface ConfigSidebarProps {
   setUseOpenWeather: (use: boolean) => void;
   openWeatherKey: string;
   setOpenWeatherKey: (key: string) => void;
+  bioSentinelApiUrl?: string;
+  setBioSentinelApiUrl?: (url: string) => void;
   mlApiKey: string;
   setMlApiKey: (key: string) => void;
+  databaseSettings?: DatabaseSettings;
+  setDatabaseSettings?: (patch: Partial<DatabaseSettings>) => void;
+  emailAlertSettings?: EmailAlertSettings;
+  setEmailAlertSettings?: (patch: Partial<EmailAlertSettings>) => void;
   onClose?: () => void;
 }
 
@@ -63,7 +69,11 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
   ollamaEndpoint, setOllamaEndpoint,
   aiProvider, setAiProvider, aiModel, setAiModel,
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
-  mlApiKey, setMlApiKey, onClose
+  bioSentinelApiUrl, setBioSentinelApiUrl,
+  mlApiKey, setMlApiKey,
+  databaseSettings, setDatabaseSettings,
+  emailAlertSettings, setEmailAlertSettings,
+  onClose,
 }) => {
   const isLoading = loadingState === LoadingState.LOADING_WEATHER;
   const [isLocating, setIsLocating] = useState(false);
@@ -174,31 +184,28 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
           <button
             title="Auto — follows your OS dark/light preference"
             onClick={() => setAppMode('auto')}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-              appMode === 'auto'
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${appMode === 'auto'
                 ? 'bg-teal-500 text-white shadow-lg shadow-teal-400/40 scale-105'
                 : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-teal-100 hover:text-teal-600'
-            }`}>
+              }`}>
             <Wand2 className="w-3 h-3" />Auto
           </button>
           <button
             title="Light mode"
             onClick={() => setAppMode('light')}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-              appMode === 'light'
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${appMode === 'light'
                 ? 'bg-amber-400 text-white shadow-lg shadow-amber-300/40 scale-105'
                 : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-amber-100 hover:text-amber-600'
-            }`}>
+              }`}>
             <Sun className="w-3 h-3" />Light
           </button>
           <button
             title="Dark mode"
             onClick={() => setAppMode('dark')}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-              appMode === 'dark'
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${appMode === 'dark'
                 ? 'bg-slate-800 text-blue-300 shadow-lg shadow-slate-700/40 scale-105'
                 : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-800 hover:text-blue-300'
-            }`}>
+              }`}>
             <Moon className="w-3 h-3" />Dark
           </button>
         </div>
@@ -209,41 +216,37 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
           <button
             title="Auto — switches by local time of day"
             onClick={() => { setWeatherThemeLocked(false); setWeatherCardMode(autoWeatherTheme(new Date().getHours())); }}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-              !weatherThemeLocked
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${!weatherThemeLocked
                 ? 'bg-teal-500 text-white shadow-md shadow-teal-300/40 scale-105'
                 : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-teal-100 hover:text-teal-600'
-            }`}>
+              }`}>
             <Wand2 className="w-3 h-3" />Auto
           </button>
           <button
             title="Light card"
             onClick={() => { setWeatherCardMode('light'); setWeatherThemeLocked(true); }}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-              weatherThemeLocked && weatherCardMode === 'light'
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${weatherThemeLocked && weatherCardMode === 'light'
                 ? 'bg-amber-400 text-white shadow-md shadow-amber-300/40 scale-105'
                 : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-amber-100 hover:text-amber-600'
-            }`}>
+              }`}>
             <Sun className="w-3 h-3" />Day
           </button>
           <button
             title="Twilight card"
             onClick={() => { setWeatherCardMode('partial-dark'); setWeatherThemeLocked(true); }}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-              weatherThemeLocked && weatherCardMode === 'partial-dark'
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${weatherThemeLocked && weatherCardMode === 'partial-dark'
                 ? 'bg-indigo-500 text-white shadow-md shadow-indigo-400/40 scale-105'
                 : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-indigo-100 hover:text-indigo-600'
-            }`}>
+              }`}>
             <Sunset className="w-3 h-3" />Dusk
           </button>
           <button
             title="Full dark card"
             onClick={() => { setWeatherCardMode('full-dark'); setWeatherThemeLocked(true); }}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-              weatherThemeLocked && weatherCardMode === 'full-dark'
+            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${weatherThemeLocked && weatherCardMode === 'full-dark'
                 ? 'bg-blue-800 text-blue-200 shadow-md shadow-blue-800/40 scale-105'
                 : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-blue-900 hover:text-blue-300'
-            }`}>
+              }`}>
             <Moon className="w-3 h-3" />Night
           </button>
         </div>
@@ -251,11 +254,10 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
         {/* Custom Colours Toggle */}
         <button
           onClick={() => setShowCustomColors(v => !v)}
-          className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${
-            useCustomColors
+          className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${useCustomColors
               ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700 text-purple-700 dark:text-purple-300'
               : 'bg-slate-100 dark:bg-slate-700 border-transparent text-slate-500 dark:text-slate-300 hover:border-slate-200'
-          }`}>
+            }`}>
           <div className="flex items-center gap-1.5">
             <Palette className="w-3.5 h-3.5" />
             Custom Colours
@@ -272,8 +274,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
           <div className="space-y-3 pt-1 animate-fade-in">
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-2 cursor-pointer">
-                <div className={`w-8 h-4 rounded-full transition-colors relative ${ useCustomColors ? 'bg-purple-500' : 'bg-slate-300 dark:bg-slate-600' }`}>
-                  <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${ useCustomColors ? 'translate-x-4' : 'translate-x-0.5' }`} />
+                <div className={`w-8 h-4 rounded-full transition-colors relative ${useCustomColors ? 'bg-purple-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                  <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${useCustomColors ? 'translate-x-4' : 'translate-x-0.5'}`} />
                   <input type="checkbox" checked={useCustomColors} onChange={e => setUseCustomColors(e.target.checked)} className="sr-only" />
                 </div>
                 <span className="text-[9px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest">Enable custom colours</span>
@@ -334,35 +336,47 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
 
       <div className="space-y-8">
         {/* API Status Indicator */}
-        <div className={`p-4 rounded-2xl border ${
-          apiStatus === 'online' ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-800/50' : 
-          apiStatus === 'offline' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-800/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'
-        }`}>
+        <div className={`p-4 rounded-2xl border ${apiStatus === 'online' ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-800/50' :
+            apiStatus === 'offline' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-800/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'
+          }`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-xl ${
-                apiStatus === 'online' ? 'bg-emerald-500 text-white' : 
-                apiStatus === 'offline' ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-400'
-              }`}>
+              <div className={`p-2 rounded-xl ${apiStatus === 'online' ? 'bg-emerald-500 text-white' :
+                  apiStatus === 'offline' ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-400'
+                }`}>
                 <Server className="w-4 h-4" />
               </div>
               <div>
                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bio-Sentinel API</p>
-                <p className={`text-xs font-black uppercase tracking-tight ${
-                  apiStatus === 'online' ? 'text-emerald-700 dark:text-emerald-400' : 
-                  apiStatus === 'offline' ? 'text-rose-700 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'
-                }`}>
+                <p className={`text-xs font-black uppercase tracking-tight ${apiStatus === 'online' ? 'text-emerald-700 dark:text-emerald-400' :
+                    apiStatus === 'offline' ? 'text-rose-700 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'
+                  }`}>
                   {apiStatus === 'checking' ? 'Connecting...' : apiStatus}
                 </p>
               </div>
             </div>
             <div className="relative">
-               {apiStatus === 'online' && <Wifi className="w-4 h-4 text-emerald-500" />}
-               {apiStatus === 'offline' && <WifiOff className="w-4 h-4 text-rose-500" />}
-               {apiStatus === 'checking' && <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />}
-               {apiStatus === 'online' && <span className="absolute top-0 right-0 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />}
+              {apiStatus === 'online' && <Wifi className="w-4 h-4 text-emerald-500" />}
+              {apiStatus === 'offline' && <WifiOff className="w-4 h-4 text-rose-500" />}
+              {apiStatus === 'checking' && <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />}
+              {apiStatus === 'online' && <span className="absolute top-0 right-0 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />}
             </div>
           </div>
+          <div className="mt-3 space-y-1.5">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">BIO-SENTINEL API URL</p>
+            <div className="relative group">
+              <Server className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-teal-500 transition-colors" />
+              <input
+                type="url"
+                value={bioSentinelApiUrl || ''}
+                onChange={e => setBioSentinelApiUrl?.(e.target.value)}
+                placeholder="https://web-production-1f43.up.railway.app"
+                className="w-full pl-9 pr-3 py-2.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500"
+              />
+            </div>
+            <p className="text-[9px] font-bold text-slate-400">Primary endpoint for Bio-Sentinel FastAPI deployment.</p>
+          </div>
+
           <div className="mt-3 space-y-1.5">
             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">ML API Key <span className="normal-case font-bold text-slate-300">(optional)</span></p>
             <div className="relative group">
@@ -377,6 +391,79 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             </div>
             <p className="text-[9px] font-bold text-slate-400">Leave blank for public access. Required for private deployments.</p>
           </div>
+
+          <div className="mt-3 space-y-2 p-3 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Database Integrations</p>
+            <select
+              value={databaseSettings?.preferredDb || 'none'}
+              onChange={e => setDatabaseSettings?.({ preferredDb: e.target.value as 'none' | 'supabase' | 'firebase' })}
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            >
+              <option value="none">None</option>
+              <option value="supabase">Supabase</option>
+              <option value="firebase">Firebase</option>
+            </select>
+            <input
+              type="url"
+              value={databaseSettings?.supabaseUrl || ''}
+              onChange={e => setDatabaseSettings?.({ supabaseUrl: e.target.value })}
+              placeholder="Supabase URL"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            />
+            <input
+              type="password"
+              value={databaseSettings?.supabaseAnonKey || ''}
+              onChange={e => setDatabaseSettings?.({ supabaseAnonKey: e.target.value })}
+              placeholder="Supabase Anon Key"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            />
+            <textarea
+              value={databaseSettings?.firebaseConfigJson || ''}
+              onChange={e => setDatabaseSettings?.({ firebaseConfigJson: e.target.value })}
+              placeholder="Firebase config JSON / databaseURL"
+              rows={2}
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold resize-none"
+            />
+            <input
+              type="password"
+              value={databaseSettings?.firebaseApiKey || ''}
+              onChange={e => setDatabaseSettings?.({ firebaseApiKey: e.target.value })}
+              placeholder="Firebase API Key (optional)"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            />
+          </div>
+
+          <div className="mt-3 space-y-2 p-3 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Email Providers</p>
+            <input
+              type="password"
+              value={emailAlertSettings?.resendApiKey || ''}
+              onChange={e => setEmailAlertSettings?.({ resendApiKey: e.target.value })}
+              placeholder="Resend API Key"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            />
+            <input
+              type="email"
+              value={emailAlertSettings?.resendFromEmail || ''}
+              onChange={e => setEmailAlertSettings?.({ resendFromEmail: e.target.value })}
+              placeholder="Resend From Email"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            />
+            <input
+              type="password"
+              value={emailAlertSettings?.sendGridApiKey || ''}
+              onChange={e => setEmailAlertSettings?.({ sendGridApiKey: e.target.value })}
+              placeholder="SendGrid API Key"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            />
+            <input
+              type="email"
+              value={emailAlertSettings?.sendGridFromEmail || ''}
+              onChange={e => setEmailAlertSettings?.({ sendGridFromEmail: e.target.value })}
+              placeholder="SendGrid From Email"
+              className="w-full px-3 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold"
+            />
+          </div>
         </div>
 
         <div className="p-5 bg-teal-50 dark:bg-teal-950/30 rounded-2xl border border-teal-100 dark:border-teal-800/50 space-y-3">
@@ -386,9 +473,9 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
               <span className="text-xs font-black uppercase tracking-tight">Weather Data Source</span>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="sr-only peer" 
+              <input
+                type="checkbox"
+                className="sr-only peer"
                 checked={useOpenWeather}
                 onChange={(e) => setUseOpenWeather(e.target.checked)}
               />
@@ -417,7 +504,7 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
                 className="w-full pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none transition-all text-sm font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500 focus:bg-white dark:focus:bg-slate-700"
               />
             </div>
-            <button 
+            <button
               onClick={handleGetCurrentLocation}
               disabled={isLocating}
               className="px-4 bg-slate-900 text-teal-400 rounded-2xl hover:bg-teal-600 hover:text-white transition-all shadow-md active:scale-90 disabled:opacity-50"
@@ -467,11 +554,10 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
                   setAiProvider(p);
                   setAiModel(AI_MODELS[p][0].value);
                 }}
-                className={`py-2 px-1.5 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-                  aiProvider === p
+                className={`py-2 px-1.5 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${aiProvider === p
                     ? 'bg-white text-teal-600 shadow-sm'
                     : 'text-slate-400 hover:text-slate-600'
-                }`}
+                  }`}
               >
                 {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'OpenRouter' : p === 'siliconflow' ? 'SiliconFlow' : p === 'ollama' ? 'Ollama' : p.charAt(0).toUpperCase() + p.slice(1)}
               </button>
@@ -582,9 +668,9 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 OpenWeather API Key
               </label>
-              <a 
-                href="https://home.openweathermap.org/api_keys" 
-                target="_blank" 
+              <a
+                href="https://home.openweathermap.org/api_keys"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="text-[9px] font-black text-teal-600 uppercase hover:underline"
               >
@@ -611,24 +697,24 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
           onClick={() => { onFetchWeather(); onClose?.(); }}
           disabled={!location || isLoading}
           className={`w-full py-5 rounded-[1.5rem] font-black uppercase tracking-widest text-xs transition-all flex justify-center items-center gap-3
-            ${!location || isLoading 
-              ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed' 
+            ${!location || isLoading
+              ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed'
               : 'bg-slate-900 dark:bg-teal-600 text-white hover:bg-teal-600 dark:hover:bg-teal-500 shadow-xl shadow-slate-200 dark:shadow-teal-900/30 active:scale-95'}
           `}
         >
           {isLoading ? (
-             <>
-               <Loader2 className="w-4 h-4 animate-spin"/>
-               Connecting...
-             </>
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Connecting...
+            </>
           ) : (hasWeatherData ? 'Refresh Weather' : 'Get Weather')}
         </button>
       </div>
 
       <div className="mt-auto pt-10 border-t border-slate-100 dark:border-slate-700/50">
         <div className="flex items-center gap-3 justify-center text-slate-300">
-           <Zap className="w-4 h-4" />
-           <p className="text-[10px] font-black tracking-widest uppercase">BioSentinel v2.5</p>
+          <Zap className="w-4 h-4" />
+          <p className="text-[10px] font-black tracking-widest uppercase">BioSentinel v2.5</p>
         </div>
       </div>
     </div>

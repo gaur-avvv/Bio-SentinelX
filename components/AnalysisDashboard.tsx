@@ -3,11 +3,13 @@ import { useDataCache, isCacheValid } from '../contexts/DataCacheContext';
 import { Activity, AlertCircle, CloudRain, AlertOctagon, AlertTriangle, ArrowRight, BrainCircuit, CheckCircle, ChevronDown, ChevronRight, ChevronUp, Cpu, Database, FileDown, HeartPulse, Info, Loader2, MessageSquarePlus, RefreshCw, Send, ShieldAlert, ShieldCheck, Sparkles, Thermometer, ThermometerSun, ThumbsDown, ThumbsUp, TrendingUp, XCircle, Zap, Printer, List, Search, Waves, Bug, Wind, CloudFog, CloudSun, Bot, User, Hospital, MapPinned, Phone, Navigation, Droplets, ListChecks, RefreshCcw, ShieldX, Download, Camera, RotateCcw, Trash2, BarChart3, Calendar, Copy, Check, Clock, HelpCircle, BarChart2, ExternalLink, Glasses, PersonStanding, Umbrella, Dumbbell, Flame, FlaskConical, Brain, Heart, Leaf, Moon, Apple, Pill, Coffee, Sun } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, AreaChart, Area, BarChart, Bar, Cell, ReferenceLine } from 'recharts';
-import { WeatherData, LoadingState, GroundingChunk, RiskItem, SeverityLevel, ChatMessage, LifestyleData, DatabaseSettings } from '../types';
+import { WeatherData, LoadingState, GroundingChunk, RiskItem, SeverityLevel, ChatMessage, LifestyleData, DatabaseSettings, AiProvider } from '../types';
 import { generateHealthRiskAssessment, chatWithWeatherAssistant } from '../services/geminiService';
 import { predictBioRisks, MLPrediction, formatExplanations, submitFeedback, quickHealthCheck } from '../services/mlService';
 import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, reconstructReportContent } from '../services/memoryService';
-import { saveSymptomData, UserSymptomData } from '../services/dbService';
+import { saveSymptomData, fetchLocalOutbreakData, UserSymptomData } from '../services/dbService';
+import { IndicLanguage, INDIC_LANGUAGE_LABELS, processFieldConversation, getFieldConversations } from '../services/indicDataService';
+import { reverseGeocode } from '../services/geoService';
 import { ReportRenderer } from './ReportRenderer';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 
@@ -19,8 +21,8 @@ interface AnalysisDashboardProps {
   weather: WeatherData | null;
   loadingState: LoadingState;
   setLoadingState: (state: LoadingState) => void;
-  aiProvider?: string;
-  aiModel?: string;
+  aiProvider: AiProvider;
+  aiModel: string;
   aiKey?: string;
   onOpenAssistant?: () => void;
   databaseSettings?: DatabaseSettings;
@@ -322,6 +324,23 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
       .slice(0, 8)
   );
 
+  const causalPathways = sortedFactors.slice(0, 4).map(f => {
+    const feature = f.feature.toLowerCase();
+    if (feature.includes('pm2') || feature.includes('pm10') || feature.includes('aqi')) {
+      return `Air particulates elevated (${f.feature}) -> airway inflammation -> respiratory flare risk`;
+    }
+    if (feature.includes('temp') || feature.includes('heat') || feature.includes('uv')) {
+      return `Thermal load increased (${f.feature}) -> dehydration/heat strain -> cardiovascular and heat illness risk`;
+    }
+    if (feature.includes('humidity') || feature.includes('dew')) {
+      return `High moisture burden (${f.feature}) -> pathogen/allergen persistence -> infectious and allergic symptom risk`;
+    }
+    if (feature.includes('pressure') || feature.includes('wind')) {
+      return `Atmospheric instability (${f.feature}) -> physiological stress response -> headache and cardiopulmonary risk`;
+    }
+    return `${f.feature} anomaly -> environmental stress accumulation -> elevated disease vulnerability`;
+  });
+
   const exportSnapshotJson = () => {
     const payload = {
       generatedAt: new Date().toISOString(),
@@ -530,6 +549,23 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
         </div>
 
       </div>
+
+      {/* Causal pathway mini-graph (text flow) */}
+      {causalPathways.length > 0 && (
+        <div className="relative z-10 p-5 sm:p-6 bg-slate-800/50 rounded-2xl border border-slate-700/60">
+          <div className="flex items-center gap-2 mb-3">
+            <Brain className="w-4 h-4 text-teal-400" />
+            <h4 className="text-[10px] sm:text-xs font-black text-teal-300 uppercase tracking-widest">Causal Pathway Analysis</h4>
+          </div>
+          <div className="space-y-2">
+            {causalPathways.map((path, idx) => (
+              <p key={`${path}-${idx}`} className="text-xs sm:text-sm font-bold text-slate-200 leading-relaxed">
+                {idx + 1}. {path}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ML-Driven Recommendations - Full Width Below */}
       {prediction.recommendation && (
@@ -839,11 +875,52 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
   const [symptomSeverity, setSymptomSeverity] = useState<number>(3);
   const [symptomDetails, setSymptomDetails] = useState('');
+  const [symptomDuration, setSymptomDuration] = useState<'<24h' | '1-3d' | '4-7d' | '>7d'>('<24h');
+  const [symptomTrend, setSymptomTrend] = useState<'worsening' | 'stable' | 'improving'>('stable');
+  const [exposureFactors, setExposureFactors] = useState<string[]>([]);
+  const [symptomImageDataUrl, setSymptomImageDataUrl] = useState<string>('');
+  const [symptomImageName, setSymptomImageName] = useState<string>('');
   const [isSubmittingSymptom, setIsSubmittingSymptom] = useState(false);
   const [symptomSuccess, setSymptomSuccess] = useState(false);
+  const [localSymptomRecords, setLocalSymptomRecords] = useState<UserSymptomData[]>([]);
+  const [localOutbreakSignal, setLocalOutbreakSignal] = useState<{ level: 'low' | 'watch' | 'high'; score: number; summary: string } | null>(null);
+  const [intakeLanguage, setIntakeLanguage] = useState<IndicLanguage>('hi');
+  const [intakeDistrict, setIntakeDistrict] = useState('');
+  const [intakeState, setIntakeState] = useState('');
+  const [intakeText, setIntakeText] = useState('');
+  const [intakeImageUrl, setIntakeImageUrl] = useState('');
+  const [intakeProcessing, setIntakeProcessing] = useState(false);
+  const [intakeMessage, setIntakeMessage] = useState('');
+  const [recentExtractions, setRecentExtractions] = useState<ReturnType<typeof getFieldConversations>>([]);
 
   const initialQuickSymptoms = ['Feeling unwell', 'Headache', 'Cough', 'Fever', 'Nausea'];
   const advancedSymptoms = ['Chills', 'Fatigue', 'Body Ache', 'Shortness of breath', 'Diarrhea', 'Rash', 'Sore Throat', 'Vomiting'];
+  const exposureOptions = ['Travel', 'Crowded indoor area', 'Flood water contact', 'Known sick contact', 'Mosquito-dense area', 'Poor air quality'];
+
+  const dedupeSymptomRecords = (records: UserSymptomData[]): UserSymptomData[] => {
+    const seen = new Set<string>();
+    return records.filter((r) => {
+      const signature = [
+        r.city,
+        new Date(r.timestamp).toISOString().slice(0, 19),
+        [...(r.symptoms || [])].sort().join('|'),
+        r.additionalDetails || '',
+      ].join('::');
+      if (seen.has(signature)) return false;
+      seen.add(signature);
+      return true;
+    });
+  };
+
+  const dedupeExtractions = (items: ReturnType<typeof getFieldConversations>) => {
+    const seen = new Set<string>();
+    return items.filter((it) => {
+      const signature = `${it.district}::${it.state}::${it.language}::${it.text.toLowerCase().trim()}::${it.timestamp}`;
+      if (seen.has(signature)) return false;
+      seen.add(signature);
+      return true;
+    });
+  };
 
   const handleSymptomToggle = (symptom: string) => {
     setSelectedSymptoms(prev =>
@@ -865,12 +942,15 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       severity: symptomSeverity,
       location: { lat: weather.lat, lon: weather.lon },
       timestamp: new Date().toISOString(),
-      additionalDetails: symptomDetails
+      additionalDetails: `Duration: ${symptomDuration}\nTrend: ${symptomTrend}\nExposure: ${exposureFactors.join(', ') || 'None reported'}\n${symptomDetails}${symptomImageDataUrl ? `\n[IMAGE_UPLOAD:${symptomImageName || 'symptom-image'}]` : ''}`,
+      imageDataUrl: symptomImageDataUrl || undefined,
     };
 
     try {
       if (databaseSettings) {
-         await saveSymptomData(databaseSettings, data);
+        await saveSymptomData(databaseSettings, data);
+        const latest = await fetchLocalOutbreakData(databaseSettings, weather.city);
+        setLocalSymptomRecords(dedupeSymptomRecords(latest));
       }
       setSymptomSuccess(true);
       setTimeout(() => {
@@ -878,6 +958,11 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         setShowSurveillanceForm(false);
         setSelectedSymptoms([]);
         setSymptomDetails('');
+        setSymptomDuration('<24h');
+        setSymptomTrend('stable');
+        setExposureFactors([]);
+        setSymptomImageDataUrl('');
+        setSymptomImageName('');
       }, 3000);
     } catch (e) {
       console.error(e);
@@ -899,10 +984,162 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     { label: 'Water Contamination', value: 'Water looks/smells contaminated', icon: Waves },
   ];
 
+  useEffect(() => {
+    setRecentExtractions(dedupeExtractions(getFieldConversations()).slice(0, 5));
+  }, []);
+
+  useEffect(() => {
+    const fillLocation = async () => {
+      if (!weather?.lat || !weather?.lon) return;
+      if (intakeDistrict && intakeState) return;
+      const info = await reverseGeocode(weather.lat, weather.lon);
+      if (info) {
+        if (!intakeDistrict) setIntakeDistrict(info.district || info.city || weather.city || 'Unknown District');
+        if (!intakeState) setIntakeState(info.state || 'Unknown State');
+      } else if (!intakeDistrict && weather.city) {
+        setIntakeDistrict(weather.city);
+      }
+    };
+    fillLocation();
+  }, [weather?.lat, weather?.lon, weather?.city, intakeDistrict, intakeState]);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!databaseSettings || !weather?.city) {
+        setLocalSymptomRecords([]);
+        setLocalOutbreakSignal(null);
+        return;
+      }
+
+      const records = await fetchLocalOutbreakData(databaseSettings, weather.city);
+      setLocalSymptomRecords(dedupeSymptomRecords(records));
+    };
+
+    run();
+
+    const timer = setInterval(run, 45000);
+    return () => clearInterval(timer);
+  }, [databaseSettings, weather?.city]);
+
+  useEffect(() => {
+    if (localSymptomRecords.length === 0) {
+      setLocalOutbreakSignal(null);
+      return;
+    }
+
+    const now = Date.now();
+    const last48h = localSymptomRecords.filter(r => now - new Date(r.timestamp).getTime() <= 48 * 3600 * 1000);
+    const recentCount = last48h.length;
+    const avgSeverity = recentCount > 0
+      ? last48h.reduce((acc, r) => acc + (r.severity || 0), 0) / recentCount
+      : 0;
+    const feverLikeCount = last48h.filter(r => r.symptoms.some(s => /fever|cough|chills|breath|diarrhea/i.test(s))).length;
+
+    // Simple cluster score for local outbreak watch.
+    const score = Math.min(100, Math.round((recentCount * 8) + (avgSeverity * 10) + (feverLikeCount * 4)));
+    const level: 'low' | 'watch' | 'high' = score >= 70 ? 'high' : score >= 40 ? 'watch' : 'low';
+    const summary = level === 'high'
+      ? `Cluster signal is high in ${weather?.city}. ${recentCount} recent symptom reports with average severity ${avgSeverity.toFixed(1)}.`
+      : level === 'watch'
+        ? `Watch signal in ${weather?.city}: ${recentCount} recent reports detected.`
+        : `Low cluster signal in ${weather?.city}. Continue monitoring.`;
+
+    setLocalOutbreakSignal({ level, score, summary });
+  }, [localSymptomRecords, weather?.city]);
+
   const handleAddCustomObs = () => {
     if (!customObs.trim()) return;
     addObservation(customObs);
     setCustomObs("");
+  };
+
+  const handleAutoFillIntakeLocation = () => {
+    if (weather?.city && !intakeDistrict) setIntakeDistrict(weather.city);
+    if (!intakeState) setIntakeState('Unknown');
+  };
+
+  const handleSymptomImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setSymptomImageName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      setSymptomImageDataUrl(result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const toggleExposureFactor = (factor: string) => {
+    setExposureFactors(prev => prev.includes(factor) ? prev.filter(f => f !== factor) : [...prev, factor]);
+  };
+
+  const sendIntelToAssistant = async () => {
+    const intelSummary = [
+      `Location: ${weather?.city || intakeDistrict || 'unknown'}`,
+      `Selected symptoms: ${selectedSymptoms.join(', ') || 'none'}`,
+      `Severity: ${symptomSeverity}/5`,
+      `Duration: ${symptomDuration}`,
+      `Trend: ${symptomTrend}`,
+      `Exposure factors: ${exposureFactors.join(', ') || 'none'}`,
+      `Clinical notes: ${symptomDetails || userFeedback || 'none'}`,
+    ].join('\n');
+
+    setActiveInputTab('assistant');
+    await sendMessage(`Deep analysis request from local intel:\n${intelSummary}`);
+  };
+
+  const handleProcessClinicalIntake = async () => {
+    if (!intakeText.trim() || !intakeDistrict.trim() || !intakeState.trim()) {
+      setIntakeMessage('Please fill patient description, district, and state.');
+      return;
+    }
+
+    setIntakeProcessing(true);
+    setIntakeMessage('');
+
+    try {
+      const conversation = processFieldConversation(
+        intakeText.trim(),
+        intakeLanguage,
+        intakeDistrict.trim(),
+        intakeState.trim()
+      );
+
+      if (databaseSettings && databaseSettings.preferredDb !== 'none') {
+        const symptomPayload: UserSymptomData = {
+          city: weather?.city || intakeDistrict.trim(),
+          symptoms: conversation.extractedSyndromes.length > 0
+            ? conversation.extractedSyndromes
+            : ['Unusual fever cluster'],
+          severity: conversation.confidence >= 0.75 ? 5 : conversation.confidence >= 0.55 ? 4 : 3,
+          location: { lat: weather?.lat || 0, lon: weather?.lon || 0 },
+          timestamp: new Date().toISOString(),
+          additionalDetails: `${conversation.text}${intakeImageUrl ? ` | Image: ${intakeImageUrl}` : ''}`,
+          diseaseTags: conversation.icd10Codes,
+        };
+
+        await saveSymptomData(databaseSettings, symptomPayload);
+        const latest = await fetchLocalOutbreakData(databaseSettings, weather?.city || intakeDistrict.trim());
+        setLocalSymptomRecords(dedupeSymptomRecords(latest));
+      }
+
+      setRecentExtractions(dedupeExtractions(getFieldConversations()).slice(0, 5));
+
+      if (conversation.extractedSyndromes.length > 0) {
+        addObservation(`Clinical intake extracted: ${conversation.extractedSyndromes.join(', ')}`);
+      } else {
+        addObservation(`Clinical intake logged from ${intakeDistrict}`);
+      }
+
+      setIntakeMessage('Clinical intake processed and stored from Home.');
+      setIntakeText('');
+      setIntakeImageUrl('');
+    } catch (err) {
+      setIntakeMessage(`Failed to process intake: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIntakeProcessing(false);
+    }
   };
 
   // Stable callback – reads from ref so its identity never changes while typing
@@ -970,12 +1207,12 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     setGroundingChunks([]);
     setMlWarnings([]);
 
-      // 1. Fetch Cloud-Enhanced Outbreak Early Warnings
-      if (weather.city) {
-        checkCloudEarlyWarning(weather.city, 15).then(warnings => {
-          setCloudWarnings(warnings);
-        }).catch(err => console.error("Cloud warning fetch error:", err));
-      }
+    // 1. Fetch Cloud-Enhanced Outbreak Early Warnings
+    if (weather.city) {
+      checkCloudEarlyWarning(weather.city, 15).then(warnings => {
+        setCloudWarnings(warnings);
+      }).catch(err => console.error("Cloud warning fetch error:", err));
+    }
 
 
     try {
@@ -1094,7 +1331,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           'Humidity': weather.humidity,
           'Wind Speed (km/h)': weather.windSpeed,
         };
-        
+
         // Auto-extract 45 symptoms as binary flags 0 or 1 for the local model from user text
         const symptomsList = [
           'nausea', 'joint_pain', 'abdominal_pain', 'high_fever', 'chills', 'fatigue', 'runny_nose',
@@ -1106,7 +1343,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           'reduced_smell_and_taste', 'skin_irritation', 'itchiness', 'throbbing_headache', 'confusion',
           'back_pain', 'knee_ache'
         ];
-        
+
         const feedbackLower = (userFeedback || '').toLowerCase() + ' ' + (lifestyleData?.medicalHistory || '').toLowerCase();
         for (const symptom of symptomsList) {
           const symptomWords = symptom.replace(/_/g, ' ');
@@ -1191,8 +1428,8 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           weatherFeedback,
           lifestyleData,
           undefined,
-          aiProvider || 'gemini',
-          aiModel || 'gemini-2.5-flash',
+          aiProvider,
+          aiModel,
           aiKey,
           localModelPrediction
         )
@@ -1536,23 +1773,137 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
               )}
 
 
-                            {activeInputTab === 'intel' && (
+              {activeInputTab === 'intel' && (
                 <div className="space-y-6 animate-fade-in" id="panel-intel" role="tabpanel" aria-labelledby="tab-intel">
                   <label className="text-[11px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2"><MessageSquarePlus className="w-4 h-4" /> Local Intelligence & Surveillance</label>
+
+                  {/* Clinical intake moved to Home */}
+                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 space-y-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Clinical Intake — Process Field Conversation</p>
+                      <button
+                        type="button"
+                        onClick={handleAutoFillIntakeLocation}
+                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"
+                      >
+                        Auto-detect location
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                      <select
+                        value={intakeLanguage}
+                        onChange={(e) => setIntakeLanguage(e.target.value as IndicLanguage)}
+                        className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
+                      >
+                        {Object.entries(INDIC_LANGUAGE_LABELS).map(([code, label]) => (
+                          <option key={code} value={code}>{label} ({code})</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={intakeDistrict}
+                        onChange={(e) => setIntakeDistrict(e.target.value)}
+                        placeholder="District"
+                        className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
+                      />
+                      <input
+                        type="text"
+                        value={intakeState}
+                        onChange={(e) => setIntakeState(e.target.value)}
+                        placeholder="State"
+                        className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
+                      />
+                    </div>
+
+                    <textarea
+                      value={intakeText}
+                      onChange={(e) => setIntakeText(e.target.value)}
+                      placeholder="Patient description (informal / Hinglish OK)"
+                      rows={3}
+                      className="w-full p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
+                    />
+
+                    <input
+                      type="url"
+                      value={intakeImageUrl}
+                      onChange={(e) => setIntakeImageUrl(e.target.value)}
+                      placeholder="Clinical image URL (optional)"
+                      className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
+                    />
+
+                    <button
+                      onClick={handleProcessClinicalIntake}
+                      disabled={intakeProcessing}
+                      className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest transition-all"
+                    >
+                      {intakeProcessing ? 'Processing...' : 'Process & Extract'}
+                    </button>
+
+                    {intakeMessage && (
+                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-300">{intakeMessage}</p>
+                    )}
+
+                    {recentExtractions.length > 0 && (
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Recent Extractions</p>
+                        </div>
+                        {recentExtractions.slice(0, 3).map((item) => (
+                          <div key={item.id} className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                            <p className="text-[10px] font-black text-slate-600 dark:text-slate-300">{item.district}, {item.state} — {INDIC_LANGUAGE_LABELS[item.language]} ({item.language})</p>
+                            <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mt-1 line-clamp-2">{item.text}</p>
+                            {item.extractedSyndromes.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {item.extractedSyndromes.slice(0, 3).map(s => (
+                                  <span key={s} className="px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 text-[9px] font-black">{s}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {localOutbreakSignal && (
+                    <div className={`rounded-2xl p-4 border ${localOutbreakSignal.level === 'high'
+                      ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-700'
+                      : localOutbreakSignal.level === 'watch'
+                        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700'
+                        : 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-700'
+                      }`}>
+                      <div className="flex items-center justify-between gap-3 mb-1.5">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Local Outbreak Signal</p>
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${localOutbreakSignal.level === 'high'
+                          ? 'text-rose-600 dark:text-rose-300'
+                          : localOutbreakSignal.level === 'watch'
+                            ? 'text-amber-600 dark:text-amber-300'
+                            : 'text-emerald-600 dark:text-emerald-300'
+                          }`}>
+                          {localOutbreakSignal.level} • {localOutbreakSignal.score}/100
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-200">{localOutbreakSignal.summary}</p>
+                      <p className="text-[10px] font-bold text-slate-400 mt-1">Based on {localSymptomRecords.length} DB symptom reports.</p>
+                    </div>
+                  )}
 
                   {/* QUICK SYMPTOM CHECKER */}
                   <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">How are you feeling?</p>
+                    <p className="text-[10px] font-black text-teal-600 dark:text-teal-300 uppercase tracking-widest mb-3">
+                      Location: {weather?.city || intakeDistrict || 'Unknown'}{intakeState ? `, ${intakeState}` : ''}
+                    </p>
                     <div className="flex flex-wrap gap-2 mb-4">
                       {initialQuickSymptoms.map(symptom => (
                         <button
                           key={symptom}
                           onClick={() => handleSymptomToggle(symptom)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
-                            selectedSymptoms.includes(symptom)
-                              ? 'bg-rose-500 text-white border-rose-600'
-                              : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-rose-300'
-                          }`}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedSymptoms.includes(symptom)
+                            ? 'bg-rose-500 text-white border-rose-600'
+                            : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-rose-300'
+                            }`}
                         >
                           {symptom}
                         </button>
@@ -1567,11 +1918,10 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                             <button
                               key={symptom}
                               onClick={() => handleSymptomToggle(symptom)}
-                              className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all border ${
-                                selectedSymptoms.includes(symptom)
-                                  ? 'bg-rose-500 text-white border-rose-600'
-                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-rose-300'
-                              }`}
+                              className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all border ${selectedSymptoms.includes(symptom)
+                                ? 'bg-rose-500 text-white border-rose-600'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-rose-300'
+                                }`}
                             >
                               {symptom}
                             </button>
@@ -1593,6 +1943,54 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                         </div>
 
                         <div>
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Duration</p>
+                          <div className="flex flex-wrap gap-2">
+                            {(['<24h', '1-3d', '4-7d', '>7d'] as const).map((d) => (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => setSymptomDuration(d)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all ${symptomDuration === d ? 'bg-teal-600 text-white border-teal-600' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'}`}
+                              >
+                                {d}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Trend</p>
+                          <div className="flex flex-wrap gap-2">
+                            {(['worsening', 'stable', 'improving'] as const).map((t) => (
+                              <button
+                                key={t}
+                                type="button"
+                                onClick={() => setSymptomTrend(t)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all ${symptomTrend === t ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'}`}
+                              >
+                                {t}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Potential Exposure</p>
+                          <div className="flex flex-wrap gap-2">
+                            {exposureOptions.map((factor) => (
+                              <button
+                                key={factor}
+                                type="button"
+                                onClick={() => toggleExposureFactor(factor)}
+                                className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${exposureFactors.includes(factor) ? 'bg-amber-500 text-white border-amber-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'}`}
+                              >
+                                {factor}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
                           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Details (Optional)</p>
                           <textarea
                             value={symptomDetails}
@@ -1603,6 +2001,22 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                           />
                         </div>
 
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Upload Symptom Image (Optional)</p>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleSymptomImageUpload}
+                            className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-200"
+                          />
+                          {symptomImageName && (
+                            <p className="mt-1 text-[10px] font-bold text-teal-600 dark:text-teal-300">Selected: {symptomImageName}</p>
+                          )}
+                          {symptomImageDataUrl && (
+                            <img src={symptomImageDataUrl} alt="Symptom upload preview" className="mt-2 max-h-28 rounded-lg border border-slate-200 dark:border-slate-700" />
+                          )}
+                        </div>
+
                         <button
                           onClick={submitSymptoms}
                           disabled={isSubmittingSymptom || selectedSymptoms.length === 0}
@@ -1611,6 +2025,24 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                           {isSubmittingSymptom ? <Loader2 className="w-4 h-4 animate-spin" /> : symptomSuccess ? <Check className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
                           {symptomSuccess ? 'Report Submitted' : 'Submit Health Report'}
                         </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={sendIntelToAssistant}
+                            disabled={isChatLoading}
+                            className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50"
+                          >
+                            Send To Deep Analysis
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedSymptoms([]); setSymptomDetails(''); setExposureFactors([]); setSymptomTrend('stable'); setSymptomDuration('<24h'); }}
+                            className="px-3 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                          >
+                            Clear
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

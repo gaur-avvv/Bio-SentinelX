@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDataCache, isCacheValid } from '../contexts/DataCacheContext';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 import { Search, Activity, Droplets, Thermometer, ArrowLeft, FlaskConical, BookOpen, Microscope, Wind, Zap, CloudSun } from 'lucide-react';
-import { WeatherData } from '../types';
+import { WeatherData, AiProvider } from '../types';
 import { analyzeHistoricalClimateHealth } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
 
@@ -11,8 +11,8 @@ interface HistoricalAnalysisProps {
   weather: WeatherData | null;
   onBack: () => void;
   geminiKey: string;
-  aiProvider?: string;
-  aiModel?: string;
+  aiProvider: AiProvider;
+  aiModel: string;
   aiKey?: string;
 }
 
@@ -39,7 +39,7 @@ const VARIABLE_OPTIONS = [
   { id: 'aqi', label: 'Air Quality (AQI)', apiParam: 'us_aqi' } // Handled via separate API call
 ];
 
-export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location, weather, onBack, geminiKey, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey }) => {
+export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location, weather, onBack, geminiKey, aiProvider, aiModel, aiKey }) => {
   const { historical: histCache, setHistorical } = useDataCache();
   const cacheValid = isCacheValid(histCache.lastFetched, histCache.lastLocation, location);
 

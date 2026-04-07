@@ -10,16 +10,39 @@ import { WeatherData, HealthRecord, LifestyleData } from '../types';
 // ===========================
 
 const CONFIG = {
-  // Bio-Sentinel API endpoint (production Railway deployment)
-  bioSentinelAPI: (import.meta.env.VITE_BIOSENTINEL_API as string) || 'https://bio-sentinel-production.up.railway.app',
-
   // API timeouts
   timeout: 10000, // 10 seconds
 };
 
+const DEFAULT_BIOSENTINEL_API =
+  (import.meta.env.VITE_BIOSENTINEL_API as string) || 'https://web-production-1f43.up.railway.app';
+
 // Runtime API key — set via setBioSentinelApiKey() from the UI
 let _runtimeApiKey: string = '';
 export function setBioSentinelApiKey(key: string) { _runtimeApiKey = key; }
+
+// Runtime API base URL — set via settings UI when users need to switch deployments.
+let _runtimeApiBaseUrl: string = '';
+function normalizeApiBaseUrl(url: string): string {
+  return (url || '').trim().replace(/\/+$/, '');
+}
+export function setBioSentinelApiBaseUrl(url: string) {
+  _runtimeApiBaseUrl = normalizeApiBaseUrl(url);
+}
+export function getBioSentinelApiBaseUrl(): string {
+  return normalizeApiBaseUrl(_runtimeApiBaseUrl || DEFAULT_BIOSENTINEL_API);
+}
+export function setBioSentinelApiUrl(url: string) {
+  setBioSentinelApiBaseUrl(url);
+}
+export function getBioSentinelApiUrl(): string {
+  return getBioSentinelApiBaseUrl();
+}
+function buildApiUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${getBioSentinelApiBaseUrl()}${normalizedPath}`;
+}
+
 function getApiKeyHeader(): Record<string, string> {
   const key = _runtimeApiKey || (import.meta.env.VITE_BIOSENTINEL_API_KEY as string);
   return key ? { 'X-API-Key': key } : {};
@@ -226,7 +249,7 @@ export async function checkBioSentinelHealth(): Promise<boolean> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
 
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/health`, {
+    const response = await fetch(buildApiUrl('/health'), {
       signal: controller.signal
     });
 
@@ -248,7 +271,7 @@ async function getBioSentinelPrediction(
   const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
 
   try {
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/predict`, {
+    const response = await fetch(buildApiUrl('/predict'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -692,7 +715,7 @@ export async function quickHealthCheck(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
 
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/quick-check`, {
+    const response = await fetch(buildApiUrl('/quick-check'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -749,7 +772,7 @@ export async function quickHealthCheck(
  */
 export async function submitFeedback(feedback: MLFeedback): Promise<boolean> {
   try {
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/feedback`, {
+    const response = await fetch(buildApiUrl('/feedback'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

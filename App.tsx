@@ -5,12 +5,10 @@ import { AnalysisDashboard } from './components/AnalysisDashboard';
 import { HistoricalAnalysis } from './components/HistoricalAnalysis';
 import { FloodPrediction } from './components/FloodPrediction';
 import { BioXAssistant } from './components/BioXAssistant';
-import { ResearchLibrary } from './components/ResearchLibrary';
-import { IndianSurveillance } from './components/IndianSurveillance';
 import { AlertNotificationPanel } from './components/AlertNotificationPanel';
-import { WeatherData, LoadingState, AiProvider, AI_MODELS, HealthAlert, NotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, ForecastUpdatePeriod, EmailAlertSettings, DEFAULT_EMAIL_ALERT_SETTINGS } from './types';
+import { WeatherData, LoadingState, AiProvider, AI_MODELS, HealthAlert, NotificationSettings, DEFAULT_NOTIFICATION_SETTINGS, ForecastUpdatePeriod, EmailAlertSettings, DEFAULT_EMAIL_ALERT_SETTINGS, DatabaseSettings, DEFAULT_DATABASE_SETTINGS, McpSettings, DEFAULT_MCP_SETTINGS } from './types';
 import { fetchWeatherData } from './services/weatherService';
-import { setBioSentinelApiKey } from './services/mlService';
+import { setBioSentinelApiKey, setBioSentinelApiUrl } from './services/mlService';
 import {
   generateWeatherAlerts,
   generateSessionBriefing,
@@ -25,6 +23,7 @@ import {
 import { enrichAlertsWithAI } from './services/aiNotificationService';
 import { buildAIUserContext, personalizeAlertsInPlace } from './services/personalizationService';
 import { checkAndSendForecastEmails } from './services/forecastEmailService';
+import { getHFToken, setHFToken } from './services/huggingFaceService';
 import { AlertTriangle, XCircle, MapPin, Crosshair, RefreshCw, Settings, Loader2 } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { DataCacheProvider } from './contexts/DataCacheContext';
@@ -77,7 +76,7 @@ const AppInner: React.FC = () => {
   const [location, setLocation] = useState<string>(() => {
     return localStorage.getItem('biosentinel_location') || '';
   });
-  
+
   // Weather data persistence
   const [weather, setWeather] = useState<WeatherData | null>(() => {
     const cached = localStorage.getItem('biosentinel_weather_data');
@@ -104,6 +103,7 @@ const AppInner: React.FC = () => {
   const [pollinationsKey, setPollinationsKey] = useState<string>(
     () => localStorage.getItem('biosentinel_pollinations_key') || process.env.POLLINATIONS_KEY || ''
   );
+  const [huggingFaceKey, setHuggingFaceKey] = useState<string>(() => getHFToken() || '');
   const [openrouterKey, setOpenrouterKey] = useState<string>(
     () => localStorage.getItem('biosentinel_openrouter_key') || process.env.OPENROUTER_API_KEY || ''
   );
@@ -118,7 +118,7 @@ const AppInner: React.FC = () => {
   );
   const [aiProvider, setAiProvider] = useState<AiProvider>(() => {
     const p = localStorage.getItem('biosentinel_ai_provider') as AiProvider;
-    return p && ['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras', 'ollama'].includes(p) ? p : 'gemini';
+    return p && ['huggingface', 'gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras', 'ollama'].includes(p) ? p : 'gemini';
   });
   const [aiModel, setAiModel] = useState<string>(() => {
     return localStorage.getItem('biosentinel_ai_model') || AI_MODELS.gemini[0].value;
@@ -128,6 +128,9 @@ const AppInner: React.FC = () => {
     () => localStorage.getItem('biosentinel_openweather_key') || process.env.OPENWEATHER_KEY || ''
   );
   const [mlApiKey, setMlApiKey] = useState<string>(() => localStorage.getItem('biosentinel_ml_api_key') || '');
+  const [bioSentinelApiUrl, setBioSentinelApiUrl] = useState<string>(
+    () => localStorage.getItem('biosentinel_ml_api_base_url') || import.meta.env.VITE_BIOSENTINEL_API || 'https://web-production-1f43.up.railway.app'
+  );
   const [llamaCloudKey, setLlamaCloudKey] = useState<string>(
     () => localStorage.getItem('biosentinel_llamacloud_key') || process.env.LLAMACLOUD_KEY || ''
   );
@@ -172,7 +175,31 @@ const AppInner: React.FC = () => {
     setEmailAlertSettingsState(prev => ({ ...prev, ...patch }));
   };
 
-  const [view, setView] = useState<'dashboard' | 'historical' | 'flood' | 'assistant' | 'research' | 'surveillance' | 'settings'>('dashboard');
+  const [databaseSettings, setDatabaseSettingsState] = useState<DatabaseSettings>(() => {
+    try {
+      const stored = localStorage.getItem('biosentinel_database_settings');
+      if (stored) return { ...DEFAULT_DATABASE_SETTINGS, ...JSON.parse(stored) };
+    } catch { /* ignore */ }
+    return DEFAULT_DATABASE_SETTINGS;
+  });
+
+  const setDatabaseSettings = (patch: Partial<DatabaseSettings>) => {
+    setDatabaseSettingsState(prev => ({ ...prev, ...patch }));
+  };
+
+  const [mcpSettings, setMcpSettingsState] = useState<McpSettings>(() => {
+    try {
+      const stored = localStorage.getItem('biosentinel_mcp_settings');
+      if (stored) return { ...DEFAULT_MCP_SETTINGS, ...JSON.parse(stored) };
+    } catch { /* ignore */ }
+    return DEFAULT_MCP_SETTINGS;
+  });
+
+  const setMcpSettings = (patch: Partial<McpSettings>) => {
+    setMcpSettingsState(prev => ({ ...prev, ...patch }));
+  };
+
+  const [view, setView] = useState<'dashboard' | 'historical' | 'flood' | 'assistant' | 'settings'>('dashboard');
 
   // ── Health Alert State ────────────────────────────────────────────────────
   const [alerts, setAlerts] = useState<HealthAlert[]>([]);
@@ -235,23 +262,38 @@ const AppInner: React.FC = () => {
   }, []);
 
 
-  useEffect(() => { if (geminiKey)      localStorage.setItem('biosentinel_gemini_key',      geminiKey);      else localStorage.removeItem('biosentinel_gemini_key');      }, [geminiKey]);
-  useEffect(() => { if (groqKey)        localStorage.setItem('biosentinel_groq_key',         groqKey);        else localStorage.removeItem('biosentinel_groq_key');        }, [groqKey]);
+  useEffect(() => { if (geminiKey) localStorage.setItem('biosentinel_gemini_key', geminiKey); else localStorage.removeItem('biosentinel_gemini_key'); }, [geminiKey]);
+  useEffect(() => { if (groqKey) localStorage.setItem('biosentinel_groq_key', groqKey); else localStorage.removeItem('biosentinel_groq_key'); }, [groqKey]);
   useEffect(() => { if (pollinationsKey) localStorage.setItem('biosentinel_pollinations_key', pollinationsKey); else localStorage.removeItem('biosentinel_pollinations_key'); }, [pollinationsKey]);
-  useEffect(() => { if (openrouterKey)  localStorage.setItem('biosentinel_openrouter_key',  openrouterKey);  else localStorage.removeItem('biosentinel_openrouter_key');  }, [openrouterKey]);
+  useEffect(() => {
+    if (huggingFaceKey) {
+      localStorage.setItem('biosentinel_hf_token', huggingFaceKey);
+      setHFToken(huggingFaceKey);
+    } else {
+      localStorage.removeItem('biosentinel_hf_token');
+      setHFToken('');
+    }
+  }, [huggingFaceKey]);
+  useEffect(() => { if (openrouterKey) localStorage.setItem('biosentinel_openrouter_key', openrouterKey); else localStorage.removeItem('biosentinel_openrouter_key'); }, [openrouterKey]);
   useEffect(() => { if (siliconflowKey) localStorage.setItem('biosentinel_siliconflow_key', siliconflowKey); else localStorage.removeItem('biosentinel_siliconflow_key'); }, [siliconflowKey]);
   useEffect(() => { if (cerebrasKey) localStorage.setItem('biosentinel_cerebras_key', cerebrasKey); else localStorage.removeItem('biosentinel_cerebras_key'); }, [cerebrasKey]);
   useEffect(() => { if (ollamaEndpoint) localStorage.setItem('biosentinel_ollama_endpoint', ollamaEndpoint); }, [ollamaEndpoint]);
   useEffect(() => { localStorage.setItem('biosentinel_ai_provider', aiProvider); }, [aiProvider]);
   useEffect(() => { localStorage.setItem('biosentinel_ai_model', aiModel); }, [aiModel]);
   useEffect(() => { localStorage.setItem('biosentinel_use_openweather', useOpenWeather.toString()); }, [useOpenWeather]);
-  useEffect(() => { if (openWeatherKey) localStorage.setItem('biosentinel_openweather_key',  openWeatherKey); else localStorage.removeItem('biosentinel_openweather_key');  }, [openWeatherKey]);
+  useEffect(() => { if (openWeatherKey) localStorage.setItem('biosentinel_openweather_key', openWeatherKey); else localStorage.removeItem('biosentinel_openweather_key'); }, [openWeatherKey]);
   useEffect(() => { localStorage.setItem('biosentinel_ml_api_key', mlApiKey); setBioSentinelApiKey(mlApiKey); }, [mlApiKey]);
-  useEffect(() => { if (llamaCloudKey)  localStorage.setItem('biosentinel_llamacloud_key',  llamaCloudKey);  else localStorage.removeItem('biosentinel_llamacloud_key');  }, [llamaCloudKey]);
+  useEffect(() => {
+    localStorage.setItem('biosentinel_ml_api_base_url', bioSentinelApiUrl);
+    setBioSentinelApiUrl(bioSentinelApiUrl);
+  }, [bioSentinelApiUrl]);
+  useEffect(() => { if (llamaCloudKey) localStorage.setItem('biosentinel_llamacloud_key', llamaCloudKey); else localStorage.removeItem('biosentinel_llamacloud_key'); }, [llamaCloudKey]);
   useEffect(() => { localStorage.setItem('biosentinel_location', location); }, [location]);
   useEffect(() => { if (weather) localStorage.setItem('biosentinel_weather_data', JSON.stringify(weather)); }, [weather]);
   useEffect(() => { localStorage.setItem('biosentinel_notification_settings', JSON.stringify(notificationSettings)); }, [notificationSettings]);
   useEffect(() => { localStorage.setItem('biosentinel_email_alert_settings', JSON.stringify(emailAlertSettings)); }, [emailAlertSettings]);
+  useEffect(() => { localStorage.setItem('biosentinel_database_settings', JSON.stringify(databaseSettings)); }, [databaseSettings]);
+  useEffect(() => { localStorage.setItem('biosentinel_mcp_settings', JSON.stringify(mcpSettings)); }, [mcpSettings]);
   useEffect(() => { localStorage.setItem('biosentinel_mappls_token', mapplsToken); }, [mapplsToken]);
   useEffect(() => { localStorage.setItem('biosentinel_map_provider', mapProvider); }, [mapProvider]);
   useEffect(() => { localStorage.setItem('biosentinel_maptiler_key', mapTilerKey); }, [mapTilerKey]);
@@ -314,13 +356,14 @@ const AppInner: React.FC = () => {
   }, [mapProvider, mapplsToken, mapTilerKey, mapboxToken]);
 
   // Derive the active API key based on provider
-  const aiKey = aiProvider === 'groq' ? groqKey
-    : aiProvider === 'pollinations' ? pollinationsKey
-    : aiProvider === 'openrouter' ? openrouterKey
-    : aiProvider === 'siliconflow' ? siliconflowKey
-    : aiProvider === 'cerebras' ? cerebrasKey
-    : aiProvider === 'ollama' ? ''
-    : geminiKey;
+  const aiKey = aiProvider === 'huggingface' ? huggingFaceKey
+    : aiProvider === 'groq' ? groqKey
+      : aiProvider === 'pollinations' ? pollinationsKey
+        : aiProvider === 'openrouter' ? openrouterKey
+          : aiProvider === 'siliconflow' ? siliconflowKey
+            : aiProvider === 'cerebras' ? cerebrasKey
+              : aiProvider === 'ollama' ? ''
+                : geminiKey;
 
   const AUTO_REFRESH_MS = notificationSettings.forecastUpdatePeriodMinutes * 60 * 1000;
 
@@ -332,11 +375,14 @@ const AppInner: React.FC = () => {
 
     if (!silent) setLoadingState(LoadingState.LOADING_WEATHER);
     setError("");
-    
+
     // We don't clear the weather immediately to avoid layout flicker if cache exists
     try {
       const data = await fetchWeatherData(location, openWeatherKey, useOpenWeather);
       setWeather(data);
+      if (data.city && location !== data.city) {
+        setLocation(data.city);
+      }
       if (!silent) setLoadingState(LoadingState.IDLE);
     } catch (err) {
       if (!silent) {
@@ -357,7 +403,7 @@ const AppInner: React.FC = () => {
     const interval = setInterval(() => handleFetchWeather(true), AUTO_REFRESH_MS);
 
     return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location, openWeatherKey, useOpenWeather]);
 
   // ── Real-time alerts whenever weather data changes ────────────────────────
@@ -379,7 +425,7 @@ const AppInner: React.FC = () => {
         })
         .catch(() => { /* keep original fallback titles on any failure */ });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weather, addAlerts]);
 
   // ── Proactive forecast email alerts ──────────────────────────────────────
@@ -389,7 +435,7 @@ const AppInner: React.FC = () => {
     checkAndSendForecastEmails(weather, emailAlertSettings, setEmailAlertSettings).catch(
       err => console.warn('[ForecastEmail] Background check error:', err)
     );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weather]);
 
   // ── Scheduled morning / afternoon / evening briefings ─────────────────────
@@ -482,11 +528,10 @@ const AppInner: React.FC = () => {
           <button
             onClick={() => setView(view === 'settings' ? 'dashboard' : 'settings')}
             title="Settings"
-            className={`p-2 rounded-xl shadow transition-all active:scale-95 ${
-              view === 'settings'
-                ? 'bg-teal-500 ring-2 ring-teal-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
-                : 'bg-slate-900 dark:bg-slate-800 hover:bg-teal-600'
-            }`}
+            className={`p-2 rounded-xl shadow transition-all active:scale-95 ${view === 'settings'
+              ? 'bg-teal-500 ring-2 ring-teal-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
+              : 'bg-slate-900 dark:bg-slate-800 hover:bg-teal-600'
+              }`}
           >
             <Settings className="w-4 h-4 text-teal-400" />
           </button>
@@ -550,9 +595,8 @@ const AppInner: React.FC = () => {
       </header>
 
       {/* ── Main ────────────────────────────────────────────────────────── */}
-      <main className={`flex-1 flex flex-col ${
-        view === 'assistant' ? 'overflow-hidden min-h-0' : 'overflow-y-auto'
-      }`}>
+      <main className={`flex-1 flex flex-col ${view === 'assistant' ? 'overflow-hidden min-h-0' : 'overflow-y-auto'
+        }`}>
         {/* Error banner */}
         {error && (
           <div className="p-4 sm:p-6 lg:p-8 xl:p-10 pb-0">
@@ -574,17 +618,15 @@ const AppInner: React.FC = () => {
         )}
 
         {/* Content area */}
-        <div className={`${
-          view === 'assistant'
-            ? 'flex flex-col flex-1 min-h-0 px-3 sm:px-4 pt-3'
-            : 'p-4 sm:p-6 lg:p-8 xl:p-10'
-        }`}>
+        <div className={`${view === 'assistant'
+          ? 'flex flex-col flex-1 min-h-0 px-3 sm:px-4 pt-3'
+          : 'p-4 sm:p-6 lg:p-8 xl:p-10'
+          }`}>
           <div className={`max-w-6xl mx-auto w-full ${view === 'assistant' ? 'flex flex-col flex-1 min-h-0' : ''}`}>
 
             {/* ── Nav tabs ── */}
-            <div className={`flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl overflow-x-auto scrollbar-hide ${
-              view === 'assistant' ? 'shrink-0 mb-2' : 'mb-6 sm:mb-8'
-            }`}>
+            <div className={`flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-2xl overflow-x-auto scrollbar-hide ${view === 'assistant' ? 'shrink-0 mb-2' : 'mb-6 sm:mb-8'
+              }`}>
               <button onClick={() => setView('dashboard')}
                 className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap flex-shrink-0 ${view === 'dashboard' ? 'bg-white dark:bg-slate-600 text-teal-600 dark:text-teal-300 shadow-sm' : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-white'}`}>
                 Live Monitor
@@ -600,14 +642,6 @@ const AppInner: React.FC = () => {
               <button onClick={() => setView('assistant')}
                 className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap flex-shrink-0 ${view === 'assistant' ? 'bg-teal-600 text-white shadow-lg shadow-teal-200 dark:shadow-teal-900' : 'bg-teal-500/10 text-teal-600 dark:text-teal-300 border border-teal-200 dark:border-teal-600 hover:bg-teal-600 hover:text-white hover:border-transparent'}`}>
                 BioX Assistant
-              </button>
-              <button onClick={() => setView('research')}
-                className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap flex-shrink-0 ${view === 'research' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900' : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-600 hover:bg-indigo-600 hover:text-white hover:border-transparent'}`}>
-                Research
-              </button>
-              <button onClick={() => setView('surveillance')}
-                className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all whitespace-nowrap flex-shrink-0 ${view === 'surveillance' ? 'bg-rose-600 text-white shadow-lg shadow-rose-200 dark:shadow-rose-900' : 'bg-rose-500/10 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-600 hover:bg-rose-600 hover:text-white hover:border-transparent'}`}>
-                Surveillance
               </button>
               {/* Settings tab — pushed to the right */}
               <div className="flex-1" />
@@ -629,6 +663,7 @@ const AppInner: React.FC = () => {
                   aiProvider={aiProvider}
                   aiModel={aiModel}
                   aiKey={aiKey}
+                  databaseSettings={databaseSettings}
                   onOpenAssistant={() => setView('assistant')}
                 />
               </>
@@ -661,20 +696,11 @@ const AppInner: React.FC = () => {
                 aiKey={aiKey}
                 aiProvider={aiProvider}
                 aiModel={aiModel}
-                onBack={() => setView('dashboard')}
-                onAddAlerts={(a) => addAlerts(a)}
-              />
-            ) : view === 'research' ? (
-              <ResearchLibrary
                 geminiKey={geminiKey}
                 llamaCloudKey={llamaCloudKey}
-                setLlamaCloudKey={setLlamaCloudKey}
+                mcpSettings={mcpSettings}
                 onBack={() => setView('dashboard')}
-              />
-            ) : view === 'surveillance' ? (
-              <IndianSurveillance
-                onBack={() => setView('dashboard')}
-                weather={weather}
+                onAddAlerts={(a) => addAlerts(a)}
               />
             ) : (
               <SettingsPage
@@ -690,6 +716,8 @@ const AppInner: React.FC = () => {
                 setGroqKey={setGroqKey}
                 pollinationsKey={pollinationsKey}
                 setPollinationsKey={setPollinationsKey}
+                huggingFaceKey={huggingFaceKey}
+                setHuggingFaceKey={setHuggingFaceKey}
                 openrouterKey={openrouterKey}
                 setOpenrouterKey={setOpenrouterKey}
                 siliconflowKey={siliconflowKey}
@@ -706,8 +734,14 @@ const AppInner: React.FC = () => {
                 setUseOpenWeather={setUseOpenWeather}
                 openWeatherKey={openWeatherKey}
                 setOpenWeatherKey={setOpenWeatherKey}
+                bioSentinelApiUrl={bioSentinelApiUrl}
+                setBioSentinelApiUrl={setBioSentinelApiUrl}
                 mlApiKey={mlApiKey}
                 setMlApiKey={setMlApiKey}
+                databaseSettings={databaseSettings}
+                setDatabaseSettings={setDatabaseSettings}
+                mcpSettings={mcpSettings}
+                setMcpSettings={setMcpSettings}
                 mapplsToken={mapplsToken}
                 setMapplsToken={setMapplsToken}
                 mapProvider={mapProvider}
