@@ -143,13 +143,23 @@ export interface LifestyleData {
   height?: string;
   weight?: string;
   gender: string;
+  bloodGroup?: string;
+  occupation?: string;
+  cityType?: string;
   lifestyle: string;
   medication: string;
+  chronicConditions?: string;
+  vaccinationStatus?: string;
   foodHabits: string;
+  sleepHours?: string;
+  waterIntakeLiters?: string;
+  stressLevel?: string;
   allergies: string;
   medicalHistory: string;
+  familyHistory?: string;
+  emergencyContact?: string;
   exercise?: string;
-  smoking?: boolean;
+  smoking?: string;
   alcoholConsumption?: string;
 }
 

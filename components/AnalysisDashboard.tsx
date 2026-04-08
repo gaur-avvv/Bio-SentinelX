@@ -10,10 +10,12 @@ import { saveReport, getReports, deleteReport, clearAllReports, StoredReport, re
 import { saveSymptomData, fetchLocalOutbreakData, UserSymptomData } from '../services/dbService';
 import { IndicLanguage, INDIC_LANGUAGE_LABELS, processFieldConversation, getFieldConversations } from '../services/indicDataService';
 import { reverseGeocode } from '../services/geoService';
+import { apiBatchIngest, apiHealth, apiMetrics, apiPredictCustom, apiSingleIngest, apiTrain, apiTrainAuto, apiTrainDetect, apiTrainStatus, type PredictCustomPayload } from '../services/backendApiService';
 import { ReportRenderer } from './ReportRenderer';
+import { SurveillanceIntegrationHub } from './surveillance/SurveillanceIntegrationHub';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 
-import { checkCloudEarlyWarning, type CloudEarlyWarning } from '../services/outbreakPredictionService';
+import { checkCloudEarlyWarning, getActiveOutbreakAlerts, getOutbreakPredictionStats, type CloudEarlyWarning, type OutbreakAlert } from '../services/outbreakPredictionService';
 
 import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo, getTrainedModelPerformanceMetrics, trainModel, DEFAULT_TRAINING_CONFIG, autoDetectFeaturesAndLabel } from '../services/realtimeMLService';
 
@@ -26,6 +28,7 @@ interface AnalysisDashboardProps {
   aiKey?: string;
   onOpenAssistant?: () => void;
   databaseSettings?: DatabaseSettings;
+  localIntelEnabled?: boolean;
 }
 
 interface UserProfileProps {
@@ -89,21 +92,46 @@ const MLFeatureInputs: React.FC<MLFeatureInputsProps> = ({ weather }) => {
 };
 
 const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
+  const [customValues, setCustomValues] = useState<Record<string, string>>({});
+
   const options = {
     gender: ['Male', 'Female', 'Non-binary', 'Prefer not to say'],
-    lifestyle: ['Sedentary', 'Active', 'Athlete', 'Night Shift', 'Outdoor Worker', 'Remote Work', 'Frequent Traveler'],
-    exercise: ['None', 'Minimal', 'Moderate', 'Intense', 'Professional', 'Rehabilitation'],
-    smoking: ['Yes', 'No', 'Former Smoker', 'Vaping'],
-    alcoholConsumption: ['None', 'Social', 'Moderate', 'Heavy', 'Occasional'],
-    medication: ['None', 'Antihistamines', 'Blood Pressure', 'Inhalers', 'Insulin', 'Vitamins', 'Immunosuppressants', 'Painkillers'],
-    foodHabits: ['Balanced', 'Vegan', 'Keto', 'High Protein', 'Fast Food', 'Gluten-Free', 'Vegetarian', 'Paleo', 'Low Sodium'],
-    allergies: ['None', 'Pollen', 'Dust', 'Mold', 'Peanuts', 'Shellfish', 'Lactose', 'Pet Dander', 'Insect Stings', 'Latex'],
-    medicalHistory: ['Asthma', 'Diabetes', 'Hypertension', 'Heart Disease', 'COPD', 'None', 'Migraine', 'Arthritis', 'Eczema', 'Anxiety']
+    bloodGroup: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
+    cityType: ['Urban', 'Semi-Urban', 'Rural', 'Coastal', 'Hilly'],
+    stressLevel: ['Low', 'Moderate', 'High', 'Very High'],
+    sleepHours: ['<5 hrs', '5-6 hrs', '6-7 hrs', '7-8 hrs', '8-9 hrs', '9+ hrs'],
+    waterIntakeLiters: ['<1 L', '1-1.5 L', '1.5-2 L', '2-2.5 L', '2.5-3 L', '3+ L'],
+    vaccinationStatus: ['Up to Date', 'Partial', 'Booster Due', 'Unknown', 'Not Vaccinated'],
+    occupation: ['Student', 'Office Worker', 'Outdoor Worker', 'Healthcare Worker', 'Industrial Worker', 'Field Worker', 'Driver', 'Homemaker', 'Retired'],
+    emergencyContact: ['Family Nearby', 'Family Remote', 'Caregiver Available', 'Lives Alone', 'Community Support', 'No Backup Contact'],
+    lifestyle: ['Sedentary', 'Active', 'Athlete', 'Night Shift', 'Outdoor Worker', 'Remote Work', 'Frequent Traveler', 'Student', 'Healthcare Worker', 'High Exposure Worker'],
+    exercise: ['None', 'Minimal', 'Moderate', 'Intense', 'Professional', 'Rehabilitation', 'Cardio Focus', 'Strength Focus', 'Yoga / Mobility'],
+    smoking: ['No', 'Occasional', 'Daily', 'Former Smoker', 'Vaping'],
+    alcoholConsumption: ['None', 'Social', 'Moderate', 'Heavy', 'Occasional', 'Weekly', 'Rarely'],
+    medication: ['None', 'Antihistamines', 'Blood Pressure', 'Inhalers', 'Insulin', 'Vitamins', 'Immunosuppressants', 'Painkillers', 'Thyroid', 'Cardiac Medication'],
+    chronicConditions: ['None', 'Asthma', 'Diabetes', 'Hypertension', 'Heart Disease', 'COPD', 'Kidney Disease', 'Thyroid Disorder', 'Autoimmune Condition'],
+    foodHabits: ['Balanced', 'Vegan', 'Keto', 'High Protein', 'Fast Food', 'Gluten-Free', 'Vegetarian', 'Paleo', 'Low Sodium', 'Low Sugar', 'High Fiber'],
+    allergies: ['None', 'Pollen', 'Dust', 'Mold', 'Peanuts', 'Shellfish', 'Lactose', 'Pet Dander', 'Insect Stings', 'Latex', 'Drug Allergy'],
+    medicalHistory: ['None', 'Asthma', 'Diabetes', 'Hypertension', 'Heart Disease', 'COPD', 'Migraine', 'Arthritis', 'Eczema', 'Anxiety', 'Kidney Disease', 'Thyroid Disorder'],
+    familyHistory: ['None', 'Diabetes', 'Hypertension', 'Heart Disease', 'Stroke', 'Cancer', 'Respiratory Disease', 'Thyroid Issues']
   };
 
+  const singleSelectFields = new Set<keyof typeof options>([
+    'gender',
+    'bloodGroup',
+    'cityType',
+    'stressLevel',
+    'sleepHours',
+    'waterIntakeLiters',
+    'vaccinationStatus',
+    'occupation',
+    'emergencyContact',
+    'smoking'
+  ]);
+
   const toggleOption = (field: keyof LifestyleData, val: string) => {
-    if (field === 'smoking') {
-      onChange({ ...data, smoking: val === 'Yes' });
+    if ((singleSelectFields as Set<string>).has(field as string)) {
+      onChange({ ...data, [field]: val });
       return;
     }
 
@@ -118,6 +146,24 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
     }
 
     onChange({ ...data, [field]: newItems.join(', ') });
+  };
+
+  const addCustomOption = (field: keyof LifestyleData) => {
+    const raw = (customValues[field as string] || '').trim();
+    if (!raw) return;
+
+    if ((singleSelectFields as Set<string>).has(field as string)) {
+      onChange({ ...data, [field]: raw });
+      setCustomValues(prev => ({ ...prev, [field as string]: '' }));
+      return;
+    }
+
+    const current = String(data[field] || '');
+    const items = current ? current.split(', ').filter(i => i) : [];
+    if (!items.includes(raw)) {
+      onChange({ ...data, [field]: [...items, raw].join(', ') });
+    }
+    setCustomValues(prev => ({ ...prev, [field as string]: '' }));
   };
 
   return (
@@ -211,13 +257,17 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
         <div key={field} className="space-y-2 sm:space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest">{field.replace(/([A-Z])/g, ' $1')}</span>
-            <span className="text-[7px] sm:text-[8px] font-black text-teal-600 uppercase">Select Multiple</span>
+            <span className="text-[7px] sm:text-[8px] font-black text-teal-600 uppercase">
+              {(singleSelectFields as Set<string>).has(field as string) ? 'Select One' : 'Select Multiple'}
+            </span>
           </div>
           <div className="flex flex-wrap gap-1.5 sm:gap-2">
             {options[field].map((opt) => {
-              const isActive = field === 'smoking'
-                ? (data.smoking ? opt === 'Yes' : opt === 'No')
-                : (data[field] as string)?.includes(opt);
+              const fieldKey = field as keyof LifestyleData;
+              const currentValue = String(data[fieldKey] ?? '');
+              const isActive = (singleSelectFields as Set<string>).has(field as string)
+                ? currentValue === opt
+                : currentValue.includes(opt);
               return (
                 <button
                   key={opt}
@@ -232,15 +282,28 @@ const UserProfile: React.FC<UserProfileProps> = ({ data, onChange }) => {
               );
             })}
           </div>
-          {field !== 'smoking' && (
+          <div className="flex items-center gap-2">
             <input
               type="text"
-              value={data[field] as string}
-              onChange={(e: any) => onChange({ ...data, [field]: e.target.value })}
-              placeholder={`Custom ${field}...`}
-              className="w-full p-2.5 sm:p-3 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-teal-500 outline-none"
+              value={customValues[field as string] || ''}
+              onChange={(e: any) => setCustomValues(prev => ({ ...prev, [field as string]: e.target.value }))}
+              onKeyDown={(e: any) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addCustomOption(field as keyof LifestyleData);
+                }
+              }}
+              placeholder="Not listed? Add custom"
+              className="flex-1 p-2.5 sm:p-3 bg-white dark:bg-slate-600 border border-slate-200 dark:border-slate-500 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-teal-500 outline-none"
             />
-          )}
+            <button
+              type="button"
+              onClick={() => addCustomOption(field as keyof LifestyleData)}
+              className="px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-600 border border-slate-300 dark:border-slate-500 text-[10px] font-black text-slate-700 dark:text-slate-200 uppercase tracking-widest hover:bg-teal-100 dark:hover:bg-teal-900/40"
+            >
+              Add
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -694,6 +757,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   aiModel,
   aiKey,
   onOpenAssistant,
+  localIntelEnabled = true,
 }) => {
   const [userFeedback, setUserFeedback] = useState<string>(() => {
     try { return localStorage.getItem('biosentinel_user_feedback') || ''; } catch { return ''; }
@@ -726,6 +790,153 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [reportHistory, setReportHistory] = useState<StoredReport[]>([]);
   const [viewingReport, setViewingReport] = useState<StoredReport | null>(null);
   const [viewingReportContent, setViewingReportContent] = useState<string>('');
+  const [mlApiBusy, setMlApiBusy] = useState<string>('');
+  const [mlApiResult, setMlApiResult] = useState<string>('');
+  const [trainLabelColumn, setTrainLabelColumn] = useState<string>('risk_label');
+  const [trainDatasetJson, setTrainDatasetJson] = useState<string>('[]');
+  const [outbreakCity, setOutbreakCity] = useState<string>(weather?.city || '');
+  const [outbreakThreshold, setOutbreakThreshold] = useState<number>(15);
+  const [outbreakBusy, setOutbreakBusy] = useState(false);
+  const [outbreakApiWarnings, setOutbreakApiWarnings] = useState<CloudEarlyWarning[]>([]);
+  const [outbreakApiStats, setOutbreakApiStats] = useState<ReturnType<typeof getOutbreakPredictionStats> | null>(null);
+  const [outbreakApiAlerts, setOutbreakApiAlerts] = useState<OutbreakAlert[]>([]);
+
+  const createSampleTrainingDataset = useCallback(() => {
+    if (!weather) return [] as Record<string, unknown>[];
+    return Array.from({ length: 24 }, (_, i) => {
+      const phase = i % 3;
+      const tempDelta = phase === 0 ? -2.5 : phase === 1 ? 0 : 3.5;
+      const humidityDelta = phase === 2 ? 10 : phase === 0 ? -8 : 0;
+      const pmBoost = phase === 2 ? 12 : 0;
+      const temp = Math.max(8, weather.temp + tempDelta);
+      const humidity = Math.min(100, Math.max(20, weather.humidity + humidityDelta));
+      const pm2 = Math.max(3, (weather.advancedData?.pm2_5 || 10) + pmBoost);
+      const riskLabel = temp >= 34 || pm2 >= 35 ? 'high' : temp >= 28 || pm2 >= 20 ? 'moderate' : 'low';
+
+      return {
+        temp,
+        feels_like: Math.max(8, weather.feelsLike + tempDelta),
+        pressure: weather.pressure,
+        humidity,
+        wind_speed: weather.windSpeed,
+        wind_deg: weather.windDeg,
+        clouds: weather.clouds,
+        visibility: (weather.visibility || 10000) / 1000,
+        uv_index: weather.uvIndex || 0,
+        air_quality_PM2_5: pm2,
+        air_quality_PM10: Math.max(5, (weather.advancedData?.pm10 || 18) + pmBoost),
+        aqi: weather.aqi,
+        risk_label: riskLabel
+      };
+    });
+  }, [weather]);
+
+  const refreshOutbreakApiPanel = useCallback(async () => {
+    setOutbreakBusy(true);
+    try {
+      setOutbreakApiStats(getOutbreakPredictionStats());
+      setOutbreakApiAlerts(getActiveOutbreakAlerts().slice(0, 5));
+      if (!outbreakCity.trim()) {
+        setOutbreakApiWarnings([]);
+        return;
+      }
+      const warnings = await checkCloudEarlyWarning(outbreakCity.trim(), outbreakThreshold);
+      setOutbreakApiWarnings(warnings);
+    } catch (error) {
+      console.error('Failed to refresh outbreak panel:', error);
+      setOutbreakApiWarnings([]);
+    } finally {
+      setOutbreakBusy(false);
+    }
+  }, [outbreakCity, outbreakThreshold]);
+
+  const runMlApiHealth = useCallback(async () => {
+    setMlApiBusy('health');
+    try {
+      const [health, metrics, status] = await Promise.all([apiHealth(), apiMetrics(), apiTrainStatus()]);
+      const report = {
+        health: health.error ? health.error : health.response.data,
+        train_status: status.error ? status.error : status.response.data,
+        metrics_excerpt: metrics.error ? metrics.error : String(metrics.response.data).split('\n').slice(0, 10).join('\n'),
+        request_id: health.response.requestId || status.response.requestId || metrics.response.requestId || null
+      };
+      setMlApiResult(JSON.stringify(report, null, 2));
+    } catch (error) {
+      setMlApiResult(JSON.stringify({ error: error instanceof Error ? error.message : 'Health check failed.' }, null, 2));
+    } finally {
+      setMlApiBusy('');
+    }
+  }, []);
+
+  const runMlApiDetect = useCallback(async () => {
+    setMlApiBusy('detect');
+    try {
+      const parsed = JSON.parse(trainDatasetJson);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        setMlApiResult('Provide a non-empty JSON array dataset before detect.');
+        return;
+      }
+      const res = await apiTrainDetect({ data: parsed as Record<string, unknown>[] });
+      setMlApiResult(JSON.stringify(res.error ? res.error : res.response.data, null, 2));
+    } catch {
+      setMlApiResult('Invalid JSON in training dataset input.');
+    } finally {
+      setMlApiBusy('');
+    }
+  }, [trainDatasetJson]);
+
+  const runMlApiTrain = useCallback(async (mode: 'train' | 'auto') => {
+    setMlApiBusy(mode);
+    try {
+      const parsed = JSON.parse(trainDatasetJson);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        setMlApiResult('Provide a non-empty JSON array dataset before train.');
+        return;
+      }
+      const payload = {
+        data: parsed as Record<string, unknown>[],
+        label_column: trainLabelColumn.trim() || undefined,
+        model_type: 'xgboost'
+      };
+      const res = mode === 'auto' ? await apiTrainAuto(payload) : await apiTrain(payload);
+      setMlApiResult(JSON.stringify(res.error ? res.error : res.response.data, null, 2));
+    } catch {
+      setMlApiResult('Invalid JSON in training dataset input.');
+    } finally {
+      setMlApiBusy('');
+    }
+  }, [trainDatasetJson, trainLabelColumn]);
+
+  const runMlApiPredictCustom = useCallback(async () => {
+    if (!weather) return;
+    setMlApiBusy('predict');
+    try {
+      const payload: PredictCustomPayload = {
+        temp: weather.temp,
+        feels_like: weather.feelsLike,
+        pressure: weather.pressure,
+        humidity: weather.humidity,
+        wind_speed: weather.windSpeed,
+        wind_deg: weather.windDeg,
+        clouds: weather.clouds || 0,
+        visibility: (weather.visibility || 10000) / 1000,
+        uv_index: weather.uvIndex || 0,
+        air_quality_PM2_5: weather.advancedData?.pm2_5 || 0,
+        air_quality_PM10: weather.advancedData?.pm10 || 0,
+        aqi: weather.aqi
+      };
+      const res = await apiPredictCustom(payload);
+      setMlApiResult(JSON.stringify({
+        payload,
+        result: res.error ? res.error : res.response.data,
+        request_id: res.response.requestId || null
+      }, null, 2));
+    } catch (error) {
+      setMlApiResult(JSON.stringify({ error: error instanceof Error ? error.message : 'Prediction failed.' }, null, 2));
+    } finally {
+      setMlApiBusy('');
+    }
+  }, [weather]);
 
   // Store the main analysis report when it's generated
   useEffect(() => {
@@ -751,6 +962,22 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   useEffect(() => {
     setReportHistory(getReports());
   }, []);
+
+  useEffect(() => {
+    if (!outbreakCity && weather?.city) {
+      setOutbreakCity(weather.city);
+    }
+  }, [weather?.city, outbreakCity]);
+
+  useEffect(() => {
+    if (trainDatasetJson === '[]' && weather) {
+      setTrainDatasetJson(JSON.stringify(createSampleTrainingDataset(), null, 2));
+    }
+  }, [weather, trainDatasetJson, createSampleTrainingDataset]);
+
+  useEffect(() => {
+    refreshOutbreakApiPanel();
+  }, [refreshOutbreakApiPanel]);
 
   const handleDashboardFeedback = async (isHelpful: boolean) => {
     if (dashboardFeedbackSubmitted) return;
@@ -803,20 +1030,36 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [lifestyleData, setLifestyleData] = useState<LifestyleData>(() => {
     try {
       const saved = localStorage.getItem('biosentinel_lifestyle_data');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved) as LifestyleData & { smoking?: string | boolean };
+        if (typeof parsed.smoking === 'boolean') {
+          parsed.smoking = parsed.smoking ? 'Daily' : 'No';
+        }
+        return parsed;
+      }
     } catch { /* fall through */ }
     return {
       age: "",
       height: "",
       weight: "",
       gender: "",
+      bloodGroup: "",
+      occupation: "",
+      cityType: "",
       lifestyle: "",
       medication: "",
+      chronicConditions: "",
+      vaccinationStatus: "",
       foodHabits: "",
+      sleepHours: "",
+      waterIntakeLiters: "",
+      stressLevel: "",
       allergies: "",
       medicalHistory: "",
+      familyHistory: "",
+      emergencyContact: "",
       exercise: "",
-      smoking: false,
+      smoking: "",
       alcoholConsumption: ""
     };
   });
@@ -848,6 +1091,12 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [addedObs, setAddedObs] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!localIntelEnabled && activeInputTab === 'intel') {
+      setActiveInputTab('profile');
+    }
+  }, [localIntelEnabled, activeInputTab]);
 
   // Stable ref so sendMessage callback never changes reference during typing
   const chatCtxRef = useRef({ weather, isChatLoading, aiKey, mlPrediction, aiProvider, aiModel, chatMessages } as any);
@@ -892,6 +1141,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [intakeProcessing, setIntakeProcessing] = useState(false);
   const [intakeMessage, setIntakeMessage] = useState('');
   const [recentExtractions, setRecentExtractions] = useState<ReturnType<typeof getFieldConversations>>([]);
+  const [lastIngestRequestId, setLastIngestRequestId] = useState<string>('');
 
   const initialQuickSymptoms = ['Feeling unwell', 'Headache', 'Cough', 'Fever', 'Nausea'];
   const advancedSymptoms = ['Chills', 'Fatigue', 'Body Ache', 'Shortness of breath', 'Diarrhea', 'Rash', 'Sore Throat', 'Vomiting'];
@@ -947,6 +1197,25 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     };
 
     try {
+      // Mirror quick symptom submissions to backend batch ingest while preserving existing UI flow.
+      const batchEvents = selectedSymptoms.map((symptom) => ({
+        text: `${symptom}. ${symptomDetails || ''}`.trim(),
+        state: intakeState || 'Unknown State',
+        district: intakeDistrict || weather.city,
+        duration: symptomDuration,
+        trend: symptomTrend,
+        severity: symptomSeverity,
+        exposure_factors: exposureFactors,
+        source: 'quick_symptom_checker'
+      }));
+
+      if (batchEvents.length > 0) {
+        const ingestEnvelope = await apiBatchIngest(batchEvents);
+        if (ingestEnvelope.response.requestId) {
+          setLastIngestRequestId(ingestEnvelope.response.requestId);
+        }
+      }
+
       if (databaseSettings) {
         await saveSymptomData(databaseSettings, data);
         const latest = await fetchLocalOutbreakData(databaseSettings, weather.city);
@@ -982,6 +1251,12 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     { label: 'Heat wave', value: 'Heat wave', icon: Flame },
     { label: 'Unusually Cold', value: 'Unusually Cold', icon: Thermometer },
     { label: 'Water Contamination', value: 'Water looks/smells contaminated', icon: Waves },
+    { label: 'Crowded Clinics', value: 'Crowded clinics and increased patient waiting observed', icon: Hospital },
+    { label: 'School Absences ↑', value: 'Unusual increase in school absences reported', icon: Calendar },
+    { label: 'Vector Bite Complaints', value: 'Residents reporting frequent vector/insect bites', icon: ShieldAlert },
+    { label: 'Food Poisoning Rumors', value: 'Possible local food poisoning cases being discussed', icon: AlertTriangle },
+    { label: 'Low Medicine Stock', value: 'Nearby pharmacies reporting low stock of common medicines', icon: Pill },
+    { label: 'Water Logging', value: 'Water logging seen in streets and residential lanes', icon: Umbrella },
   ];
 
   useEffect(() => {
@@ -1132,7 +1407,38 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         addObservation(`Clinical intake logged from ${intakeDistrict}`);
       }
 
-      setIntakeMessage('Clinical intake processed and stored from Home.');
+      const intakeEnvelope = await apiSingleIngest({
+        text: conversation.text,
+        state: intakeState.trim(),
+        district: intakeDistrict.trim(),
+        language: intakeLanguage,
+        local_intel: {
+          source_type: 'field_worker',
+          source_reliability: conversation.confidence >= 0.75 ? 'high' : conversation.confidence >= 0.55 ? 'medium' : 'low',
+          locality_type: weather?.city ? 'urban' : 'unknown',
+          population_density: 'unknown'
+        },
+        health_profile: {
+          age_group: lifestyleData.age || 'unknown',
+          vulnerability: lifestyleData.medicalHistory || 'general',
+          symptom_trend: symptomTrend,
+          duration: symptomDuration
+        },
+        extracted_syndromes: conversation.extractedSyndromes,
+        icd10_codes: conversation.icd10Codes,
+        image_url: intakeImageUrl || undefined
+      });
+
+      const reqId = intakeEnvelope.response.requestId || intakeEnvelope.error?.requestId || '';
+      if (reqId) {
+        setLastIngestRequestId(reqId);
+      }
+
+      if (intakeEnvelope.error) {
+        setIntakeMessage(`Clinical intake saved locally; backend ingest failed (${intakeEnvelope.error.kind}): ${intakeEnvelope.error.message}`);
+      } else {
+        setIntakeMessage(`Clinical intake processed and stored from Home. request_id: ${reqId || 'N/A'}`);
+      }
       setIntakeText('');
       setIntakeImageUrl('');
     } catch (err) {
@@ -1307,7 +1613,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           height_cm: heightCm,
           weight_kg: weightKg,
           bmi,
-          smoking: lifestyleData?.smoking ? 'Yes' : 'No',
+          smoking: lifestyleData?.smoking || '',
           lifestyle: lifestyleData?.lifestyle || '',
           medication: lifestyleData?.medication || '',
           food_habits: lifestyleData?.foodHabits || '',
@@ -1697,7 +2003,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
               <div className="flex bg-slate-100 dark:bg-slate-700 p-1 sm:p-1.5 rounded-xl sm:rounded-2xl gap-1 overflow-x-auto custom-scrollbar" role="tablist" aria-label="Input methods">
                 {[
                   { id: 'profile', label: 'Health Profile', icon: Activity },
-                  { id: 'intel', label: 'Local Intel', icon: MessageSquarePlus },
+                  ...(localIntelEnabled ? [{ id: 'intel', label: 'Local Intel', icon: MessageSquarePlus }] : []),
                   { id: 'assistant', label: 'Bio-Assistant', icon: Bot }
                 ].map((tab) => (
                   <button
@@ -1777,274 +2083,16 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 <div className="space-y-6 animate-fade-in" id="panel-intel" role="tabpanel" aria-labelledby="tab-intel">
                   <label className="text-[11px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2"><MessageSquarePlus className="w-4 h-4" /> Local Intelligence & Surveillance</label>
 
-                  {/* Clinical intake moved to Home */}
-                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 space-y-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Clinical Intake — Process Field Conversation</p>
-                      <button
-                        type="button"
-                        onClick={handleAutoFillIntakeLocation}
-                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"
-                      >
-                        Auto-detect location
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                      <select
-                        value={intakeLanguage}
-                        onChange={(e) => setIntakeLanguage(e.target.value as IndicLanguage)}
-                        className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
-                      >
-                        {Object.entries(INDIC_LANGUAGE_LABELS).map(([code, label]) => (
-                          <option key={code} value={code}>{label} ({code})</option>
-                        ))}
-                      </select>
-                      <input
-                        type="text"
-                        value={intakeDistrict}
-                        onChange={(e) => setIntakeDistrict(e.target.value)}
-                        placeholder="District"
-                        className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
-                      />
-                      <input
-                        type="text"
-                        value={intakeState}
-                        onChange={(e) => setIntakeState(e.target.value)}
-                        placeholder="State"
-                        className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
-                      />
-                    </div>
-
-                    <textarea
-                      value={intakeText}
-                      onChange={(e) => setIntakeText(e.target.value)}
-                      placeholder="Patient description (informal / Hinglish OK)"
-                      rows={3}
-                      className="w-full p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
-                    />
-
-                    <input
-                      type="url"
-                      value={intakeImageUrl}
-                      onChange={(e) => setIntakeImageUrl(e.target.value)}
-                      placeholder="Clinical image URL (optional)"
-                      className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200"
-                    />
-
-                    <button
-                      onClick={handleProcessClinicalIntake}
-                      disabled={intakeProcessing}
-                      className="px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest transition-all"
-                    >
-                      {intakeProcessing ? 'Processing...' : 'Process & Extract'}
-                    </button>
-
-                    {intakeMessage && (
-                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-300">{intakeMessage}</p>
-                    )}
-
-                    {recentExtractions.length > 0 && (
-                      <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Recent Extractions</p>
-                        </div>
-                        {recentExtractions.slice(0, 3).map((item) => (
-                          <div key={item.id} className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
-                            <p className="text-[10px] font-black text-slate-600 dark:text-slate-300">{item.district}, {item.state} — {INDIC_LANGUAGE_LABELS[item.language]} ({item.language})</p>
-                            <p className="text-xs font-bold text-slate-700 dark:text-slate-200 mt-1 line-clamp-2">{item.text}</p>
-                            {item.extractedSyndromes.length > 0 && (
-                              <div className="mt-1.5 flex flex-wrap gap-1">
-                                {item.extractedSyndromes.slice(0, 3).map(s => (
-                                  <span key={s} className="px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 text-[9px] font-black">{s}</span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {localOutbreakSignal && (
-                    <div className={`rounded-2xl p-4 border ${localOutbreakSignal.level === 'high'
-                      ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-700'
-                      : localOutbreakSignal.level === 'watch'
-                        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700'
-                        : 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-700'
-                      }`}>
-                      <div className="flex items-center justify-between gap-3 mb-1.5">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Local Outbreak Signal</p>
-                        <span className={`text-[9px] font-black uppercase tracking-widest ${localOutbreakSignal.level === 'high'
-                          ? 'text-rose-600 dark:text-rose-300'
-                          : localOutbreakSignal.level === 'watch'
-                            ? 'text-amber-600 dark:text-amber-300'
-                            : 'text-emerald-600 dark:text-emerald-300'
-                          }`}>
-                          {localOutbreakSignal.level} • {localOutbreakSignal.score}/100
-                        </span>
-                      </div>
-                      <p className="text-xs font-bold text-slate-700 dark:text-slate-200">{localOutbreakSignal.summary}</p>
-                      <p className="text-[10px] font-bold text-slate-400 mt-1">Based on {localSymptomRecords.length} DB symptom reports.</p>
-                    </div>
-                  )}
-
-                  {/* QUICK SYMPTOM CHECKER */}
-                  <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">How are you feeling?</p>
-                    <p className="text-[10px] font-black text-teal-600 dark:text-teal-300 uppercase tracking-widest mb-3">
-                      Location: {weather?.city || intakeDistrict || 'Unknown'}{intakeState ? `, ${intakeState}` : ''}
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest">
+                      Surveillance Integration (All-In-One)
                     </p>
-                    <div className="flex flex-wrap gap-2 mb-4">
-                      {initialQuickSymptoms.map(symptom => (
-                        <button
-                          key={symptom}
-                          onClick={() => handleSymptomToggle(symptom)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${selectedSymptoms.includes(symptom)
-                            ? 'bg-rose-500 text-white border-rose-600'
-                            : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-rose-300'
-                            }`}
-                        >
-                          {symptom}
-                        </button>
-                      ))}
-                    </div>
-
-                    {showSurveillanceForm && (
-                      <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 animate-fade-in space-y-4">
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Additional Symptoms</p>
-                        <div className="flex flex-wrap gap-2">
-                          {advancedSymptoms.map(symptom => (
-                            <button
-                              key={symptom}
-                              onClick={() => handleSymptomToggle(symptom)}
-                              className={`px-2 py-1 rounded-md text-[10px] font-bold transition-all border ${selectedSymptoms.includes(symptom)
-                                ? 'bg-rose-500 text-white border-rose-600'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:border-rose-300'
-                                }`}
-                            >
-                              {symptom}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Severity (1-5)</p>
-                          <input
-                            type="range" min="1" max="5"
-                            value={symptomSeverity}
-                            onChange={(e) => setSymptomSeverity(Number(e.target.value))}
-                            className="w-full accent-rose-500"
-                          />
-                          <div className="flex justify-between text-[9px] font-bold text-slate-400 mt-1">
-                            <span>Mild</span>
-                            <span>Severe</span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Duration</p>
-                          <div className="flex flex-wrap gap-2">
-                            {(['<24h', '1-3d', '4-7d', '>7d'] as const).map((d) => (
-                              <button
-                                key={d}
-                                type="button"
-                                onClick={() => setSymptomDuration(d)}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all ${symptomDuration === d ? 'bg-teal-600 text-white border-teal-600' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'}`}
-                              >
-                                {d}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Trend</p>
-                          <div className="flex flex-wrap gap-2">
-                            {(['worsening', 'stable', 'improving'] as const).map((t) => (
-                              <button
-                                key={t}
-                                type="button"
-                                onClick={() => setSymptomTrend(t)}
-                                className={`px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all ${symptomTrend === t ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'}`}
-                              >
-                                {t}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Potential Exposure</p>
-                          <div className="flex flex-wrap gap-2">
-                            {exposureOptions.map((factor) => (
-                              <button
-                                key={factor}
-                                type="button"
-                                onClick={() => toggleExposureFactor(factor)}
-                                className={`px-2 py-1 rounded-md text-[10px] font-bold border transition-all ${exposureFactors.includes(factor) ? 'bg-amber-500 text-white border-amber-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700'}`}
-                              >
-                                {factor}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Details (Optional)</p>
-                          <textarea
-                            value={symptomDetails}
-                            onChange={(e) => setSymptomDetails(e.target.value)}
-                            placeholder="Any other details about how you are feeling or where you have been..."
-                            className="w-full p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium focus:border-rose-500 outline-none resize-none"
-                            rows={3}
-                          />
-                        </div>
-
-                        <div>
-                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Upload Symptom Image (Optional)</p>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleSymptomImageUpload}
-                            className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-200"
-                          />
-                          {symptomImageName && (
-                            <p className="mt-1 text-[10px] font-bold text-teal-600 dark:text-teal-300">Selected: {symptomImageName}</p>
-                          )}
-                          {symptomImageDataUrl && (
-                            <img src={symptomImageDataUrl} alt="Symptom upload preview" className="mt-2 max-h-28 rounded-lg border border-slate-200 dark:border-slate-700" />
-                          )}
-                        </div>
-
-                        <button
-                          onClick={submitSymptoms}
-                          disabled={isSubmittingSymptom || selectedSymptoms.length === 0}
-                          className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {isSubmittingSymptom ? <Loader2 className="w-4 h-4 animate-spin" /> : symptomSuccess ? <Check className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
-                          {symptomSuccess ? 'Report Submitted' : 'Submit Health Report'}
-                        </button>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={sendIntelToAssistant}
-                            disabled={isChatLoading}
-                            className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-50"
-                          >
-                            Send To Deep Analysis
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setSelectedSymptoms([]); setSymptomDetails(''); setExposureFactors([]); setSymptomTrend('stable'); setSymptomDuration('<24h'); }}
-                            className="px-3 py-2.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    <SurveillanceIntegrationHub
+                      mode="full"
+                      embedded
+                      prefillState={intakeState}
+                      prefillDistrict={intakeDistrict || weather?.city || ''}
+                    />
                   </div>
 
                   {/* REGULAR LOCAL OBSERVATIONS */}
@@ -2346,6 +2394,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 <span className="text-[10px] font-black uppercase tracking-widest">Quick Jump:</span>
               </div>
               {([
+                { href: '#section-ml-api-controls', icon: Cpu, label: 'ML API Panel', always: true },
+                { href: '#section-outbreak-api-controls', icon: Bug, label: 'Outbreak API', always: true },
                 { href: '#section-warnings', icon: AlertTriangle, label: 'Warnings', always: true },
                 { href: '#section-telemetry', icon: Database, label: 'Weather Data', always: true },
                 { href: '#section-prevention', icon: ShieldCheck, label: 'Prevention', always: true },
@@ -2379,6 +2429,107 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
           </div>
 
           <div className="p-6 sm:p-10 md:p-16 space-y-16 sm:space-y-24">
+            <section id="section-ml-api-controls" className="space-y-4 scroll-mt-24">
+              <div className="flex items-center gap-3">
+                <Cpu className="w-5 h-5 text-teal-600" />
+                <h4 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider">ML API Interface</h4>
+              </div>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-300">Run health, detect, train, status and prediction directly against the ML backend and inspect responses in this report.</p>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <button onClick={runMlApiHealth} disabled={!!mlApiBusy} className="px-4 py-3 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-teal-600 disabled:opacity-50 transition-all">{mlApiBusy === 'health' ? 'Running Health...' : 'Fetch Health + Status + Metrics'}</button>
+                <button onClick={runMlApiDetect} disabled={!!mlApiBusy} className="px-4 py-3 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 disabled:opacity-50 transition-all">{mlApiBusy === 'detect' ? 'Detecting...' : 'Detect Train Schema'}</button>
+                <button onClick={runMlApiPredictCustom} disabled={!!mlApiBusy || !weather} className="px-4 py-3 rounded-xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 disabled:opacity-50 transition-all">{mlApiBusy === 'predict' ? 'Predicting...' : 'Predict Current Weather'}</button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Training Label Column</label>
+                  <input
+                    value={trainLabelColumn}
+                    onChange={(e) => setTrainLabelColumn(e.target.value)}
+                    placeholder="label column name"
+                    className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={() => setTrainDatasetJson(JSON.stringify(createSampleTrainingDataset(), null, 2))} className="flex-1 px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Load Sample Dataset</button>
+                    <button onClick={() => runMlApiTrain('train')} disabled={!!mlApiBusy} className="flex-1 px-3 py-2 rounded-lg bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">{mlApiBusy === 'train' ? 'Training...' : 'Train Model'}</button>
+                    <button onClick={() => runMlApiTrain('auto')} disabled={!!mlApiBusy} className="flex-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">{mlApiBusy === 'auto' ? 'Auto Training...' : 'Train Auto'}</button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Training Dataset JSON</label>
+                  <textarea
+                    value={trainDatasetJson}
+                    onChange={(e) => setTrainDatasetJson(e.target.value)}
+                    rows={8}
+                    className="w-full p-3 rounded-xl bg-slate-950 text-slate-100 border border-slate-800 text-[11px] font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">ML API Output</p>
+                <pre className="text-[11px] font-mono text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{mlApiResult || 'No ML API call executed yet.'}</pre>
+              </div>
+            </section>
+
+            <section id="section-outbreak-api-controls" className="space-y-4 scroll-mt-24">
+              <div className="flex items-center gap-3">
+                <Bug className="w-5 h-5 text-rose-600" />
+                <h4 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider">Outbreak Prediction API Interface</h4>
+              </div>
+              <p className="text-xs font-bold text-slate-500 dark:text-slate-300">Query cloud early-warning thresholds and inspect local outbreak analytics in one place.</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <input value={outbreakCity} onChange={(e) => setOutbreakCity(e.target.value)} placeholder="City" className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
+                <input type="number" min={1} value={outbreakThreshold} onChange={(e) => setOutbreakThreshold(Number(e.target.value) || 15)} placeholder="Threshold" className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
+                <button onClick={refreshOutbreakApiPanel} disabled={outbreakBusy} className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 disabled:opacity-50">Refresh Outbreak Data</button>
+                <button onClick={() => { setOutbreakCity(weather?.city || ''); setOutbreakThreshold(15); }} className="px-4 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-black uppercase tracking-widest">Reset</button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Tracked Signals</p>
+                  <p className="text-2xl font-black text-slate-800 dark:text-slate-100 mt-1">{outbreakApiStats?.totalSignals ?? 0}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active Alerts</p>
+                  <p className="text-2xl font-black text-rose-600 mt-1">{outbreakApiStats?.activeAlerts ?? 0}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">District Coverage</p>
+                  <p className="text-2xl font-black text-slate-800 dark:text-slate-100 mt-1">{outbreakApiStats?.districtsCovered ?? 0}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 space-y-2">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Cloud Early Warnings</p>
+                  {outbreakApiWarnings.length === 0 ? (
+                    <p className="text-xs font-bold text-slate-400">No cloud warning over current threshold.</p>
+                  ) : outbreakApiWarnings.map((w, idx) => (
+                    <div key={`${w.syndromeId}-${idx}`} className="p-3 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-700">
+                      <p className="text-xs font-black text-rose-700 dark:text-rose-300">{w.syndromeName}</p>
+                      <p className="text-[10px] font-bold text-rose-600 dark:text-rose-300">{w.message}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 space-y-2">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Local Active Outbreak Alerts</p>
+                  {outbreakApiAlerts.length === 0 ? (
+                    <p className="text-xs font-bold text-slate-400">No local active outbreak alerts.</p>
+                  ) : outbreakApiAlerts.map((a) => (
+                    <div key={a.id} className="p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
+                      <p className="text-xs font-black text-amber-700 dark:text-amber-300">{a.syndromeName} • {a.status.toUpperCase()}</p>
+                      <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300">{a.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
             {/* Warnings Section */}
             {mlWarnings.length > 0 && (
               <div id="section-warnings" className="space-y-4 scroll-mt-24">

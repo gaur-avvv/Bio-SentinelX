@@ -61,6 +61,10 @@ export interface SettingsPageProps {
   setBioSentinelApiUrl: (url: string) => void;
   mlApiKey: string;
   setMlApiKey: (key: string) => void;
+  surveillanceApiUrl: string;
+  setSurveillanceApiUrl: (url: string) => void;
+  surveillanceApiKey: string;
+  setSurveillanceApiKey: (key: string) => void;
   databaseSettings: DatabaseSettings;
   setDatabaseSettings: (patch: Partial<DatabaseSettings>) => void;
   mcpSettings: McpSettings;
@@ -160,6 +164,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
   bioSentinelApiUrl, setBioSentinelApiUrl,
   mlApiKey, setMlApiKey, mapplsToken, setMapplsToken,
+  surveillanceApiUrl, setSurveillanceApiUrl,
+  surveillanceApiKey, setSurveillanceApiKey,
   databaseSettings, setDatabaseSettings,
   mcpSettings, setMcpSettings,
   mapProvider, setMapProvider, mapTilerKey, setMapTilerKey,
@@ -184,6 +190,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   } = useTheme();
 
   const normalizedMlApiBaseUrl = bioSentinelApiUrl.trim().replace(/\/+$/, '');
+  const normalizedSurveillanceApiBaseUrl = surveillanceApiUrl.trim().replace(/\/+$/, '');
   const mlOpenApiUrl = normalizedMlApiBaseUrl ? `${normalizedMlApiBaseUrl}/openapi.json` : '';
 
   /* ── API health check ──────────────────────────────────────────────────── */
@@ -473,7 +480,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">BIO-SENTINEL API URL</span>
               <a
-                href="https://web-production-1f43.up.railway.app/openapi.json"
+                href="https://web-production-37f41.up.railway.app/openapi.json"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[9px] font-black text-teal-600 hover:underline"
@@ -487,13 +494,52 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 type="url"
                 value={bioSentinelApiUrl}
                 onChange={e => setBioSentinelApiUrl(e.target.value)}
-                placeholder="https://web-production-1f43.up.railway.app"
+                placeholder="https://web-production-37f41.up.railway.app"
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500 focus:bg-white dark:focus:bg-slate-700 transition-all"
               />
             </div>
             <p className="text-[9px] font-bold text-slate-400 leading-relaxed">
               Active base: {normalizedMlApiBaseUrl || 'Not set'}
             </p>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 space-y-3">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Surveillance Integration API</p>
+
+            <KeyInput
+              label="Surveillance API Key (optional)"
+              value={surveillanceApiKey}
+              onChange={setSurveillanceApiKey}
+              placeholder="sk-surv-..."
+              note="Used for /surveillance-integration endpoints when your backend requires authentication."
+            />
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Surveillance API URL</span>
+                <a
+                  href="https://web-production-37f41.up.railway.app/health"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[9px] font-black text-teal-600 hover:underline"
+                >
+                  Health Check
+                </a>
+              </div>
+              <div className="relative group">
+                <Server className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-teal-500 transition-colors" />
+                <input
+                  type="url"
+                  value={surveillanceApiUrl}
+                  onChange={e => setSurveillanceApiUrl(e.target.value)}
+                  placeholder="https://web-production-37f41.up.railway.app"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500 focus:bg-white dark:focus:bg-slate-700 transition-all"
+                />
+              </div>
+              <p className="text-[9px] font-bold text-slate-400 leading-relaxed">
+                Active surveillance base: {normalizedSurveillanceApiBaseUrl || 'Not set'}
+              </p>
+            </div>
           </div>
 
           <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 space-y-3">
