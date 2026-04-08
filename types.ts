@@ -139,6 +139,7 @@ export interface GroundingChunk {
 }
 
 export interface LifestyleData {
+  fullName?: string;
   age: string;
   height?: string;
   weight?: string;

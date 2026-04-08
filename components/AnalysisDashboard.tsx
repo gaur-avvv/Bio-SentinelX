@@ -2083,49 +2083,58 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 <div className="space-y-6 animate-fade-in" id="panel-intel" role="tabpanel" aria-labelledby="tab-intel">
                   <label className="text-[11px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest flex items-center gap-2"><MessageSquarePlus className="w-4 h-4" /> Local Intelligence & Surveillance</label>
 
-                  <div className="space-y-2">
-                    <p className="text-[10px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest">
-                      Surveillance Integration (All-In-One)
-                    </p>
-                    <SurveillanceIntegrationHub
-                      mode="full"
-                      embedded
-                      prefillState={intakeState}
-                      prefillDistrict={intakeDistrict || weather?.city || ''}
-                    />
-                  </div>
+                  <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+                    <div className="xl:col-span-3 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40">
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <p className="text-[10px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest">Quick Observations</p>
+                        <span className="text-[9px] font-black text-teal-600 uppercase tracking-widest">Tap to append</span>
+                      </div>
 
-                  {/* REGULAR LOCAL OBSERVATIONS */}
-                  <div className="flex flex-col h-full space-y-4 pt-2 border-t border-slate-200 dark:border-slate-700">
-                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Environmental Observations</p>
+                      <div className="flex flex-wrap gap-2">
+                        {quickObservations.map((obs) => (
+                          <button
+                            key={obs.label}
+                            onClick={() => addObservation(obs.value)}
+                            className="px-3 py-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-[9px] font-black text-slate-500 dark:text-slate-300 hover:bg-teal-500 hover:text-white transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
+                          >
+                            {addedObs === obs.value ? <Check className="w-3 h-3 text-emerald-500" /> : <obs.icon className="w-3 h-3" />}
+                            {obs.label}
+                          </button>
+                        ))}
+                        <div className="flex items-center gap-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl px-2 shrink-0">
+                          <input
+                            type="text"
+                            value={customObs}
+                            onChange={(e) => setCustomObs(e.target.value)}
+                            placeholder="Custom"
+                            className="w-24 bg-transparent text-[9px] font-bold text-slate-700 dark:text-slate-200 outline-none"
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddCustomObs()}
+                          />
+                          <button onClick={handleAddCustomObs} className="p-1 hover:bg-teal-100 rounded-lg text-teal-600">
+                            <Check className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      {quickObservations.map((obs) => (
-                        <button
-                          key={obs.label}
-                          onClick={() => addObservation(obs.value)}
-                          className="px-3 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 rounded-xl text-[9px] font-black text-slate-500 dark:text-slate-300 hover:bg-teal-500 hover:text-white transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
-                        >
-                          {addedObs === obs.value ? <Check className="w-3 h-3 text-emerald-500" /> : <obs.icon className="w-3 h-3" />}
-                          {obs.label}
-                        </button>
-                      ))}
-                      <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-600 rounded-xl px-2 shrink-0">
-                        <input
-                          type="text"
-                          value={customObs}
-                          onChange={(e) => setCustomObs(e.target.value)}
-                          placeholder="Custom..."
-                          className="w-20 bg-transparent text-[9px] font-bold text-slate-700 dark:text-slate-200 outline-none"
-                          onKeyDown={(e) => e.key === 'Enter' && handleAddCustomObs()}
-                        />
-                        <button onClick={handleAddCustomObs} className="p-1 hover:bg-teal-100 rounded-lg text-teal-600">
-                          <Check className="w-3 h-3" />
-                        </button>
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest">Field Notes</p>
+                          <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500">{(userFeedback || '').length} chars</span>
+                        </div>
+                        <textarea value={userFeedback} onChange={(e) => setUserFeedback(e.target.value)} placeholder="Add local symptoms, environmental signals, and unusual events..." className="w-full min-h-[150px] sm:min-h-[220px] p-4 sm:p-5 bg-white dark:bg-slate-700/70 border border-slate-200 dark:border-slate-600 rounded-2xl text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 focus:border-teal-500 transition-all resize-none placeholder:text-slate-400" />
+                        <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tight">Clear notes improve analysis quality.</p>
                       </div>
                     </div>
-                    <textarea value={userFeedback} onChange={(e) => setUserFeedback(e.target.value)} placeholder="Input observations or symptoms..." className="w-full min-h-[150px] sm:min-h-[250px] p-4 sm:p-6 bg-slate-50 dark:bg-slate-700/60 border border-slate-100 dark:border-slate-600 rounded-[1.5rem] sm:rounded-[2.5rem] text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-700 focus:border-teal-500 transition-all resize-none placeholder:text-slate-400" />
-                    <p className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tight">Your observations are used to ground the analysis in local reality.</p>
+
+                    <div className="xl:col-span-2 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40">
+                      <p className="text-[10px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest mb-3">Surveillance Hub</p>
+                      <SurveillanceIntegrationHub
+                        mode="full"
+                        embedded
+                        prefillState={intakeState}
+                        prefillDistrict={intakeDistrict || weather?.city || ''}
+                      />
+                    </div>
                   </div>
                 </div>
               )}

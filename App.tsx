@@ -98,6 +98,8 @@ const AppInner: React.FC = () => {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
+  const [userName, setUserName] = useState<string>(() => localStorage.getItem('biosentinel_user_name') || 'User');
+  const [userAvatar, setUserAvatar] = useState<string>(() => localStorage.getItem('biosentinel_user_avatar') || '');
 
   const [location, setLocation] = useState<string>(() => localStorage.getItem('biosentinel_location') || '');
   const [weather, setWeather] = useState<WeatherData | null>(() => {
@@ -216,6 +218,12 @@ const AppInner: React.FC = () => {
       if (unsub) unsub();
     };
   }, []);
+
+  useEffect(() => {
+    if (!onboardingComplete) return;
+    setUserName(localStorage.getItem('biosentinel_user_name') || 'User');
+    setUserAvatar(localStorage.getItem('biosentinel_user_avatar') || '');
+  }, [onboardingComplete]);
 
   const addAlerts = useCallback((newAlerts: HealthAlert[], ns?: NotificationSettings) => {
     if (newAlerts.length === 0) return;
@@ -445,6 +453,18 @@ const AppInner: React.FC = () => {
 
         <div className="flex-shrink-0 order-2 ml-auto">
           <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+              {userAvatar ? (
+                <img
+                  src={`data:image/svg+xml;utf8,${encodeURIComponent(userAvatar)}`}
+                  alt="User avatar"
+                  className="w-6 h-6 rounded-lg"
+                />
+              ) : (
+                <div className="w-6 h-6 rounded-lg bg-teal-600" />
+              )}
+              <span className="text-[10px] font-black text-slate-600 dark:text-slate-200 uppercase tracking-wider max-w-[110px] truncate">{userName}</span>
+            </div>
             <AlertNotificationPanel
               alerts={alerts}
               onMarkRead={(id) => setAlerts(prev => prev.map(a => a.id === id ? { ...a, read: true } : a))}

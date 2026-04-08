@@ -107,6 +107,9 @@ export async function completeEmailLinkSignIn(): Promise<boolean> {
     const href = window.location.href;
     if (!modules.auth.isSignInWithEmailLink(auth, href)) return false;
 
+    // Remove sensitive query params from the address bar immediately.
+    window.history.replaceState({}, '', `${window.location.pathname}`);
+
     let email = localStorage.getItem('emailForSignIn');
     if (!email) {
         email = window.prompt('Please provide your email for confirmation') || '';
@@ -115,9 +118,6 @@ export async function completeEmailLinkSignIn(): Promise<boolean> {
 
     await modules.auth.signInWithEmailLink(auth, email, href);
     localStorage.removeItem('emailForSignIn');
-
-    // Remove one-time code query params after successful sign-in.
-    window.history.replaceState({}, '', `${window.location.pathname}`);
     return true;
 }
 

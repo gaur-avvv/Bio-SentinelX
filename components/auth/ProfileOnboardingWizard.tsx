@@ -10,14 +10,17 @@ interface ProfileOnboardingWizardProps {
 type Question = {
     key: keyof LifestyleData;
     label: string;
-    type: 'number' | 'single' | 'multi';
+    type: 'text' | 'number' | 'single' | 'multi';
     options?: string[];
     placeholder?: string;
 };
 
 const STORAGE_KEY = 'biosentinel_lifestyle_data';
+const USER_NAME_KEY = 'biosentinel_user_name';
+const USER_AVATAR_KEY = 'biosentinel_user_avatar';
 
 const QUESTIONS: Question[] = [
+    { key: 'fullName', label: 'Your Name', type: 'text', placeholder: 'Gaurav' },
     { key: 'age', label: 'Age', type: 'number', placeholder: '21' },
     { key: 'height', label: 'Height (cm)', type: 'number', placeholder: '182' },
     { key: 'weight', label: 'Weight (kg)', type: 'number', placeholder: '90' },
@@ -87,6 +90,43 @@ function toBmi(height?: string, weight?: string): number | null {
     return w / Math.pow(h / 100, 2);
 }
 
+function hashSeed(seed: string): number {
+    let hash = 0;
+    for (let i = 0; i < seed.length; i += 1) {
+        hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+        hash |= 0;
+    }
+    return Math.abs(hash);
+}
+
+function buildAvatarSvg(seed: string): string {
+    const h = hashSeed(seed || 'biosentinel');
+    const hueA = h % 360;
+    const hueB = (h + 120) % 360;
+    const hueC = (h + 240) % 360;
+    const initials = (seed || 'U')
+        .split(' ')
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(part => part[0]?.toUpperCase() || '')
+        .join('') || 'U';
+
+    return `
+<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'>
+    <defs>
+        <linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+            <stop offset='0%' stop-color='hsl(${hueA} 80% 60%)'/>
+            <stop offset='100%' stop-color='hsl(${hueB} 85% 52%)'/>
+        </linearGradient>
+    </defs>
+    <rect width='128' height='128' rx='28' fill='url(#g)'/>
+    <circle cx='30' cy='26' r='18' fill='hsl(${hueC} 95% 75% / 0.7)'/>
+    <circle cx='106' cy='102' r='24' fill='hsl(${hueA} 95% 80% / 0.45)'/>
+    <text x='50%' y='56%' text-anchor='middle' font-family='Verdana, sans-serif' font-size='42' font-weight='700' fill='white'>${initials}</text>
+</svg>
+`.trim();
+}
+
 export const ProfileOnboardingWizard: React.FC<ProfileOnboardingWizardProps> = ({ userId, onComplete }) => {
     const [profile, setProfile] = useState<LifestyleData>(() => getInitialProfile());
     const [step, setStep] = useState(0);
@@ -95,6 +135,10 @@ export const ProfileOnboardingWizard: React.FC<ProfileOnboardingWizardProps> = (
 
     const progress = Math.round(((step + 1) / QUESTIONS.length) * 100);
     const bmi = useMemo(() => toBmi(profile.height, profile.weight), [profile.height, profile.weight]);
+    const points = (step + 1) * 120;
+    const streak = Math.min(7, step + 1);
+    const name = profile.fullName?.trim() || 'Explorer';
+    const avatarSvg = useMemo(() => buildAvatarSvg(`${userId}:${name}`), [name, userId]);
 
     const currentValue = String(profile[question.key] ?? '');
     const currentValues = normalizeCommaList(currentValue);
@@ -131,6 +175,8 @@ export const ProfileOnboardingWizard: React.FC<ProfileOnboardingWizardProps> = (
         }
 
         localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+        localStorage.setItem(USER_NAME_KEY, name);
+        localStorage.setItem(USER_AVATAR_KEY, avatarSvg);
         localStorage.setItem(`biosentinel_onboarding_complete_${userId}`, 'true');
         onComplete();
     };
@@ -142,14 +188,48 @@ export const ProfileOnboardingWizard: React.FC<ProfileOnboardingWizardProps> = (
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-teal-50 via-white to-cyan-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 flex items-center justify-center p-4">
+            <style>{`
+              @keyframes floatY { 0% { transform: translateY(0px); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0px); } }
+              @keyframes pulseGlow { 0% { box-shadow: 0 0 0 0 rgba(20,184,166,0.35);} 70% { box-shadow: 0 0 0 10px rgba(20,184,166,0);} 100% { box-shadow: 0 0 0 0 rgba(20,184,166,0);} }
+            `}</style>
+
+            <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-50" viewBox="0 0 1440 800" fill="none" aria-hidden="true">
+                <circle cx="180" cy="130" r="90" fill="#99f6e4" style={{ animation: 'floatY 6s ease-in-out infinite' }} />
+                <circle cx="1240" cy="220" r="120" fill="#bfdbfe" style={{ animation: 'floatY 7s ease-in-out infinite' }} />
+                <circle cx="1120" cy="640" r="80" fill="#fde68a" style={{ animation: 'floatY 5.5s ease-in-out infinite' }} />
+                <path d="M0 640 C 260 520, 520 760, 780 620 C 980 520, 1220 700, 1440 580" stroke="#14b8a6" strokeOpacity="0.2" strokeWidth="12" />
+            </svg>
+
             <div className="w-full max-w-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl shadow-2xl p-6 sm:p-8 space-y-6">
                 <div className="flex items-center justify-between gap-3">
-                    <div>
-                        <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight">Health Profile Quest</h2>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Step {step + 1} of {QUESTIONS.length}</p>
+                    <div className="flex items-center gap-3">
+                        <img
+                            src={`data:image/svg+xml;utf8,${encodeURIComponent(avatarSvg)}`}
+                            alt="Avatar"
+                            className="w-12 h-12 rounded-2xl border border-slate-200 dark:border-slate-700"
+                        />
+                        <div>
+                            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 uppercase tracking-tight">Health Profile Quest</h2>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Step {step + 1} of {QUESTIONS.length} · {name}</p>
+                        </div>
                     </div>
-                    <div className="px-3 py-1.5 rounded-xl bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
+                    <div className="px-3 py-1.5 rounded-xl bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5" style={{ animation: 'pulseGlow 2s ease-in-out infinite' }}>
                         <Trophy className="w-3.5 h-3.5" /> {progress}%
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="p-2.5 rounded-xl border border-teal-200 bg-teal-50 text-center">
+                        <p className="text-[9px] font-black text-teal-500 uppercase tracking-widest">XP</p>
+                        <p className="text-sm font-black text-teal-700">{points}</p>
+                    </div>
+                    <div className="p-2.5 rounded-xl border border-indigo-200 bg-indigo-50 text-center">
+                        <p className="text-[9px] font-black text-indigo-500 uppercase tracking-widest">Streak</p>
+                        <p className="text-sm font-black text-indigo-700">{streak} 🔥</p>
+                    </div>
+                    <div className="p-2.5 rounded-xl border border-rose-200 bg-rose-50 text-center">
+                        <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest">Level</p>
+                        <p className="text-sm font-black text-rose-700">{Math.floor(step / 4) + 1}</p>
                     </div>
                 </div>
 
@@ -164,10 +244,18 @@ export const ProfileOnboardingWizard: React.FC<ProfileOnboardingWizardProps> = (
                     </div>
                 ) : null}
 
-                <div className="space-y-3">
+                <div key={step} className="space-y-3 animate-fade-in">
                     <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest">{question.label}</label>
 
-                    {question.type === 'number' ? (
+                    {question.type === 'text' ? (
+                        <input
+                            type="text"
+                            value={currentValue}
+                            onChange={(e) => setSingleValue(e.target.value)}
+                            placeholder={question.placeholder}
+                            className="w-full p-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold text-slate-800 dark:text-slate-100 outline-none focus:border-teal-500"
+                        />
+                    ) : question.type === 'number' ? (
                         <input
                             type="number"
                             value={currentValue}
