@@ -2438,108 +2438,108 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
 
           <div className="p-6 sm:p-10 md:p-16 space-y-16 sm:space-y-24">
             {showTechnicalPanels ? (
-            <section id="section-ml-api-controls" className="space-y-4 scroll-mt-24">
-              <div className="flex items-center gap-3">
-                <Cpu className="w-5 h-5 text-teal-600" />
-                <h4 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider">ML API Interface</h4>
-              </div>
-              <p className="text-xs font-bold text-slate-500 dark:text-slate-300">Run health, detect, train, status and prediction directly against the ML backend and inspect responses in this report.</p>
+              <section id="section-ml-api-controls" className="space-y-4 scroll-mt-24">
+                <div className="flex items-center gap-3">
+                  <Cpu className="w-5 h-5 text-teal-600" />
+                  <h4 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider">ML API Interface</h4>
+                </div>
+                <p className="text-xs font-bold text-slate-500 dark:text-slate-300">Run health, detect, train, status and prediction directly against the ML backend and inspect responses in this report.</p>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <button onClick={runMlApiHealth} disabled={!!mlApiBusy} className="px-4 py-3 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-teal-600 disabled:opacity-50 transition-all">{mlApiBusy === 'health' ? 'Running Health...' : 'Fetch Health + Status + Metrics'}</button>
-                <button onClick={runMlApiDetect} disabled={!!mlApiBusy} className="px-4 py-3 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 disabled:opacity-50 transition-all">{mlApiBusy === 'detect' ? 'Detecting...' : 'Detect Train Schema'}</button>
-                <button onClick={runMlApiPredictCustom} disabled={!!mlApiBusy || !weather} className="px-4 py-3 rounded-xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 disabled:opacity-50 transition-all">{mlApiBusy === 'predict' ? 'Predicting...' : 'Predict Current Weather'}</button>
-              </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <button onClick={runMlApiHealth} disabled={!!mlApiBusy} className="px-4 py-3 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-teal-600 disabled:opacity-50 transition-all">{mlApiBusy === 'health' ? 'Running Health...' : 'Fetch Health + Status + Metrics'}</button>
+                  <button onClick={runMlApiDetect} disabled={!!mlApiBusy} className="px-4 py-3 rounded-xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 disabled:opacity-50 transition-all">{mlApiBusy === 'detect' ? 'Detecting...' : 'Detect Train Schema'}</button>
+                  <button onClick={runMlApiPredictCustom} disabled={!!mlApiBusy || !weather} className="px-4 py-3 rounded-xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-emerald-500 disabled:opacity-50 transition-all">{mlApiBusy === 'predict' ? 'Predicting...' : 'Predict Current Weather'}</button>
+                </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Training Label Column</label>
-                  <input
-                    value={trainLabelColumn}
-                    onChange={(e) => setTrainLabelColumn(e.target.value)}
-                    placeholder="label column name"
-                    className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
-                  />
-                  <div className="flex gap-2">
-                    <button onClick={() => setTrainDatasetJson(JSON.stringify(createSampleTrainingDataset(), null, 2))} className="flex-1 px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Load Sample Dataset</button>
-                    <button onClick={() => runMlApiTrain('train')} disabled={!!mlApiBusy} className="flex-1 px-3 py-2 rounded-lg bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">{mlApiBusy === 'train' ? 'Training...' : 'Train Model'}</button>
-                    <button onClick={() => runMlApiTrain('auto')} disabled={!!mlApiBusy} className="flex-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">{mlApiBusy === 'auto' ? 'Auto Training...' : 'Train Auto'}</button>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Training Label Column</label>
+                    <input
+                      value={trainLabelColumn}
+                      onChange={(e) => setTrainLabelColumn(e.target.value)}
+                      placeholder="label column name"
+                      className="w-full p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold"
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={() => setTrainDatasetJson(JSON.stringify(createSampleTrainingDataset(), null, 2))} className="flex-1 px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Load Sample Dataset</button>
+                      <button onClick={() => runMlApiTrain('train')} disabled={!!mlApiBusy} className="flex-1 px-3 py-2 rounded-lg bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">{mlApiBusy === 'train' ? 'Training...' : 'Train Model'}</button>
+                      <button onClick={() => runMlApiTrain('auto')} disabled={!!mlApiBusy} className="flex-1 px-3 py-2 rounded-lg bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">{mlApiBusy === 'auto' ? 'Auto Training...' : 'Train Auto'}</button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Training Dataset JSON</label>
+                    <textarea
+                      value={trainDatasetJson}
+                      onChange={(e) => setTrainDatasetJson(e.target.value)}
+                      rows={8}
+                      className="w-full p-3 rounded-xl bg-slate-950 text-slate-100 border border-slate-800 text-[11px] font-mono"
+                    />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Training Dataset JSON</label>
-                  <textarea
-                    value={trainDatasetJson}
-                    onChange={(e) => setTrainDatasetJson(e.target.value)}
-                    rows={8}
-                    className="w-full p-3 rounded-xl bg-slate-950 text-slate-100 border border-slate-800 text-[11px] font-mono"
-                  />
-                </div>
-              </div>
 
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4">
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">ML API Output</p>
-                <pre className="text-[11px] font-mono text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{mlApiResult || 'No ML API call executed yet.'}</pre>
-              </div>
-            </section>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">ML API Output</p>
+                  <pre className="text-[11px] font-mono text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{mlApiResult || 'No ML API call executed yet.'}</pre>
+                </div>
+              </section>
             ) : null}
 
             {showTechnicalPanels ? (
-            <section id="section-outbreak-api-controls" className="space-y-4 scroll-mt-24">
-              <div className="flex items-center gap-3">
-                <Bug className="w-5 h-5 text-rose-600" />
-                <h4 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider">Outbreak Prediction API Interface</h4>
-              </div>
-              <p className="text-xs font-bold text-slate-500 dark:text-slate-300">Query cloud early-warning thresholds and inspect local outbreak analytics in one place.</p>
-
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <input value={outbreakCity} onChange={(e) => setOutbreakCity(e.target.value)} placeholder="City" className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
-                <input type="number" min={1} value={outbreakThreshold} onChange={(e) => setOutbreakThreshold(Number(e.target.value) || 15)} placeholder="Threshold" className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
-                <button onClick={refreshOutbreakApiPanel} disabled={outbreakBusy} className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 disabled:opacity-50">Refresh Outbreak Data</button>
-                <button onClick={() => { setOutbreakCity(weather?.city || ''); setOutbreakThreshold(15); }} className="px-4 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-black uppercase tracking-widest">Reset</button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Tracked Signals</p>
-                  <p className="text-2xl font-black text-slate-800 dark:text-slate-100 mt-1">{outbreakApiStats?.totalSignals ?? 0}</p>
+              <section id="section-outbreak-api-controls" className="space-y-4 scroll-mt-24">
+                <div className="flex items-center gap-3">
+                  <Bug className="w-5 h-5 text-rose-600" />
+                  <h4 className="text-lg font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider">Outbreak Prediction API Interface</h4>
                 </div>
-                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active Alerts</p>
-                  <p className="text-2xl font-black text-rose-600 mt-1">{outbreakApiStats?.activeAlerts ?? 0}</p>
-                </div>
-                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">District Coverage</p>
-                  <p className="text-2xl font-black text-slate-800 dark:text-slate-100 mt-1">{outbreakApiStats?.districtsCovered ?? 0}</p>
-                </div>
-              </div>
+                <p className="text-xs font-bold text-slate-500 dark:text-slate-300">Query cloud early-warning thresholds and inspect local outbreak analytics in one place.</p>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 space-y-2">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Cloud Early Warnings</p>
-                  {outbreakApiWarnings.length === 0 ? (
-                    <p className="text-xs font-bold text-slate-400">No cloud warning over current threshold.</p>
-                  ) : outbreakApiWarnings.map((w, idx) => (
-                    <div key={`${w.syndromeId}-${idx}`} className="p-3 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-700">
-                      <p className="text-xs font-black text-rose-700 dark:text-rose-300">{w.syndromeName}</p>
-                      <p className="text-[10px] font-bold text-rose-600 dark:text-rose-300">{w.message}</p>
-                    </div>
-                  ))}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <input value={outbreakCity} onChange={(e) => setOutbreakCity(e.target.value)} placeholder="City" className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
+                  <input type="number" min={1} value={outbreakThreshold} onChange={(e) => setOutbreakThreshold(Number(e.target.value) || 15)} placeholder="Threshold" className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold" />
+                  <button onClick={refreshOutbreakApiPanel} disabled={outbreakBusy} className="px-4 py-2.5 rounded-xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 disabled:opacity-50">Refresh Outbreak Data</button>
+                  <button onClick={() => { setOutbreakCity(weather?.city || ''); setOutbreakThreshold(15); }} className="px-4 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-black uppercase tracking-widest">Reset</button>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 space-y-2">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Local Active Outbreak Alerts</p>
-                  {outbreakApiAlerts.length === 0 ? (
-                    <p className="text-xs font-bold text-slate-400">No local active outbreak alerts.</p>
-                  ) : outbreakApiAlerts.map((a) => (
-                    <div key={a.id} className="p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
-                      <p className="text-xs font-black text-amber-700 dark:text-amber-300">{a.syndromeName} • {a.status.toUpperCase()}</p>
-                      <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300">{a.message}</p>
-                    </div>
-                  ))}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Tracked Signals</p>
+                    <p className="text-2xl font-black text-slate-800 dark:text-slate-100 mt-1">{outbreakApiStats?.totalSignals ?? 0}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active Alerts</p>
+                    <p className="text-2xl font-black text-rose-600 mt-1">{outbreakApiStats?.activeAlerts ?? 0}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">District Coverage</p>
+                    <p className="text-2xl font-black text-slate-800 dark:text-slate-100 mt-1">{outbreakApiStats?.districtsCovered ?? 0}</p>
+                  </div>
                 </div>
-              </div>
-            </section>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 space-y-2">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Cloud Early Warnings</p>
+                    {outbreakApiWarnings.length === 0 ? (
+                      <p className="text-xs font-bold text-slate-400">No cloud warning over current threshold.</p>
+                    ) : outbreakApiWarnings.map((w, idx) => (
+                      <div key={`${w.syndromeId}-${idx}`} className="p-3 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-700">
+                        <p className="text-xs font-black text-rose-700 dark:text-rose-300">{w.syndromeName}</p>
+                        <p className="text-[10px] font-bold text-rose-600 dark:text-rose-300">{w.message}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 p-4 space-y-2">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Local Active Outbreak Alerts</p>
+                    {outbreakApiAlerts.length === 0 ? (
+                      <p className="text-xs font-bold text-slate-400">No local active outbreak alerts.</p>
+                    ) : outbreakApiAlerts.map((a) => (
+                      <div key={a.id} className="p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
+                        <p className="text-xs font-black text-amber-700 dark:text-amber-300">{a.syndromeName} • {a.status.toUpperCase()}</p>
+                        <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300">{a.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
             ) : null}
 
             {/* Warnings Section */}

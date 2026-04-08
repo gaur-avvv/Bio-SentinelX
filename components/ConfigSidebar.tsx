@@ -185,8 +185,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             title="Auto — follows your OS dark/light preference"
             onClick={() => setAppMode('auto')}
             className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${appMode === 'auto'
-                ? 'bg-teal-500 text-white shadow-lg shadow-teal-400/40 scale-105'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-teal-100 hover:text-teal-600'
+              ? 'bg-teal-500 text-white shadow-lg shadow-teal-400/40 scale-105'
+              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-teal-100 hover:text-teal-600'
               }`}>
             <Wand2 className="w-3 h-3" />Auto
           </button>
@@ -194,8 +194,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             title="Light mode"
             onClick={() => setAppMode('light')}
             className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${appMode === 'light'
-                ? 'bg-amber-400 text-white shadow-lg shadow-amber-300/40 scale-105'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-amber-100 hover:text-amber-600'
+              ? 'bg-amber-400 text-white shadow-lg shadow-amber-300/40 scale-105'
+              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-amber-100 hover:text-amber-600'
               }`}>
             <Sun className="w-3 h-3" />Light
           </button>
@@ -203,8 +203,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             title="Dark mode"
             onClick={() => setAppMode('dark')}
             className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${appMode === 'dark'
-                ? 'bg-slate-800 text-blue-300 shadow-lg shadow-slate-700/40 scale-105'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-800 hover:text-blue-300'
+              ? 'bg-slate-800 text-blue-300 shadow-lg shadow-slate-700/40 scale-105'
+              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-800 hover:text-blue-300'
               }`}>
             <Moon className="w-3 h-3" />Dark
           </button>
@@ -217,8 +217,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             title="Auto — switches by local time of day"
             onClick={() => { setWeatherThemeLocked(false); setWeatherCardMode(autoWeatherTheme(new Date().getHours())); }}
             className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${!weatherThemeLocked
-                ? 'bg-teal-500 text-white shadow-md shadow-teal-300/40 scale-105'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-teal-100 hover:text-teal-600'
+              ? 'bg-teal-500 text-white shadow-md shadow-teal-300/40 scale-105'
+              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-teal-100 hover:text-teal-600'
               }`}>
             <Wand2 className="w-3 h-3" />Auto
           </button>
@@ -226,8 +226,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             title="Light card"
             onClick={() => { setWeatherCardMode('light'); setWeatherThemeLocked(true); }}
             className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${weatherThemeLocked && weatherCardMode === 'light'
-                ? 'bg-amber-400 text-white shadow-md shadow-amber-300/40 scale-105'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-amber-100 hover:text-amber-600'
+              ? 'bg-amber-400 text-white shadow-md shadow-amber-300/40 scale-105'
+              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-amber-100 hover:text-amber-600'
               }`}>
             <Sun className="w-3 h-3" />Day
           </button>
@@ -235,8 +235,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             title="Twilight card"
             onClick={() => { setWeatherCardMode('partial-dark'); setWeatherThemeLocked(true); }}
             className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${weatherThemeLocked && weatherCardMode === 'partial-dark'
-                ? 'bg-indigo-500 text-white shadow-md shadow-indigo-400/40 scale-105'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-indigo-100 hover:text-indigo-600'
+              ? 'bg-indigo-500 text-white shadow-md shadow-indigo-400/40 scale-105'
+              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-indigo-100 hover:text-indigo-600'
               }`}>
             <Sunset className="w-3 h-3" />Dusk
           </button>
@@ -244,8 +244,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
             title="Full dark card"
             onClick={() => { setWeatherCardMode('full-dark'); setWeatherThemeLocked(true); }}
             className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${weatherThemeLocked && weatherCardMode === 'full-dark'
-                ? 'bg-blue-800 text-blue-200 shadow-md shadow-blue-800/40 scale-105'
-                : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-blue-900 hover:text-blue-300'
+              ? 'bg-blue-800 text-blue-200 shadow-md shadow-blue-800/40 scale-105'
+              : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 hover:bg-blue-900 hover:text-blue-300'
               }`}>
             <Moon className="w-3 h-3" />Night
           </button>
@@ -255,8 +255,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
         <button
           onClick={() => setShowCustomColors(v => !v)}
           className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${useCustomColors
-              ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700 text-purple-700 dark:text-purple-300'
-              : 'bg-slate-100 dark:bg-slate-700 border-transparent text-slate-500 dark:text-slate-300 hover:border-slate-200'
+            ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700 text-purple-700 dark:text-purple-300'
+            : 'bg-slate-100 dark:bg-slate-700 border-transparent text-slate-500 dark:text-slate-300 hover:border-slate-200'
             }`}>
           <div className="flex items-center gap-1.5">
             <Palette className="w-3.5 h-3.5" />
@@ -337,19 +337,19 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
       <div className="space-y-8">
         {/* API Status Indicator */}
         <div className={`p-4 rounded-2xl border ${apiStatus === 'online' ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-100 dark:border-emerald-800/50' :
-            apiStatus === 'offline' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-800/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'
+          apiStatus === 'offline' ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-100 dark:border-rose-800/50' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-700'
           }`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className={`p-2 rounded-xl ${apiStatus === 'online' ? 'bg-emerald-500 text-white' :
-                  apiStatus === 'offline' ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-400'
+                apiStatus === 'offline' ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-400'
                 }`}>
                 <Server className="w-4 h-4" />
               </div>
               <div>
                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bio-Sentinel API</p>
                 <p className={`text-xs font-black uppercase tracking-tight ${apiStatus === 'online' ? 'text-emerald-700 dark:text-emerald-400' :
-                    apiStatus === 'offline' ? 'text-rose-700 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'
+                  apiStatus === 'offline' ? 'text-rose-700 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'
                   }`}>
                   {apiStatus === 'checking' ? 'Connecting...' : apiStatus}
                 </p>
@@ -555,8 +555,8 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
                   setAiModel(AI_MODELS[p][0].value);
                 }}
                 className={`py-2 px-1.5 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${aiProvider === p
-                    ? 'bg-white text-teal-600 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-600'
+                  ? 'bg-white text-teal-600 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-600'
                   }`}
               >
                 {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'OpenRouter' : p === 'siliconflow' ? 'SiliconFlow' : p === 'ollama' ? 'Ollama' : p.charAt(0).toUpperCase() + p.slice(1)}
