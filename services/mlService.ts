@@ -15,7 +15,7 @@ const CONFIG = {
 };
 
 const DEFAULT_BIOSENTINEL_API =
-  (import.meta.env.VITE_BIOSENTINEL_API as string) || 'https://web-production-1f43.up.railway.app';
+  (import.meta.env.VITE_BIOSENTINEL_API as string) || 'https://web-production-37f41.up.railway.app';
 
 // Runtime API key — set via setBioSentinelApiKey() from the UI
 let _runtimeApiKey: string = '';

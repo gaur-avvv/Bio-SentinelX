@@ -386,6 +386,7 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
       .sort((a, b) => Math.abs(b.signedContribution) - Math.abs(a.signedContribution))
       .slice(0, 8)
   );
+  const showInternalPanels = localStorage.getItem('biosentinel_show_internal_panels') === 'true';
 
   const causalPathways = sortedFactors.slice(0, 4).map(f => {
     const feature = f.feature.toLowerCase();
@@ -539,74 +540,69 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
               </div>
             </div>
             <div className="space-y-3 sm:space-y-3">
-              <div className="h-[200px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={sortedFactors.map(f => ({
-                      feature: f.feature,
-                      value: f.value,
-                      impact: f.direction,
-                      importance: f.importance,
-                      signedContribution: f.signedContribution,
-                      fill: f.signedContribution >= 0 ? '#f43f5e' : '#10b981'
-                    }))}
-                    margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#334155" />
-                    <XAxis type="number" hide />
-                    <YAxis
-                      dataKey="feature"
-                      type="category"
-                      width={80}
-                      tick={{ fill: '#cbd5e1', fontSize: 10, fontWeight: 700 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      cursor={{ fill: 'transparent' }}
-                      content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                          const data = payload[0].payload;
-                          return (
-                            <div className="bg-slate-800 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs font-bold text-slate-100 space-y-1">
-                              <p className="text-slate-300 uppercase tracking-widest text-[9px] mb-2">{data.feature}</p>
-                              <div className="flex justify-between gap-4">
-                                <span className="text-slate-400">Value:</span>
-                                <span>{data.value?.toFixed(2) || 'N/A'}</span>
+              {sortedFactors.length > 0 ? (
+                <div className="h-[200px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      layout="vertical"
+                      data={sortedFactors.map(f => ({
+                        feature: f.feature,
+                        value: f.value,
+                        impact: f.direction,
+                        importance: f.importance,
+                        signedContribution: f.signedContribution,
+                        fill: f.signedContribution >= 0 ? '#f43f5e' : '#10b981'
+                      }))}
+                      margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#334155" />
+                      <XAxis type="number" hide />
+                      <YAxis
+                        dataKey="feature"
+                        type="category"
+                        width={80}
+                        tick={{ fill: '#cbd5e1', fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        cursor={{ fill: 'transparent' }}
+                        content={({ active, payload }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload;
+                            return (
+                              <div className="bg-slate-800 border border-slate-700 p-3 rounded-xl shadow-2xl text-xs font-bold text-slate-100 space-y-1">
+                                <p className="text-slate-300 uppercase tracking-widest text-[9px] mb-2">{data.feature}</p>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Value:</span>
+                                  <span>{data.value?.toFixed(2) || 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between gap-4">
+                                  <span className="text-slate-400">Impact:</span>
+                                  <span className={data.impact === 'increases' ? 'text-rose-400 uppercase' : 'text-emerald-400 uppercase'}>
+                                    {data.impact}
+                                  </span>
+                                </div>
                               </div>
-                              <div className="flex justify-between gap-4">
-                                <span className="text-slate-400">Impact:</span>
-                                <span className={data.impact === 'increases' ? 'text-rose-400 uppercase' : 'text-emerald-400 uppercase'}>
-                                  {data.impact}
-                                </span>
-                              </div>
-                              <div className="flex justify-between gap-4">
-                                <span className="text-slate-400">Importance:</span>
-                                <span>{data.importance?.toFixed(3) || 'N/A'}</span>
-                              </div>
-                              <div className="flex justify-between gap-4">
-                                <span className="text-slate-400">Signed Contribution:</span>
-                                <span>{data.signedContribution?.toFixed(4) || 'N/A'}</span>
-                              </div>
-                              <p className="text-[9px] text-slate-500 mt-2 pt-2 border-t border-slate-700">
-                                SHAP value indicates feature contribution to the model's prediction.
-                              </p>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                    <ReferenceLine x={0} stroke="#475569" />
-                    <Bar dataKey="signedContribution" radius={[0, 4, 4, 0]} barSize={20}>
-                      {sortedFactors.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.signedContribution >= 0 ? '#f43f5e' : '#10b981'} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+                            );
+                          }
+                          return null;
+                        }}
+                      />
+                      <ReferenceLine x={0} stroke="#475569" />
+                      <Bar dataKey="signedContribution" radius={[0, 4, 4, 0]} barSize={20}>
+                        {sortedFactors.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.signedContribution >= 0 ? '#f43f5e' : '#10b981'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[200px] w-full flex items-center justify-center rounded-xl border border-dashed border-slate-700 text-slate-400 text-xs font-black uppercase tracking-widest">
+                  Feature insights will appear after prediction data loads
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -643,22 +639,24 @@ const MLInferenceCard: React.FC<{ prediction: MLPrediction }> = ({ prediction })
             </div>
           </div>
           <div className="bg-slate-800/60 rounded-2xl sm:rounded-3xl border border-slate-700/60 p-6 sm:p-10">
-            <div className="flex flex-wrap justify-end gap-2 mb-4">
-              <button
-                type="button"
-                onClick={exportSnapshotJson}
-                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-black uppercase tracking-widest"
-              >
-                Export Snapshot JSON
-              </button>
-              <button
-                type="button"
-                onClick={exportSnapshotCsv}
-                className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-[10px] font-black uppercase tracking-widest"
-              >
-                Export Snapshot CSV
-              </button>
-            </div>
+            {showInternalPanels ? (
+              <div className="flex flex-wrap justify-end gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={exportSnapshotJson}
+                  className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-black uppercase tracking-widest"
+                >
+                  Export Snapshot JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={exportSnapshotCsv}
+                  className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-[10px] font-black uppercase tracking-widest"
+                >
+                  Export Snapshot CSV
+                </button>
+              </div>
+            ) : null}
             <ReportRenderer markdown={prediction.recommendation} />
           </div>
 
@@ -1091,6 +1089,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [addedObs, setAddedObs] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const showTechnicalPanels = localStorage.getItem('biosentinel_show_internal_panels') === 'true';
 
   useEffect(() => {
     if (!localIntelEnabled && activeInputTab === 'intel') {
@@ -2129,7 +2128,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                     <div className="xl:col-span-2 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40">
                       <p className="text-[10px] font-black text-slate-500 dark:text-slate-300 uppercase tracking-widest mb-3">Surveillance Hub</p>
                       <SurveillanceIntegrationHub
-                        mode="full"
+                        mode="monitor"
                         embedded
                         prefillState={intakeState}
                         prefillDistrict={intakeDistrict || weather?.city || ''}
@@ -2403,8 +2402,8 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 <span className="text-[10px] font-black uppercase tracking-widest">Quick Jump:</span>
               </div>
               {([
-                { href: '#section-ml-api-controls', icon: Cpu, label: 'ML API Panel', always: true },
-                { href: '#section-outbreak-api-controls', icon: Bug, label: 'Outbreak API', always: true },
+                { href: '#section-ml-api-controls', icon: Cpu, label: 'ML API Panel', cond: showTechnicalPanels },
+                { href: '#section-outbreak-api-controls', icon: Bug, label: 'Outbreak API', cond: showTechnicalPanels },
                 { href: '#section-warnings', icon: AlertTriangle, label: 'Warnings', always: true },
                 { href: '#section-telemetry', icon: Database, label: 'Weather Data', always: true },
                 { href: '#section-prevention', icon: ShieldCheck, label: 'Prevention', always: true },
@@ -2438,6 +2437,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
           </div>
 
           <div className="p-6 sm:p-10 md:p-16 space-y-16 sm:space-y-24">
+            {showTechnicalPanels ? (
             <section id="section-ml-api-controls" className="space-y-4 scroll-mt-24">
               <div className="flex items-center gap-3">
                 <Cpu className="w-5 h-5 text-teal-600" />
@@ -2482,7 +2482,9 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 <pre className="text-[11px] font-mono text-slate-700 dark:text-slate-200 whitespace-pre-wrap break-all max-h-80 overflow-y-auto">{mlApiResult || 'No ML API call executed yet.'}</pre>
               </div>
             </section>
+            ) : null}
 
+            {showTechnicalPanels ? (
             <section id="section-outbreak-api-controls" className="space-y-4 scroll-mt-24">
               <div className="flex items-center gap-3">
                 <Bug className="w-5 h-5 text-rose-600" />
@@ -2538,6 +2540,7 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
                 </div>
               </div>
             </section>
+            ) : null}
 
             {/* Warnings Section */}
             {mlWarnings.length > 0 && (

@@ -455,7 +455,7 @@ export const DEFAULT_MCP_SETTINGS: McpSettings = {
     {
       id: 'local-biosentinel',
       name: 'BioSentinel MCP Local',
-      endpoint: 'https://web-production-1f43.up.railway.app',
+      endpoint: 'https://web-production-37f41.up.railway.app',
       enabled: true,
       allowedTools: ['outbreak_sweep'],
       timeoutMs: 5000,
