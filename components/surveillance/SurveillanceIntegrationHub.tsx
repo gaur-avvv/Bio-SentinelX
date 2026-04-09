@@ -186,6 +186,14 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
     }, [mockMode]);
 
     React.useEffect(() => {
+        // Clear stale responses when switching live/demo mode.
+        setCaseResult(null);
+        setBatchResult(null);
+        setBatchError('');
+        setSelectedRecordId(null);
+    }, [mockMode]);
+
+    React.useEffect(() => {
         const fallbackDistrict = prefillDistrict || localStorage.getItem('biosentinel_location') || '';
         const fallbackState = prefillState || '';
 
@@ -304,42 +312,65 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
     const pagedRecords = recordsQuery.data?.data || { records: [], total: 0 };
     const showIntake = mode === 'full' || mode === 'intake';
     const showMonitor = mode === 'full' || mode === 'monitor';
+    const showLiveError = !mockMode && healthQuery.isError;
+
+    const panelTitles = {
+        case: embedded ? 'Case Intake' : '1) Case Intake Panel',
+        batch: embedded ? 'Batch Intake' : '2) Batch Intake Panel',
+        overview: embedded ? 'Overview' : '3) Overview Stats',
+        alerts: embedded ? 'Alerts Feed' : '4) Alerts Feed',
+        records: embedded ? 'Records Explorer' : '5) Records Explorer',
+    };
 
     return (
         <div className={`sih-page ${embedded ? 'sih-page-embedded' : ''}`} aria-label="Surveillance Integration Hub">
             <header className="sih-topbar">
                 <div>
-                    <h1>{embedded ? 'Surveillance Workspace' : 'Surveillance Integration Hub'}</h1>
-                    <p>FastAPI-linked disease surveillance operations with clear intake, live alerts, and searchable records.</p>
+                    <h1>{embedded ? 'Surveillance Workspace' : 'Surveillance Hub'}</h1>
+                    <p>Simple disease tracking with intake, alerts, and records.</p>
                     <p className="sih-subhelp">
                         {showIntake && showMonitor
-                            ? 'Use this page in order from top to bottom: submit cases, review alerts, then open record details.'
+                            ? 'Submit cases, review alerts, then open record details.'
                             : showIntake
-                                ? 'Use this section to submit single or batch reports from field/local intelligence.'
-                                : 'Use this section to monitor trends, alerts, and records for rapid response.'}
+                                ? 'Submit single or batch reports.'
+                                : 'Monitor trends, alerts, and records.'}
                     </p>
                 </div>
                 <div className="sih-topbar-actions">
-                    <label className="sih-switch" htmlFor={`mock-mode-toggle-${mode}`}>
-                        <input
-                            id={`mock-mode-toggle-${mode}`}
-                            type="checkbox"
-                            checked={mockMode}
-                            onChange={e => setMockMode(e.target.checked)}
-                            aria-label="Enable mock mode"
-                        />
-                        <span>Mock mode</span>
-                    </label>
                     <span className={`sih-health-pill ${healthQuery.isError ? 'is-error' : healthQuery.isSuccess ? 'is-success' : ''}`}>
-                        {healthQuery.isLoading ? 'Checking /health...' : healthQuery.isError ? 'Health unavailable' : 'Health OK'}
+                        {healthQuery.isLoading ? 'Checking connection...' : healthQuery.isError ? 'Backend unavailable' : 'Backend connected'}
                     </span>
+                    {showLiveError ? (
+                        <button
+                            type="button"
+                            className="sih-btn sih-btn-secondary"
+                            onClick={() => setMockMode(true)}
+                        >
+                            Use demo data
+                        </button>
+                    ) : null}
+                    {mockMode ? (
+                        <button
+                            type="button"
+                            className="sih-btn sih-btn-ghost"
+                            onClick={() => setMockMode(false)}
+                        >
+                            Back to live
+                        </button>
+                    ) : null}
                 </div>
             </header>
 
+            {showLiveError ? (
+                <div className="sih-help-strip" role="note" aria-live="polite">
+                    Live surveillance API is unreachable right now. Check API URL/network or continue with demo data.
+                </div>
+            ) : null}
+
             {showIntake ? (
                 <Panel
-                    title="1) Case Intake Panel"
-                    description="Add one event report. Required fields are highlighted if missing."
+                    title={panelTitles.case}
+                    description="Add one event report."
                 >
                     <form onSubmit={submitCase} className="sih-form-grid" noValidate>
                         <label htmlFor="case-text">
@@ -468,8 +499,8 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
 
             {showIntake ? (
                 <Panel
-                    title="2) Batch Intake Panel"
-                    description="Add multiple events at once. Rows missing text, state, or district are ignored."
+                    title={panelTitles.batch}
+                    description="Add multiple events together."
                     actions={
                         <button type="button" className="sih-btn sih-btn-secondary" onClick={addBatchRow}>
                             Add row
@@ -561,7 +592,7 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
             ) : null}
 
             {showMonitor ? (
-                <Panel title="3) Overview Stats" description="Quick snapshot of total records, recent activity, and top syndromes.">
+                <Panel title={panelTitles.overview} description="Snapshot of records and syndromes.">
                     {overviewQuery.isPending ? <div className="sih-loading">Loading overview...</div> : null}
                     {overviewQuery.isError ? (
                         <ErrorBanner
@@ -595,7 +626,7 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
             ) : null}
 
             {showMonitor ? (
-                <Panel title="4) Alerts Feed" description="Live alert stream with severity filter and paging.">
+                <Panel title={panelTitles.alerts} description="Live alert stream.">
                     <div className="sih-filter-row">
                         <label htmlFor="alerts-severity">
                             Severity
@@ -712,7 +743,7 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
             ) : null}
 
             {showMonitor ? (
-                <Panel title="5) Records Explorer" description="Search by state, district, or syndrome and open full record details.">
+                <Panel title={panelTitles.records} description="Search records and open details.">
                     <div className="sih-filter-row">
                         <label htmlFor="records-state">
                             State
