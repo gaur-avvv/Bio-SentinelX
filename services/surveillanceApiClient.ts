@@ -96,7 +96,7 @@ export interface NormalizedApiError {
     details?: unknown;
 }
 
-const DEFAULT_SURVEILLANCE_API_BASE = 'https://web-production-37f41.up.railway.app';
+const DEFAULT_SURVEILLANCE_API_BASE = '';
 
 function getApiBaseUrl(): string {
     const fromSettings = localStorage.getItem('biosentinel_surveillance_api_base_url') || '';
@@ -215,7 +215,7 @@ async function request<T>(
 ): Promise<ApiSuccess<T>> {
     const apiBaseUrl = getApiBaseUrl();
     if (!apiBaseUrl) {
-        throw { message: 'VITE_API_BASE_URL is not configured.' };
+        throw { message: 'Surveillance API URL is not configured in settings/environment.' };
     }
 
     const apiKey = getApiKey();

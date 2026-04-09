@@ -480,12 +480,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">BIO-SENTINEL API URL</span>
               <a
-                href="https://web-production-37f41.up.railway.app/openapi.json"
+                href={mlOpenApiUrl || '#'}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[9px] font-black text-teal-600 hover:underline"
+                className={`text-[9px] font-black ${mlOpenApiUrl ? 'text-teal-600 hover:underline' : 'text-slate-400 pointer-events-none'}`}
               >
-                Default API Docs
+                API Docs
               </a>
             </div>
             <div className="relative group">
@@ -494,7 +494,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 type="url"
                 value={bioSentinelApiUrl}
                 onChange={e => setBioSentinelApiUrl(e.target.value)}
-                placeholder="https://web-production-37f41.up.railway.app"
+                placeholder="https://your-ml-api-url"
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500 focus:bg-white dark:focus:bg-slate-700 transition-all"
               />
             </div>
@@ -518,10 +518,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="flex items-center justify-between">
                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Surveillance API URL</span>
                 <a
-                  href="https://web-production-37f41.up.railway.app/health"
+                  href={normalizedSurveillanceApiBaseUrl ? `${normalizedSurveillanceApiBaseUrl}/health` : '#'}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[9px] font-black text-teal-600 hover:underline"
+                  className={`text-[9px] font-black ${normalizedSurveillanceApiBaseUrl ? 'text-teal-600 hover:underline' : 'text-slate-400 pointer-events-none'}`}
                 >
                   Health Check
                 </a>
@@ -532,7 +532,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   type="url"
                   value={surveillanceApiUrl}
                   onChange={e => setSurveillanceApiUrl(e.target.value)}
-                  placeholder="https://web-production-37f41.up.railway.app"
+                  placeholder="https://your-surveillance-api-url"
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500 focus:bg-white dark:focus:bg-slate-700 transition-all"
                 />
               </div>

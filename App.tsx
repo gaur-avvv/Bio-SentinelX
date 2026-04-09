@@ -128,10 +128,10 @@ const AppInner: React.FC = () => {
   const [openWeatherKey, setOpenWeatherKey] = useState<string>(() => localStorage.getItem('biosentinel_openweather_key') || '');
   const [mlApiKey, setMlApiKey] = useState<string>(() => localStorage.getItem('biosentinel_ml_api_key') || '');
   const [bioSentinelApiUrl, setBioSentinelApiUrlState] = useState<string>(
-    () => localStorage.getItem('biosentinel_ml_api_base_url') || import.meta.env.VITE_BIOSENTINEL_API || 'https://web-production-37f41.up.railway.app'
+    () => localStorage.getItem('biosentinel_ml_api_base_url') || import.meta.env.VITE_BIOSENTINEL_API || ''
   );
   const [surveillanceApiUrl, setSurveillanceApiUrl] = useState<string>(
-    () => localStorage.getItem('biosentinel_surveillance_api_base_url') || 'https://web-production-37f41.up.railway.app'
+    () => localStorage.getItem('biosentinel_surveillance_api_base_url') || import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BIOSENTINEL_API || ''
   );
   const [surveillanceApiKey, setSurveillanceApiKey] = useState<string>(
     () => localStorage.getItem('biosentinel_surveillance_api_key') || ''

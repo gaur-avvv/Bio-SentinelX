@@ -29,6 +29,17 @@ type CaseErrors = Partial<Record<keyof CaseIntakePayload, string>>;
 
 interface BatchRow extends CaseIntakePayload {
     id: string;
+    symptoms?: string;
+    affectedCount?: string;
+    sourceType?: string;
+    additionalNotes?: string;
+}
+
+interface ExtendedCaseMeta {
+    symptoms: string;
+    affectedCount: string;
+    sourceType: string;
+    additionalNotes: string;
 }
 
 interface SurveillanceIntegrationHubProps {
@@ -91,7 +102,20 @@ function createBatchRow(): BatchRow {
         text: '',
         state: '',
         district: '',
+        symptoms: '',
+        affectedCount: '',
+        sourceType: '',
+        additionalNotes: '',
     };
+}
+
+function composeEventText(baseText: string, meta: ExtendedCaseMeta): string {
+    const lines: string[] = [baseText.trim()];
+    if (meta.symptoms.trim()) lines.push(`Symptoms: ${meta.symptoms.trim()}`);
+    if (meta.affectedCount.trim()) lines.push(`Affected count: ${meta.affectedCount.trim()}`);
+    if (meta.sourceType.trim()) lines.push(`Source: ${meta.sourceType.trim()}`);
+    if (meta.additionalNotes.trim()) lines.push(`Notes: ${meta.additionalNotes.trim()}`);
+    return lines.filter(Boolean).join('\n');
 }
 
 function toTitleCaseKey(key: string): string {
@@ -136,6 +160,12 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
 
     const [mockMode, setMockMode] = useState<boolean>(() => localStorage.getItem('sih_mock_mode') === 'true');
     const [casePayload, setCasePayload] = useState<CaseIntakePayload>(EMPTY_CASE);
+    const [caseMeta, setCaseMeta] = useState<ExtendedCaseMeta>({
+        symptoms: '',
+        affectedCount: '',
+        sourceType: '',
+        additionalNotes: '',
+    });
     const [caseErrors, setCaseErrors] = useState<CaseErrors>({});
     const [caseResult, setCaseResult] = useState<PipelineIngestResponse | null>(null);
 
@@ -284,18 +314,34 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
         setBatchRows(prev => prev.map(row => (row.id === id ? { ...row, [field]: value } : row)));
     };
 
+    const updateBatchExtendedRow = (id: string, field: keyof BatchRow, value: string) => {
+        setBatchRows(prev => prev.map(row => (row.id === id ? { ...row, [field]: value } : row)));
+    };
+
     const submitCase = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        const errors = validateCase(casePayload);
+        const ingestPayload: CaseIntakePayload = {
+            ...casePayload,
+            text: composeEventText(casePayload.text, caseMeta),
+        };
+        const errors = validateCase(ingestPayload);
         setCaseErrors(errors);
         if (Object.keys(errors).length > 0) return;
-        ingestMutation.mutate(casePayload);
+        ingestMutation.mutate(ingestPayload);
     };
 
     const submitBatch = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const validRows = batchRows
-            .map(row => ({ text: row.text.trim(), state: row.state.trim(), district: row.district.trim() }))
+            .map(row => {
+                const text = composeEventText(row.text, {
+                    symptoms: row.symptoms || '',
+                    affectedCount: row.affectedCount || '',
+                    sourceType: row.sourceType || '',
+                    additionalNotes: row.additionalNotes || '',
+                });
+                return { text: text.trim(), state: row.state.trim(), district: row.district.trim() };
+            })
             .filter(row => row.text && row.state && row.district);
 
         if (validRows.length === 0) {
@@ -424,6 +470,46 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
                             ) : null}
                         </label>
 
+                        <label htmlFor="case-symptoms">
+                            Symptoms (optional)
+                            <input
+                                id="case-symptoms"
+                                value={caseMeta.symptoms}
+                                onChange={event => setCaseMeta(prev => ({ ...prev, symptoms: event.target.value }))}
+                                placeholder="Example: cough, fever, sore throat"
+                            />
+                        </label>
+
+                        <label htmlFor="case-affected-count">
+                            Affected count (optional)
+                            <input
+                                id="case-affected-count"
+                                value={caseMeta.affectedCount}
+                                onChange={event => setCaseMeta(prev => ({ ...prev, affectedCount: event.target.value }))}
+                                placeholder="Example: 13"
+                            />
+                        </label>
+
+                        <label htmlFor="case-source-type">
+                            Source type (optional)
+                            <input
+                                id="case-source-type"
+                                value={caseMeta.sourceType}
+                                onChange={event => setCaseMeta(prev => ({ ...prev, sourceType: event.target.value }))}
+                                placeholder="Example: clinic, school, community"
+                            />
+                        </label>
+
+                        <label htmlFor="case-notes">
+                            Additional notes (optional)
+                            <textarea
+                                id="case-notes"
+                                value={caseMeta.additionalNotes}
+                                onChange={event => setCaseMeta(prev => ({ ...prev, additionalNotes: event.target.value }))}
+                                placeholder="Extra context, timeline, or cluster details"
+                            />
+                        </label>
+
                         <div className="sih-actions-row">
                             <button className="sih-btn sih-btn-primary" type="submit" disabled={ingestMutation.isPending}>
                                 {ingestMutation.isPending ? 'Submitting...' : 'Submit Event'}
@@ -433,6 +519,7 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
                                 type="button"
                                 onClick={() => {
                                     setCasePayload(EMPTY_CASE);
+                                    setCaseMeta({ symptoms: '', affectedCount: '', sourceType: '', additionalNotes: '' });
                                     setCaseErrors({});
                                 }}
                             >
@@ -535,6 +622,42 @@ export const SurveillanceIntegrationHub: React.FC<SurveillanceIntegrationHubProp
                                         value={row.district}
                                         onChange={event => updateBatchRow(row.id, 'district', event.target.value)}
                                         placeholder="District"
+                                    />
+                                </label>
+                                <label htmlFor={`batch-symptoms-${row.id}`}>
+                                    Symptoms (optional)
+                                    <input
+                                        id={`batch-symptoms-${row.id}`}
+                                        value={row.symptoms || ''}
+                                        onChange={event => updateBatchExtendedRow(row.id, 'symptoms', event.target.value)}
+                                        placeholder="cough, fever"
+                                    />
+                                </label>
+                                <label htmlFor={`batch-count-${row.id}`}>
+                                    Affected count (optional)
+                                    <input
+                                        id={`batch-count-${row.id}`}
+                                        value={row.affectedCount || ''}
+                                        onChange={event => updateBatchExtendedRow(row.id, 'affectedCount', event.target.value)}
+                                        placeholder="12"
+                                    />
+                                </label>
+                                <label htmlFor={`batch-source-${row.id}`}>
+                                    Source type (optional)
+                                    <input
+                                        id={`batch-source-${row.id}`}
+                                        value={row.sourceType || ''}
+                                        onChange={event => updateBatchExtendedRow(row.id, 'sourceType', event.target.value)}
+                                        placeholder="school/clinic/community"
+                                    />
+                                </label>
+                                <label htmlFor={`batch-notes-${row.id}`}>
+                                    Additional notes (optional)
+                                    <input
+                                        id={`batch-notes-${row.id}`}
+                                        value={row.additionalNotes || ''}
+                                        onChange={event => updateBatchExtendedRow(row.id, 'additionalNotes', event.target.value)}
+                                        placeholder="timeline or context"
                                     />
                                 </label>
                                 <button type="button" className="sih-btn sih-btn-ghost" onClick={() => removeBatchRow(row.id)}>

@@ -54,7 +54,7 @@ export interface PredictCustomPayload {
   aqi: number;
 }
 
-const DEFAULT_BASE = 'https://web-production-37f41.up.railway.app';
+const DEFAULT_BASE = '';
 
 function normalizeHeaders(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};

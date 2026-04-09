@@ -370,7 +370,7 @@ export const ConfigSidebar: React.FC<ConfigSidebarProps> = ({
                 type="url"
                 value={bioSentinelApiUrl || ''}
                 onChange={e => setBioSentinelApiUrl?.(e.target.value)}
-                placeholder="https://web-production-37f41.up.railway.app"
+                placeholder="https://your-ml-api-url"
                 className="w-full pl-9 pr-3 py-2.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-500 focus:border-teal-500"
               />
             </div>
