@@ -887,7 +887,7 @@ export interface IndiaWardFeature {
   stateName: string;
   lat:       number;   // centroid
   lon:       number;   // centroid
-  geometry:  GeoJSON.Geometry;
+  geometry:  { type: string; coordinates: unknown };
   properties: Record<string, unknown>;
 }
 
@@ -1070,7 +1070,7 @@ export async function fetchOverpassWaterways(
   lat: number,
   lon: number,
   radiusKm = 5
-): Promise<GeoJSON.FeatureCollection> {
+): Promise<{ type: string; features: Array<{ type: string; properties: Record<string, unknown>; geometry: unknown }> }> {
   const radius = radiusKm * 1000;
   const query = `
     [out:json][timeout:25];

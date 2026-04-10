@@ -95,6 +95,17 @@ export const MODEL_PROFILES: Record<string, Record<string, ModelProfile>> = {
     'Qwen/Qwen3-VL-32B-Instruct':                 { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 24_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'default':                                    { contextWindow: 163_840, maxInputTokens: 140_000, maxOutputTokens: 8_192, inputBudget: 24_000, reportTemperature: 0.4, chatTemperature: 0.7 },
   },
+  ollama: {
+    'smollm2-135m':  { contextWindow: 2_048,  maxInputTokens: 1_500,  maxOutputTokens: 512,   inputBudget: 1_200,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'smollm2-1.7b':  { contextWindow: 4_096,  maxInputTokens: 3_000,  maxOutputTokens: 1_024, inputBudget: 2_400,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'qwen2.5-1.5b':  { contextWindow: 8_192,  maxInputTokens: 6_000,  maxOutputTokens: 2_048, inputBudget: 4_800,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'qwen2.5-3b':    { contextWindow: 8_192,  maxInputTokens: 6_000,  maxOutputTokens: 2_048, inputBudget: 4_800,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'llama3.2-1b':   { contextWindow: 4_096,  maxInputTokens: 3_000,  maxOutputTokens: 1_024, inputBudget: 2_400,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'llama3.2-3b':   { contextWindow: 8_192,  maxInputTokens: 6_000,  maxOutputTokens: 2_048, inputBudget: 4_800,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'phi3-mini':     { contextWindow: 4_096,  maxInputTokens: 3_000,  maxOutputTokens: 1_024, inputBudget: 2_400,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'medllama2':     { contextWindow: 4_096,  maxInputTokens: 3_000,  maxOutputTokens: 1_024, inputBudget: 2_400,  reportTemperature: 0.4, chatTemperature: 0.7 },
+    'default':       { contextWindow: 4_096,  maxInputTokens: 3_000,  maxOutputTokens: 1_024, inputBudget: 2_400,  reportTemperature: 0.4, chatTemperature: 0.7 },
+  },
 };
 
 // ─── Usage Tracking ───────────────────────────────────────────────────────────

@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
-import { Bot, Send, RefreshCcw, ChevronLeft, Copy, CheckCircle, XCircle, AlertCircle, ShieldAlert, ChevronRight, Database, Clock } from 'lucide-react';
+import { Bot, Send, RefreshCcw, ChevronLeft, Copy, CheckCircle, XCircle, AlertCircle, ShieldAlert, ChevronRight, Database, Clock, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { WeatherData, ChatMessage, HealthAlert } from '../types';
+import { WeatherData, ChatMessage, HealthAlert, McpSettings, AiProvider } from '../types';
 import { chatWithWeatherAssistant } from '../services/geminiService';
 import { MLPrediction, submitFeedback } from '../services/mlService';
 import { maybeCreateSymptomAlertFromText } from '../services/symptomService';
+import { ResearchLibrary } from './ResearchLibrary';
 import {
   getCurrentSessionMessages,
   appendMessages,
@@ -18,8 +19,11 @@ import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 interface BioXAssistantProps {
   weather: WeatherData | null;
   aiKey?: string;
-  aiProvider?: string;
-  aiModel?: string;
+  aiProvider: AiProvider;
+  aiModel: string;
+  geminiKey?: string;
+  llamaCloudKey?: string;
+  mcpSettings?: McpSettings;
   mlPrediction?: MLPrediction | null;
   analysis?: string;
   onBack: () => void;
@@ -73,6 +77,9 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
   aiKey,
   aiProvider,
   aiModel,
+  geminiKey,
+  llamaCloudKey,
+  mcpSettings,
   mlPrediction,
   analysis = '',
   onBack,
@@ -93,6 +100,10 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
   const [feedbackComments, setFeedbackComments] = useState<Record<number, string>>({});
   const [showCommentInput, setShowCommentInput] = useState<number | null>(null);
   const [showSessionHistory, setShowSessionHistory] = useState(false);
+  const [assistantMode, setAssistantMode] = useState<'chat' | 'deep'>('chat');
+  const [useMcpTools, setUseMcpTools] = useState(false);
+  const [showKnowledgeLibrary, setShowKnowledgeLibrary] = useState(false);
+  const [orchestrationTrace, setOrchestrationTrace] = useState<Record<string, any> | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Stable ref so sendMessage never changes identity during typing
@@ -104,6 +115,12 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
     appendMessages(chatMessages, weather?.city || undefined);
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (assistantMode !== 'deep' && showKnowledgeLibrary) {
+      setShowKnowledgeLibrary(false);
+    }
+  }, [assistantMode, showKnowledgeLibrary]);
 
   const sendMessage = useCallback(async (message: string) => {
     const { weather, isChatLoading, aiKey, mlPrediction, aiProvider, aiModel, chatMessages } = chatCtxRef.current;
@@ -120,8 +137,34 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
     setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setIsChatLoading(true);
     try {
-      const rawResponse = await chatWithWeatherAssistant(weather, chatMessages, userMsg, aiKey, mlPrediction, aiProvider, aiModel);
-      const response = stripHiddenModelReasoning(rawResponse);
+      const rawResponse = await chatWithWeatherAssistant(
+        weather,
+        chatMessages,
+        userMsg,
+        aiKey,
+        mlPrediction,
+        aiProvider,
+        aiModel,
+        {
+          deepAnalysis: assistantMode === 'deep',
+          agenticMode: assistantMode === 'deep',
+          useMcpTools: assistantMode === 'deep' && useMcpTools,
+          llamaCloudEnabled: Boolean(llamaCloudKey),
+          includeTrace: assistantMode === 'deep',
+          mcpSettings,
+        }
+      );
+      let responseBody = rawResponse;
+      const traceMatch = rawResponse.match(/\[ORCH_TRACE\]([\s\S]*?)\[\/ORCH_TRACE\]/);
+      if (traceMatch?.[1]) {
+        responseBody = rawResponse.replace(/\[ORCH_TRACE\][\s\S]*?\[\/ORCH_TRACE\]/, '').trim();
+        try {
+          setOrchestrationTrace(JSON.parse(traceMatch[1]));
+        } catch {
+          setOrchestrationTrace(null);
+        }
+      }
+      const response = stripHiddenModelReasoning(responseBody);
       setChatMessages(prev => [...prev, { role: 'model', text: response }]);
     } catch (err: any) {
       setChatError(err?.message || 'Bio-Assistant link interrupted. Check your network or API key.');
@@ -135,6 +178,7 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
     setChatMessages([]);
     setChatError(null);
     setSelectedOptions([]);
+    setOrchestrationTrace(null);
   };
 
   const handleFeedback = async (msgIdx: number, isHelpful: boolean) => {
@@ -224,6 +268,42 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
         </div>
 
         <div className="flex items-center gap-1 sm:gap-2">
+          <div className="hidden sm:flex items-center bg-slate-800 rounded-xl p-1 border border-slate-700 mr-1">
+            <button
+              type="button"
+              onClick={() => setAssistantMode('chat')}
+              className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${assistantMode === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-300 hover:text-white'}`}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => setAssistantMode('deep')}
+              className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${assistantMode === 'deep' ? 'bg-teal-600 text-white' : 'text-slate-300 hover:text-white'}`}
+            >
+              Deep Analysis
+            </button>
+          </div>
+          {assistantMode === 'deep' && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowKnowledgeLibrary(v => !v)}
+                className={`hidden sm:flex items-center px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${showKnowledgeLibrary ? 'bg-violet-600 text-white' : 'bg-slate-800 text-slate-300 border border-slate-700 hover:text-white'}`}
+                title="Open Research Library"
+              >
+                Knowledge
+              </button>
+              <button
+                type="button"
+                onClick={() => setUseMcpTools(v => !v)}
+                className={`hidden sm:flex items-center px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${useMcpTools ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 border border-slate-700 hover:text-white'}`}
+                title="Enable MCP tool orchestration"
+              >
+                MCP {useMcpTools ? 'On' : 'Off'}
+              </button>
+            </>
+          )}
           {!weather && (
             <span className="hidden sm:block text-[9px] font-black text-amber-400 uppercase tracking-widest bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-1.5">
               No weather data
@@ -232,11 +312,10 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
           <button
             type="button"
             onClick={() => setShowSessionHistory(v => !v)}
-            className={`p-2 sm:p-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-teal-500 ${
-              showSessionHistory
-                ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
-                : 'hover:bg-white/10 text-slate-300 hover:text-white'
-            }`}
+            className={`p-2 sm:p-2.5 rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-teal-500 ${showSessionHistory
+              ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
+              : 'hover:bg-white/10 text-slate-300 hover:text-white'
+              }`}
             title="View past sessions"
             aria-label="Session history"
           >
@@ -255,78 +334,127 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
       </div>
 
       {/* ── Messages ─────────────────────────────────────────────────────── */}
-      <div
-        className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 sm:space-y-6 bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.05),transparent)]"
-        aria-live="polite"
-        role="log"
-        aria-label="Chat history"
-      >
-        {/* Empty state */}
-        {chatMessages.length === 0 && (
-          <>
-            <div className="flex flex-col items-center justify-center text-center py-10 space-y-5">
-              <div className="p-6 bg-slate-800 rounded-full shadow-2xl shadow-teal-500/10">
-                <Bot className="w-14 h-14 text-teal-400" />
+      {assistantMode === 'deep' && showKnowledgeLibrary ? (
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.05),transparent)]">
+          <ResearchLibrary
+            geminiKey={geminiKey}
+            llamaCloudKey={llamaCloudKey}
+            onBack={() => setShowKnowledgeLibrary(false)}
+          />
+        </div>
+      ) : (
+        <div
+          className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-4 sm:space-y-6 bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.05),transparent)]"
+          aria-live="polite"
+          role="log"
+          aria-label="Chat history"
+        >
+          {assistantMode === 'deep' && orchestrationTrace && (
+            <div className="bg-indigo-950/40 border border-indigo-800/50 rounded-2xl p-3 space-y-2">
+              <p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest">Orchestration Trace</p>
+              <div className="flex flex-wrap gap-2">
+                <span className={`px-2 py-1 rounded text-[9px] font-black uppercase ${orchestrationTrace.kgUsed ? 'bg-teal-600 text-white' : 'bg-slate-800 text-slate-300'}`}>KG {orchestrationTrace.kgUsed ? 'Used' : 'Off'}</span>
+                <span className={`px-2 py-1 rounded text-[9px] font-black uppercase ${orchestrationTrace.ragUsed ? 'bg-teal-600 text-white' : 'bg-slate-800 text-slate-300'}`}>RAG {orchestrationTrace.ragUsed ? 'Used' : 'Off'}</span>
+                <span className="px-2 py-1 rounded text-[9px] font-black uppercase bg-slate-800 text-slate-200">Docs {orchestrationTrace.docsIndexed ?? 0}</span>
+                <span className={`px-2 py-1 rounded text-[9px] font-black uppercase ${orchestrationTrace.mcpUsed ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'}`}>MCP {orchestrationTrace.mcpUsed ? 'On' : 'Off'}</span>
+                <span className="px-2 py-1 rounded text-[9px] font-black uppercase bg-slate-800 text-slate-200">Signals {orchestrationTrace.mcpSignals ?? 0}</span>
               </div>
-              <div className="space-y-2">
-                <p className="text-[11px] font-black text-white uppercase tracking-[0.3em]">Assistant Ready</p>
-                <p className="text-[10px] font-bold text-slate-400 max-w-[260px] mx-auto leading-relaxed">
-                  {weather
-                    ? `Weather loaded for ${weather.city}. Ask me anything.`
-                    : 'Fetch weather data first to enable full bio-analysis.'}
-                </p>
-              </div>
-            </div>
-
-            {/* Suggested prompts */}
-            <div className="space-y-2">
-              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">Suggested Inquiries</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {suggestedPrompts.map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    disabled={!weather}
-                    onClick={() => sendMessage(opt)}
-                    aria-label={`Ask: ${opt}`}
-                    className="w-full text-left p-3 sm:p-4 bg-slate-800/60 border border-slate-700 rounded-2xl text-[10px] font-bold text-slate-100 hover:bg-teal-600 hover:text-white hover:border-teal-500 transition-all flex items-center justify-between group shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    {opt}
-                    <ChevronRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0 shrink-0 ml-2" />
-                  </button>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] font-bold text-slate-300">
+                <p>Final Provider: <span className="text-white">{orchestrationTrace.finalProvider || 'unknown'}</span></p>
+                <p>Final Model: <span className="text-white">{orchestrationTrace.finalModel || 'unknown'}</span></p>
+                <p>MedGemma: <span className="text-white">{orchestrationTrace.medgemmaUsed ? 'used' : orchestrationTrace.medgemmaAttempted ? 'attempted' : 'not attempted'}</span></p>
+                <p>Fallback: <span className="text-white">{orchestrationTrace.fallbackUsed ? `yes (${orchestrationTrace.fallbackProvider || 'unknown'})` : 'no'}</span></p>
               </div>
             </div>
+          )}
 
-            {/* Memory summary badge */}
-            {(() => {
-              const mem = getMemorySummary();
-              if (!mem.ongoingConcerns.length && !mem.recentCities.length) return null;
-              return (
-                <div className="bg-teal-950/60 border border-teal-800/50 rounded-2xl p-3 space-y-1.5">
+          {/* Empty state */}
+          {chatMessages.length === 0 && (
+            <>
+              {assistantMode === 'deep' && (
+                <div className="bg-teal-950/60 border border-teal-800/50 rounded-2xl p-3 mb-2 space-y-2">
                   <p className="text-[9px] font-black text-teal-400 uppercase tracking-widest flex items-center gap-1.5">
-                    <Database className="w-3 h-3" /> Persistent Memory Active
+                    <Sparkles className="w-3 h-3" /> Deep Analysis Orchestration
                   </p>
-                  {mem.recentCities.length > 0 && (
-                    <p className="text-[10px] text-slate-400">
-                      <span className="text-slate-300 font-bold">Monitored:</span> {mem.recentCities.join(', ')}
-                    </p>
-                  )}
-                  {mem.ongoingConcerns.length > 0 && (
-                    <p className="text-[10px] text-slate-400">
-                      <span className="text-slate-300 font-bold">Known concerns:</span> {mem.ongoingConcerns.slice(0, 3).join(', ')}
-                    </p>
-                  )}
+                  <p className="text-[10px] text-slate-300">Knowledge graph, research retrieval, and model fallback chain are enabled. MCP tools are {useMcpTools ? 'active' : 'inactive'}.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {['Run outbreak intelligence sweep', 'Generate causal pathway summary', 'Draft protocol from local conditions'].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        disabled={!weather}
+                        onClick={() => sendMessage(preset)}
+                        className="px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-800 text-slate-200 border border-slate-700 hover:bg-teal-600 hover:text-white transition-all disabled:opacity-40"
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              );
-            })()}
-          </>
-        )}
+              )}
+              <div className="flex flex-col items-center justify-center text-center py-10 space-y-5">
+                <div className="p-6 bg-slate-800 rounded-full shadow-2xl shadow-teal-500/10">
+                  <Bot className="w-14 h-14 text-teal-400" />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[11px] font-black text-white uppercase tracking-[0.3em]">Assistant Ready</p>
+                  <p className="text-[10px] font-bold text-slate-400 max-w-[260px] mx-auto leading-relaxed">
+                    {weather
+                      ? `Weather loaded for ${weather.city}. Ask me anything.`
+                      : 'Fetch weather data first to enable full bio-analysis.'}
+                  </p>
+                </div>
+              </div>
 
-        {/* Messages */}
-        {chatMessages.map((msg, idx) => {
-          const { cleanText, options, prediction } = msg.role === 'model'
-            ? (() => {
+              {/* Suggested prompts */}
+              <div className="space-y-2">
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">Suggested Inquiries</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {suggestedPrompts.map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      disabled={!weather}
+                      onClick={() => sendMessage(opt)}
+                      aria-label={`Ask: ${opt}`}
+                      className="w-full text-left p-3 sm:p-4 bg-slate-800/60 border border-slate-700 rounded-2xl text-[10px] font-bold text-slate-100 hover:bg-teal-600 hover:text-white hover:border-teal-500 transition-all flex items-center justify-between group shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {opt}
+                      <ChevronRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-all -translate-x-2 group-hover:translate-x-0 shrink-0 ml-2" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Memory summary badge */}
+              {(() => {
+                const mem = getMemorySummary();
+                if (!mem.ongoingConcerns.length && !mem.recentCities.length) return null;
+                return (
+                  <div className="bg-teal-950/60 border border-teal-800/50 rounded-2xl p-3 space-y-1.5">
+                    <p className="text-[9px] font-black text-teal-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Database className="w-3 h-3" /> Persistent Memory Active
+                    </p>
+                    {mem.recentCities.length > 0 && (
+                      <p className="text-[10px] text-slate-400">
+                        <span className="text-slate-300 font-bold">Monitored:</span> {mem.recentCities.join(', ')}
+                      </p>
+                    )}
+                    {mem.ongoingConcerns.length > 0 && (
+                      <p className="text-[10px] text-slate-400">
+                        <span className="text-slate-300 font-bold">Known concerns:</span> {mem.ongoingConcerns.slice(0, 3).join(', ')}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+            </>
+          )}
+
+          {/* Messages */}
+          {chatMessages.map((msg, idx) => {
+            const { cleanText, options, prediction } = msg.role === 'model'
+              ? (() => {
                 let text = msg.text;
                 let opts: string[] = [];
                 let pred: { risk: string; confidence: string; summary: string } | null = null;
@@ -347,167 +475,166 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
                 }
                 return { cleanText: text, options: opts, prediction: pred };
               })()
-            : { cleanText: msg.text, options: [], prediction: null };
+              : { cleanText: msg.text, options: [], prediction: null };
 
-          const isLast = idx === chatMessages.length - 1;
+            const isLast = idx === chatMessages.length - 1;
 
-          return (
-            <div key={idx} className="space-y-3">
-              <div className={`flex items-end gap-2 sm:gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                {msg.role === 'model' && (
-                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 shadow-lg">
-                    <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-400" />
-                  </div>
-                )}
-                <div className={`group relative max-w-[92%] sm:max-w-[80%] p-3 sm:p-5 rounded-2xl text-xs sm:text-sm ${
-                  msg.role === 'user'
+            return (
+              <div key={idx} className="space-y-3">
+                <div className={`flex items-end gap-2 sm:gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                  {msg.role === 'model' && (
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 shadow-lg">
+                      <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-400" />
+                    </div>
+                  )}
+                  <div className={`group relative max-w-[92%] sm:max-w-[80%] p-3 sm:p-5 rounded-2xl text-xs sm:text-sm ${msg.role === 'user'
                     ? 'bg-teal-600 text-white shadow-lg shadow-teal-900/20 rounded-br-none'
                     : 'bg-slate-800 text-slate-100 border border-slate-700 shadow-xl rounded-bl-none'
-                }`}>
-                  <div className={`prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${msg.role === 'user' ? 'prose-invert text-white' : 'prose-invert text-slate-100'}
+                    }`}>
+                    <div className={`prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${msg.role === 'user' ? 'prose-invert text-white' : 'prose-invert text-slate-100'}
                     prose-p:leading-relaxed prose-p:my-1 prose-li:my-0.5 prose-strong:text-teal-300 prose-strong:font-black prose-headings:text-white prose-a:text-teal-400`}>
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        table: ({ node, ...props }) => (
-                          <div className="overflow-x-auto my-3 rounded-xl border border-slate-600">
-                            <table className="min-w-full text-xs" {...props} />
-                          </div>
-                        ),
-                        thead: ({ node, ...props }) => (
-                          <thead className="bg-teal-900/60 text-teal-300" {...props} />
-                        ),
-                        tbody: ({ node, ...props }) => (
-                          <tbody className="divide-y divide-slate-700" {...props} />
-                        ),
-                        tr: ({ node, ...props }) => (
-                          <tr className="even:bg-slate-700/30 hover:bg-slate-700/50 transition-colors" {...props} />
-                        ),
-                        th: ({ node, ...props }) => (
-                          <th className="px-3 py-2 text-left font-black text-[10px] uppercase tracking-wider border-r border-slate-600 last:border-r-0" {...props} />
-                        ),
-                        td: ({ node, ...props }) => (
-                          <td className="px-3 py-2 text-slate-200 border-r border-slate-700 last:border-r-0" {...props} />
-                        ),
-                      }}
-                    >
-                      {cleanText}
-                    </ReactMarkdown>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => navigator.clipboard.writeText(cleanText)}
-                    className="absolute -top-2 -right-2 p-1.5 sm:p-2 bg-slate-900 border border-slate-700 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:text-teal-400 text-slate-300 shadow-lg focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    title="Copy"
-                    aria-label="Copy message"
-                  >
-                    <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Prediction card */}
-              {prediction && (
-                <div className="mx-2 sm:mx-4 p-4 sm:p-6 bg-slate-800 border-2 border-teal-500/30 rounded-2xl shadow-2xl space-y-3 sm:space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ShieldAlert className="w-4 h-4 sm:w-5 sm:h-5 text-teal-400" />
-                      <span className="text-[9px] sm:text-[10px] font-black text-white uppercase tracking-widest">Neural Prediction</span>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          table: ({ node, ...props }) => (
+                            <div className="overflow-x-auto my-3 rounded-xl border border-slate-600">
+                              <table className="min-w-full text-xs" {...props} />
+                            </div>
+                          ),
+                          thead: ({ node, ...props }) => (
+                            <thead className="bg-teal-900/60 text-teal-300" {...props} />
+                          ),
+                          tbody: ({ node, ...props }) => (
+                            <tbody className="divide-y divide-slate-700" {...props} />
+                          ),
+                          tr: ({ node, ...props }) => (
+                            <tr className="even:bg-slate-700/30 hover:bg-slate-700/50 transition-colors" {...props} />
+                          ),
+                          th: ({ node, ...props }) => (
+                            <th className="px-3 py-2 text-left font-black text-[10px] uppercase tracking-wider border-r border-slate-600 last:border-r-0" {...props} />
+                          ),
+                          td: ({ node, ...props }) => (
+                            <td className="px-3 py-2 text-slate-200 border-r border-slate-700 last:border-r-0" {...props} />
+                          ),
+                        }}
+                      >
+                        {cleanText}
+                      </ReactMarkdown>
                     </div>
-                    <span className="text-[9px] sm:text-[10px] font-black text-teal-400 uppercase bg-teal-500/10 border border-teal-500/20 rounded-full px-2 sm:px-3 py-1">
-                      {prediction.confidence} Confidence
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(cleanText)}
+                      className="absolute -top-2 -right-2 p-1.5 sm:p-2 bg-slate-900 border border-slate-700 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:text-teal-400 text-slate-300 shadow-lg focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      title="Copy"
+                      aria-label="Copy message"
+                    >
+                      <Copy className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                    </button>
                   </div>
-                  <div>
-                    <h4 className="text-lg sm:text-xl font-black text-white uppercase leading-tight">{prediction.risk}</h4>
-                    <p className="text-[10px] sm:text-xs font-bold text-slate-200 mt-2 leading-relaxed">{prediction.summary}</p>
-                  </div>
-                  <div className="pt-3 border-t border-slate-700 space-y-3">
+                </div>
+
+                {/* Prediction card */}
+                {prediction && (
+                  <div className="mx-2 sm:mx-4 p-4 sm:p-6 bg-slate-800 border-2 border-teal-500/30 rounded-2xl shadow-2xl space-y-3 sm:space-y-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">
-                        {feedbackStatus[idx] ? 'Thank you!' : 'Was this helpful?'}
+                      <div className="flex items-center gap-2">
+                        <ShieldAlert className="w-4 h-4 sm:w-5 sm:h-5 text-teal-400" />
+                        <span className="text-[9px] sm:text-[10px] font-black text-white uppercase tracking-widest">Neural Prediction</span>
+                      </div>
+                      <span className="text-[9px] sm:text-[10px] font-black text-teal-400 uppercase bg-teal-500/10 border border-teal-500/20 rounded-full px-2 sm:px-3 py-1">
+                        {prediction.confidence} Confidence
                       </span>
-                      {!feedbackStatus[idx] && (
-                        <div className="flex gap-2">
-                          <button type="button" onClick={() => handleFeedback(idx, true)} className="p-2 hover:bg-teal-500/10 rounded-lg text-slate-300 hover:text-teal-400 transition-all" aria-label="Helpful">
-                            <CheckCircle className="w-4 h-4" />
-                          </button>
-                          <button type="button" onClick={() => handleFeedback(idx, false)} className="p-2 hover:bg-rose-500/10 rounded-lg text-slate-300 hover:text-rose-400 transition-all" aria-label="Not helpful">
-                            <XCircle className="w-4 h-4" />
-                          </button>
+                    </div>
+                    <div>
+                      <h4 className="text-lg sm:text-xl font-black text-white uppercase leading-tight">{prediction.risk}</h4>
+                      <p className="text-[10px] sm:text-xs font-bold text-slate-200 mt-2 leading-relaxed">{prediction.summary}</p>
+                    </div>
+                    <div className="pt-3 border-t border-slate-700 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">
+                          {feedbackStatus[idx] ? 'Thank you!' : 'Was this helpful?'}
+                        </span>
+                        {!feedbackStatus[idx] && (
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => handleFeedback(idx, true)} className="p-2 hover:bg-teal-500/10 rounded-lg text-slate-300 hover:text-teal-400 transition-all" aria-label="Helpful">
+                              <CheckCircle className="w-4 h-4" />
+                            </button>
+                            <button type="button" onClick={() => handleFeedback(idx, false)} className="p-2 hover:bg-rose-500/10 rounded-lg text-slate-300 hover:text-rose-400 transition-all" aria-label="Not helpful">
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      {showCommentInput === idx && (
+                        <div className="space-y-3">
+                          <textarea
+                            value={feedbackComments[idx] || ''}
+                            onChange={(e) => setFeedbackComments(prev => ({ ...prev, [idx]: e.target.value }))}
+                            placeholder="Optional: Provide more context..."
+                            className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-[10px] font-bold text-slate-100 focus:border-teal-500 outline-none resize-none h-20 placeholder:text-slate-400"
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => setShowCommentInput(null)} className="px-3 py-1.5 text-[9px] font-black text-slate-300 uppercase hover:text-white">Skip</button>
+                            <button onClick={() => submitComment(idx)} className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-[9px] font-black uppercase">Submit</button>
+                          </div>
                         </div>
                       )}
                     </div>
-                    {showCommentInput === idx && (
-                      <div className="space-y-3">
-                        <textarea
-                          value={feedbackComments[idx] || ''}
-                          onChange={(e) => setFeedbackComments(prev => ({ ...prev, [idx]: e.target.value }))}
-                          placeholder="Optional: Provide more context..."
-                          className="w-full p-3 bg-slate-900 border border-slate-700 rounded-xl text-[10px] font-bold text-slate-100 focus:border-teal-500 outline-none resize-none h-20 placeholder:text-slate-400"
-                        />
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => setShowCommentInput(null)} className="px-3 py-1.5 text-[9px] font-black text-slate-300 uppercase hover:text-white">Skip</button>
-                          <button onClick={() => submitComment(idx)} className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-[9px] font-black uppercase">Submit</button>
-                        </div>
-                      </div>
-                    )}
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Multi-select options */}
-              {msg.role === 'model' && options.length > 0 && isLast && (
-                <div className="pl-2 sm:pl-4 space-y-3">
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Select one or more · then submit</p>
-                  <div className="flex flex-wrap gap-2">
-                    {options.map((opt) => {
-                      const isSelected = selectedOptions.includes(opt);
-                      return (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => setSelectedOptions(prev => prev.includes(opt) ? prev.filter(o => o !== opt) : [...prev, opt])}
-                          aria-pressed={isSelected}
-                          className={`px-3 py-2.5 border rounded-xl text-[11px] font-black transition-all tracking-wide focus:outline-none focus:ring-2 focus:ring-teal-500 ${
-                            isSelected ? 'bg-teal-600 border-teal-500 text-white shadow-md' : 'bg-slate-800 border-slate-700 text-teal-400 hover:bg-teal-600 hover:text-white hover:border-teal-500'
-                          }`}
-                        >
-                          {isSelected && '✓ '}{opt}
-                        </button>
-                      );
-                    })}
+                {/* Multi-select options */}
+                {msg.role === 'model' && options.length > 0 && isLast && (
+                  <div className="pl-2 sm:pl-4 space-y-3">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Select one or more · then submit</p>
+                    <div className="flex flex-wrap gap-2">
+                      {options.map((opt) => {
+                        const isSelected = selectedOptions.includes(opt);
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => setSelectedOptions(prev => prev.includes(opt) ? prev.filter(o => o !== opt) : [...prev, opt])}
+                            aria-pressed={isSelected}
+                            className={`px-3 py-2.5 border rounded-xl text-[11px] font-black transition-all tracking-wide focus:outline-none focus:ring-2 focus:ring-teal-500 ${isSelected ? 'bg-teal-600 border-teal-500 text-white shadow-md' : 'bg-slate-800 border-slate-700 text-teal-400 hover:bg-teal-600 hover:text-white hover:border-teal-500'
+                              }`}
+                          >
+                            {isSelected && '✓ '}{opt}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* Loading indicator */}
-        {isChatLoading && (
-          <div className="flex justify-start">
-            <div className="bg-slate-800 border border-slate-700 p-4 rounded-2xl flex gap-2 items-center shadow-xl">
-              <div className="flex gap-1">
-                <div className="w-1.5 h-1.5 bg-teal-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                <div className="w-1.5 h-1.5 bg-teal-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                <div className="w-1.5 h-1.5 bg-teal-500 rounded-full animate-bounce" />
+                )}
               </div>
-              <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest ml-2">Thinking...</span>
+            );
+          })}
+
+          {/* Loading indicator */}
+          {isChatLoading && (
+            <div className="flex justify-start">
+              <div className="bg-slate-800 border border-slate-700 p-4 rounded-2xl flex gap-2 items-center shadow-xl">
+                <div className="flex gap-1">
+                  <div className="w-1.5 h-1.5 bg-teal-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                  <div className="w-1.5 h-1.5 bg-teal-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                  <div className="w-1.5 h-1.5 bg-teal-500 rounded-full animate-bounce" />
+                </div>
+                <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest ml-2">Thinking...</span>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Error */}
-        {chatError && (
-          <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] font-bold text-rose-400 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            {chatError}
-          </div>
-        )}
+          {/* Error */}
+          {chatError && (
+            <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[10px] font-bold text-rose-400 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {chatError}
+            </div>
+          )}
 
-        <div ref={chatEndRef} />
-      </div>
+          <div ref={chatEndRef} />
+        </div>
+      )}
 
       {/* ── Sticky Selection Submit Bar (appears when options are chosen) ── */}
       {selectedOptions.length > 0 && (
@@ -546,7 +673,7 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
       )}
 
       {/* ── Input ────────────────────────────────────────────────────────── */}
-      <ChatInputForm onSubmit={sendMessage} disabled={isChatLoading || !weather} />
+      {!showKnowledgeLibrary && <ChatInputForm onSubmit={sendMessage} disabled={isChatLoading || !weather} />}
 
       {/* ── Session History Drawer ────────────────────────────────────────── */}
       {showSessionHistory && (() => {

@@ -1,35 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BioSentinel - Health Intelligence</title>
-    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
-    <script src="https://smtpjs.com/v3/smtp.js"></script>
-    <!-- Map Provider SDKs are loaded dynamically in App.tsx -->
-    <!-- ArcGIS Embeddable Map Component (no API key needed, uses public portal) -->
-    <script type="module" src="https://js.arcgis.com/5.0/embeddable-components/"></script>
 
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            padding: {
-              'safe-top': 'env(safe-area-inset-top)',
-              'safe-bottom': 'env(safe-area-inset-bottom)',
-            }
-          }
-        }
-      }
-    </script>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-      body {
-        font-family: 'Inter', sans-serif;
-      }
-    </style>
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BioSentinel - Health Intelligence</title>
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script src="https://smtpjs.com/v3/smtp.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script type="importmap">
 {
   "imports": {
@@ -43,11 +22,37 @@
     "recharts": "https://esm.sh/recharts@2.15.0?external=react,react-dom"
   }
 }
-</script>
-<link rel="stylesheet" href="/index.css">
+    </script>
+  <!-- Map Provider SDKs are loaded dynamically in App.tsx -->
+  <!-- ArcGIS Embeddable Map Component (no API key needed, uses public portal) -->
+  <script type="module" src="https://js.arcgis.com/5.0/embeddable-components/"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          padding: {
+            'safe-top': 'env(safe-area-inset-top)',
+            'safe-bottom': 'env(safe-area-inset-bottom)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+  </style>
+  <link rel="stylesheet" href="/index.css">
 </head>
-  <body>
-    <div id="root"></div>
+
+<body>
+  <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
+
 </html>

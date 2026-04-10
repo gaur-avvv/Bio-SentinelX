@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useDataCache, isCacheValid } from '../contexts/DataCacheContext';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine } from 'recharts';
 import { Search, Activity, Droplets, Thermometer, ArrowLeft, FlaskConical, BookOpen, Microscope, Wind, Zap, CloudSun } from 'lucide-react';
-import { WeatherData } from '../types';
+import { WeatherData, AiProvider } from '../types';
 import { analyzeHistoricalClimateHealth } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
 
@@ -11,8 +11,8 @@ interface HistoricalAnalysisProps {
   weather: WeatherData | null;
   onBack: () => void;
   geminiKey: string;
-  aiProvider?: string;
-  aiModel?: string;
+  aiProvider: AiProvider;
+  aiModel: string;
   aiKey?: string;
 }
 
@@ -39,7 +39,7 @@ const VARIABLE_OPTIONS = [
   { id: 'aqi', label: 'Air Quality (AQI)', apiParam: 'us_aqi' } // Handled via separate API call
 ];
 
-export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location, weather, onBack, geminiKey, aiProvider = 'gemini', aiModel = 'gemini-2.5-flash', aiKey }) => {
+export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location, weather, onBack, geminiKey, aiProvider, aiModel, aiKey }) => {
   const { historical: histCache, setHistorical } = useDataCache();
   const cacheValid = isCacheValid(histCache.lastFetched, histCache.lastLocation, location);
 
@@ -64,7 +64,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
   const handleDateRange = (range: 'week' | 'month' | '3months' | 'year') => {
     const end = new Date();
     const start = new Date();
-    
+
     // Archive API usually has a delay of a few days. Let's set end date to yesterday to be safe, 
     // or keep it as today but handle missing data. Open-Meteo ERA5T is usually 5 days behind, 
     // but they have seamless integration with forecast for recent days in some endpoints.
@@ -86,13 +86,13 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
         start.setFullYear(end.getFullYear() - 1);
         break;
     }
-    
+
     setEndDate(end.toISOString().split('T')[0]);
     setStartDate(start.toISOString().split('T')[0]);
   };
 
   const toggleVariable = (id: string) => {
-    setSelectedVariables(prev => 
+    setSelectedVariables(prev =>
       prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]
     );
   };
@@ -110,7 +110,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
     try {
       // Base weather variables
       let dailyParams = ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'wind_speed_10m_max', 'weather_code'];
-      
+
       // Add selected variables if they are standard weather params
       if (selectedVariables.includes('humidity')) dailyParams.push('relative_humidity_2m_mean');
       if (selectedVariables.includes('heatstress')) {
@@ -122,7 +122,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
 
       // Construct URLs
       const weatherUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${weather.lat}&longitude=${weather.lon}&start_date=${startDate}&end_date=${endDate}&daily=${dailyParams.join(',')}&timezone=auto`;
-      
+
       // Fetch Weather Data
       const weatherRes = await fetch(weatherUrl);
       if (!weatherRes.ok) {
@@ -243,20 +243,20 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
         } : undefined,
         forecast: weather?.dailyForecast
           ? weather.dailyForecast.slice(0, 7).map(d => ({
-              date: d.date,
-              maxTemp: d.maxTemp,
-              minTemp: d.minTemp,
-              desc: d.description,
-            }))
+            date: d.date,
+            maxTemp: d.maxTemp,
+            minTemp: d.minTemp,
+            desc: d.description,
+          }))
           : undefined,
       };
 
-      setTimeout(() => setResearchPhase('Correlating Brownstein et al. (2018) antibiotic resistance-temperature framework...'), 1800);
-      setTimeout(() => setResearchPhase('Applying Gasparrini et al. (2017, Lancet) thermal stress & excess mortality model...'), 3500);
-      setTimeout(() => setResearchPhase('Analysing VPD thresholds via Shaman & Kohn (2009, PLOS Biology) influenza model...'), 5200);
-      setTimeout(() => setResearchPhase('Assessing solar radiation & Vitamin D risk — Holick (2004, NEJM); Anglin et al. (2013)...'), 7000);
-      setTimeout(() => setResearchPhase('Cross-referencing WHO/CDC/ECDC vector-borne disease & air quality thresholds...'), 9000);
-      setTimeout(() => setResearchPhase('Synthesising evidence-based risk assessment & recommendations...'), 11000);
+      setTimeout(() => setResearchPhase('Analysing temperature and thermal stress patterns...'), 1800);
+      setTimeout(() => setResearchPhase('Correlating humidity, VPD, and respiratory risk factors...'), 3500);
+      setTimeout(() => setResearchPhase('Evaluating air quality impact on cardiovascular and respiratory health...'), 5200);
+      setTimeout(() => setResearchPhase('Assessing solar radiation and vitamin D synthesis adequacy...'), 7000);
+      setTimeout(() => setResearchPhase('Cross-referencing vector-borne disease and climate thresholds...'), 9000);
+      setTimeout(() => setResearchPhase('Synthesising risk assessment and generating recommendations...'), 11000);
 
       const effectiveKey = aiKey || geminiKey;
       const response = await analyzeHistoricalClimateHealth(input, aiProvider, aiModel, effectiveKey);
@@ -289,7 +289,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="flex items-center gap-4">
-        <button 
+        <button
           onClick={onBack}
           className="p-3 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-slate-500 dark:text-slate-400"
         >
@@ -305,8 +305,8 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Start Date</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               className="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-teal-500 transition-all"
@@ -314,15 +314,15 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
           </div>
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">End Date</label>
-            <input 
-              type="date" 
+            <input
+              type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               className="w-full p-3 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-bold text-slate-700 dark:text-slate-200 outline-none focus:border-teal-500 transition-all"
             />
           </div>
           <div className="flex items-end">
-            <button 
+            <button
               onClick={fetchHistoricalData}
               disabled={loading}
               className="w-full p-3 bg-teal-600 text-white rounded-xl font-black uppercase tracking-widest text-xs hover:bg-teal-500 transition-all shadow-lg shadow-teal-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -339,11 +339,10 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
             <button
               key={opt.id}
               onClick={() => toggleVariable(opt.id)}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${
-                selectedVariables.includes(opt.id)
+              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${selectedVariables.includes(opt.id)
                   ? 'bg-slate-900 text-white border-slate-900 shadow-md'
                   : 'bg-white dark:bg-slate-700 text-slate-400 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500'
-              }`}
+                }`}
             >
               {opt.label}
             </button>
@@ -366,17 +365,17 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
-                    tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 700}} 
-                    tickLine={false} 
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                    tickLine={false}
                     axisLine={false}
                     minTickGap={30}
                   />
                   <YAxis hide domain={['auto', 'auto']} />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold'}}
+                  <Tooltip
+                    contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold' }}
                     labelFormatter={(label) => new Date(label).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                   />
                   <Legend />
@@ -397,18 +396,18 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
-                    tick={{fontSize: 10, fill: '#94a3b8', fontWeight: 700}} 
-                    tickLine={false} 
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 700 }}
+                    tickLine={false}
                     axisLine={false}
                     minTickGap={30}
                   />
                   <YAxis yAxisId="left" hide />
                   <YAxis yAxisId="right" orientation="right" hide />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold'}}
+                  <Tooltip
+                    contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold' }}
                     labelFormatter={(label) => new Date(label).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                   />
                   <Legend />
@@ -426,7 +425,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
                     <Activity className="w-4 h-4 text-orange-500" /> Health Impact Factors
                   </h3>
                   <p className="text-[10px] text-slate-400 font-bold">
-                    Evidence-based climate variables linked to human disease and mortality · Sources: WHO, Gasparrini et al. 2017 Lancet, Shaman &amp; Kohn 2009 PLOS Biology, Holick 2004 NEJM
+                    Evidence-based climate variables linked to human disease and mortality
                   </p>
                 </div>
 
@@ -440,7 +439,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
                           <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Thermal Stress — Apparent Temperature (°C)</span>
                         </div>
                         <p className="text-[10px] text-slate-400 font-bold mt-1">
-                          Perceived temp combining wind chill + humidity + radiation · Heat stress drives cardiovascular events and heat stroke (Gasparrini et al. 2017, Lancet — 74 countries, 85M deaths)
+                          Perceived temp combining wind chill + humidity + radiation · Heat stress drives cardiovascular events and heat stroke
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2 text-[9px] font-black uppercase tracking-widest">
@@ -493,7 +492,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
                           <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Vapour Pressure Deficit — VPD (kPa)</span>
                         </div>
                         <p className="text-[10px] text-slate-400 font-bold mt-1">
-                          Atmospheric dryness driving influenza & respiratory pathogen transmission · Shaman &amp; Kohn (2009) PLOS Biology: low absolute humidity predicts epidemic influenza onset
+                          Atmospheric dryness driving influenza & respiratory pathogen transmission · Low absolute humidity predicts epidemic influenza onset
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2 text-[9px] font-black uppercase tracking-widest">
@@ -538,7 +537,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
                           <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Shortwave Solar Radiation (MJ/m²/day)</span>
                         </div>
                         <p className="text-[10px] text-slate-400 font-bold mt-1">
-                          Drives Vitamin D synthesis, Seasonal Affective Disorder (SAD), skin cancer risk & circadian health · Holick (2004) NEJM: vitamin D deficiency linked to 17 cancer types, autoimmune disease, cardiovascular risk
+                          Drives Vitamin D synthesis, Seasonal Affective Disorder (SAD), skin cancer risk & circadian health
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2 text-[9px] font-black uppercase tracking-widest">
@@ -583,7 +582,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
                           <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Air Quality Index (US AQI)</span>
                         </div>
                         <p className="text-[10px] text-slate-400 font-bold mt-1">
-                          PM2.5/PM10 particle exposure driving respiratory & cardiovascular disease · WHO: 7M deaths/year attributable to air pollution · Brownstein et al. 2018: AQI correlates with antibiotic resistance emergence
+                          PM2.5/PM10 particle exposure driving respiratory & cardiovascular disease
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2 text-[9px] font-black uppercase tracking-widest">
@@ -633,7 +632,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
                     <Microscope className="w-6 h-6 text-teal-600" /> Scientific Research Analysis
                   </h3>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                    AI searches peer-reviewed literature · Brownstein 2018 · Gasparrini 2017 · Shaman &amp; Kohn 2009 · Holick 2004 · WHO/CDC/ECDC
+                    AI-powered climate-health correlation analysis
                   </p>
                 </div>
                 <button
@@ -657,31 +656,7 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
                 </div>
               )}
 
-              {/* Research source badges */}
-              {!analyzing && !analysis && (
-                <div className="mb-6 space-y-3">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Peer-Reviewed Frameworks &amp; Sources</p>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { label: 'Gasparrini et al. 2017', sub: 'Lancet Planetary Health · Thermal Stress & Mortality (74 countries)', color: 'bg-rose-50 text-rose-700 border-rose-200' },
-                      { label: 'Brownstein / MacFadden 2018', sub: 'PLOS Medicine · Antibiotic Resistance & Temperature', color: 'bg-teal-50 text-teal-700 border-teal-200' },
-                      { label: 'Shaman & Kohn 2009', sub: 'PLOS Biology · VPD & Influenza Transmission', color: 'bg-violet-50 text-violet-700 border-violet-200' },
-                      { label: 'Holick 2004', sub: 'NEJM · Solar Radiation, Vitamin D & Disease Risk', color: 'bg-amber-50 text-amber-700 border-amber-200' },
-                      { label: 'Anglin et al. 2013', sub: 'Psychiatry Research · Solar Irradiance & SAD', color: 'bg-amber-50 text-amber-700 border-amber-200' },
-                      { label: 'WHO AQG 2021', sub: 'Global Air Quality Guidelines · PM2.5/AQI Thresholds', color: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600' },
-                      { label: 'Guo et al. 2024', sub: 'Environment International · Heat × Pollution Synergy (36 countries)', color: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600' },
-                      { label: 'IPCC AR6', sub: 'Mental Health, Eco-anxiety & Solastalgia Framework', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-                      { label: 'Lancet Countdown', sub: '~5M Climate-Sensitive Deaths (2020) · Heat Mortality +68% in >65s', color: 'bg-orange-50 text-orange-700 border-orange-200' },
-                      { label: 'CDC Vector Surveillance', sub: 'Dengue / Malaria / Lyme Climate Thresholds', color: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600' },
-                      { label: 'ECDC Disease Reports', sub: 'European Climate-Health Burden Data', color: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600' },
-                    ].map(src => (
-                      <span key={src.label} className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${src.color}`}>
-                        {src.label} <span className="font-semibold normal-case tracking-normal opacity-70">· {src.sub}</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+
 
               {analysis && (
                 <div className="bg-slate-50 dark:bg-slate-700/60 p-6 sm:p-8 rounded-[2rem] border border-slate-100 dark:border-slate-600 prose prose-sm max-w-none prose-p:text-slate-600 dark:prose-p:text-slate-300 prose-headings:text-slate-800 dark:prose-headings:text-slate-100 prose-headings:font-black prose-h3:text-teal-800 dark:prose-h3:text-teal-400 prose-h4:text-slate-700 dark:prose-h4:text-slate-200">

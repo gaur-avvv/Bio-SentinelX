@@ -139,17 +139,28 @@ export interface GroundingChunk {
 }
 
 export interface LifestyleData {
+  fullName?: string;
   age: string;
   height?: string;
   weight?: string;
   gender: string;
+  bloodGroup?: string;
+  occupation?: string;
+  cityType?: string;
   lifestyle: string;
   medication: string;
+  chronicConditions?: string;
+  vaccinationStatus?: string;
   foodHabits: string;
+  sleepHours?: string;
+  waterIntakeLiters?: string;
+  stressLevel?: string;
   allergies: string;
   medicalHistory: string;
+  familyHistory?: string;
+  emergencyContact?: string;
   exercise?: string;
-  smoking?: boolean;
+  smoking?: string;
   alcoholConsumption?: string;
 }
 
@@ -171,84 +182,99 @@ export interface RiskItem {
   description: string;
 }
 
-export type AiProvider = 'gemini' | 'groq' | 'pollinations' | 'openrouter' | 'siliconflow' | 'cerebras';
+export type AiProvider = 'huggingface' | 'gemini' | 'groq' | 'pollinations' | 'openrouter' | 'siliconflow' | 'cerebras' | 'ollama';
 
 export const AI_MODELS: Record<AiProvider, Array<{ value: string; label: string }>> = {
+  huggingface: [
+    { value: 'google/medgemma-4b-it', label: 'MedGemma 4B IT — Medical Multimodal (Primary)' },
+    { value: 'google/medgemma-27b-text-it', label: 'MedGemma 27B Text IT — Advanced Medical Reasoning' },
+    { value: 'Medical-NLP/medgemma-1.5-4b-it-sft-lora-indian-meds', label: 'MedGemma Indian Meds Adapter' },
+  ],
   gemini: [
-    { value: 'gemini-3-flash-preview',    label: 'Gemini 3 Flash Preview — Latest' },
-    { value: 'gemini-3.1-pro-preview',    label: 'Gemini 3.1 Pro Preview — Cutting Edge' },
-    { value: 'gemini-2.5-flash',          label: 'Gemini 2.5 Flash — Fast & Capable' },
-    { value: 'gemini-2.0-flash',          label: 'Gemini 2.0 Flash — Stable' },
-    { value: 'gemini-2.5-pro',            label: 'Gemini 2.5 Pro — Most Powerful' },
-    { value: 'gemini-1.5-pro',            label: 'Gemini 1.5 Pro — Long Context' },
-    { value: 'gemini-1.5-flash',          label: 'Gemini 1.5 Flash — Balanced Speed' },
-    { value: 'gemini-1.0-pro',            label: 'Gemini 1.0 Pro — Stable' },
+    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview — Latest' },
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview — Cutting Edge' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash — Fast & Capable' },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash — Stable' },
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro — Most Powerful' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro — Long Context' },
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash — Balanced Speed' },
+    { value: 'gemini-1.0-pro', label: 'Gemini 1.0 Pro — Stable' },
   ],
   groq: [
-    { value: 'llama-3.3-70b-versatile',      label: 'Llama 3.3 70B Versatile — Best Quality' },
-    { value: 'llama-3.1-8b-instant',         label: 'Llama 3.1 8B Instant — Ultra Fast' },
-    { value: 'llama-3.1-70b-versatile',      label: 'Llama 3.1 70B Versatile — Balanced' },
-    { value: 'mixtral-8x7b-32768',           label: 'Mixtral 8x7B — 32K Context' },
-    { value: 'gemma2-9b-it',                 label: 'Gemma 2 9B — Google Efficient' },
+    { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile — Best Quality' },
+    { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant — Ultra Fast' },
+    { value: 'llama-3.1-70b-versatile', label: 'Llama 3.1 70B Versatile — Balanced' },
+    { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B — 32K Context' },
+    { value: 'gemma2-9b-it', label: 'Gemma 2 9B — Google Efficient' },
   ],
   pollinations: [
-    { value: 'openai',             label: 'GPT-4o Mini — Fast' },
-    { value: 'openai-large',       label: 'GPT-4o Large — Most Capable' },
-    { value: 'openai-reasoning',   label: 'o3 Mini — Reasoning' },
-    { value: 'qwen-coder',         label: 'Qwen 2.5 Coder — Code & Logic' },
-    { value: 'llama',              label: 'Llama — Meta' },
-    { value: 'mistral',            label: 'Mistral — Lightweight' },
-    { value: 'deepseek',           label: 'DeepSeek — Reasoning' },
-    { value: 'gemini',             label: 'Gemini — Google' },
-    { value: 'gemini-thinking',    label: 'Gemini Thinking — Google' },
+    { value: 'openai', label: 'GPT-4o Mini — Fast' },
+    { value: 'openai-large', label: 'GPT-4o Large — Most Capable' },
+    { value: 'openai-reasoning', label: 'o3 Mini — Reasoning' },
+    { value: 'qwen-coder', label: 'Qwen 2.5 Coder — Code & Logic' },
+    { value: 'llama', label: 'Llama — Meta' },
+    { value: 'mistral', label: 'Mistral — Lightweight' },
+    { value: 'deepseek', label: 'DeepSeek — Reasoning' },
+    { value: 'gemini', label: 'Gemini — Google' },
+    { value: 'gemini-thinking', label: 'Gemini Thinking — Google' },
     { value: 'claude-hybridspace', label: 'Claude Hybridspace — Anthropic' },
   ],
   openrouter: [
-    { value: 'openai/gpt-4o',                              label: 'GPT-4o — OpenAI' },
-    { value: 'openai/gpt-4o-mini',                         label: 'GPT-4o Mini — OpenAI Fast' },
-    { value: 'meta-llama/llama-3.1-8b-instruct',      label: 'Llama 3.1 8B Instruct — Free' },
-    { value: 'meta-llama/llama-3.3-70b-instruct',          label: 'Llama 3.3 70B Instruct — Meta' },
-    { value: 'mistralai/mistral-nemo',                label: 'Mistral Nemo — Free & Efficient' },
-    { value: 'google/gemini-2.0-flash-exp',           label: 'Gemini 2.0 Flash — Free' },
-    { value: 'google/gemini-2.5-pro',                      label: 'Gemini 2.5 Pro — Google' },
-    { value: 'deepseek/deepseek-r1',                  label: 'DeepSeek R1 — Free Reasoning' },
-    { value: 'anthropic/claude-3-haiku',                   label: 'Claude 3 Haiku — Anthropic Fast' },
-    { value: 'qwen/qwen-2.5-72b-instruct',            label: 'Qwen 2.5 72B — Free' },
+    { value: 'openai/gpt-4o', label: 'GPT-4o — OpenAI' },
+    { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini — OpenAI Fast' },
+    { value: 'meta-llama/llama-3.1-8b-instruct', label: 'Llama 3.1 8B Instruct — Free' },
+    { value: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct — Meta' },
+    { value: 'mistralai/mistral-nemo', label: 'Mistral Nemo — Free & Efficient' },
+    { value: 'google/gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash — Free' },
+    { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro — Google' },
+    { value: 'deepseek/deepseek-r1', label: 'DeepSeek R1 — Free Reasoning' },
+    { value: 'anthropic/claude-3-haiku', label: 'Claude 3 Haiku — Anthropic Fast' },
+    { value: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B — Free' },
   ],
   cerebras: [
-    { value: 'gpt-oss-120b',                        label: 'GPT OSS 120B — ~3000 tok/s (Default)' },
-    { value: 'llama3.1-8b',                         label: 'Llama 3.1 8B — ~2200 tok/s (Ultra Fast)' },
-    { value: 'qwen-3-235b-a22b-instruct-2507',      label: 'Qwen 3 235B — ~1400 tok/s (Preview)' },
-    { value: 'zai-glm-4.7',                         label: 'Z.ai GLM 4.7 — ~1000 tok/s (Preview)' },
+    { value: 'gpt-oss-120b', label: 'GPT OSS 120B — ~3000 tok/s (Default)' },
+    { value: 'llama3.1-8b', label: 'Llama 3.1 8B — ~2200 tok/s (Ultra Fast)' },
+    { value: 'qwen-3-235b-a22b-instruct-2507', label: 'Qwen 3 235B — ~1400 tok/s (Preview)' },
+    { value: 'zai-glm-4.7', label: 'Z.ai GLM 4.7 — ~1000 tok/s (Preview)' },
   ],
   siliconflow: [
     // ── DeepSeek ──────────────────────────────────────────────────────
-    { value: 'deepseek-ai/DeepSeek-V3.2',                  label: 'DeepSeek V3.2 — Best Overall ★ ($0.42/M)' },
-    { value: 'deepseek-ai/DeepSeek-R1',                    label: 'DeepSeek R1 — O3-Level Reasoning ($2.18/M)' },
-    { value: 'deepseek-ai/DeepSeek-V3.2-Exp',              label: 'DeepSeek V3.2 Exp — DSA Fast ($0.41/M)' },
-    { value: 'deepseek-ai/DeepSeek-V3.1-Terminus',         label: 'DeepSeek V3.1 Terminus — Code Agent ($1/M)' },
-    { value: 'deepseek-ai/DeepSeek-V3.1',                  label: 'DeepSeek V3.1 — Hybrid Think ($1/M)' },
-    { value: 'deepseek-ai/DeepSeek-V3',                    label: 'DeepSeek V3 — Stable ($1/M)' },
+    { value: 'deepseek-ai/DeepSeek-V3.2', label: 'DeepSeek V3.2 — Best Overall ★ ($0.42/M)' },
+    { value: 'deepseek-ai/DeepSeek-R1', label: 'DeepSeek R1 — O3-Level Reasoning ($2.18/M)' },
+    { value: 'deepseek-ai/DeepSeek-V3.2-Exp', label: 'DeepSeek V3.2 Exp — DSA Fast ($0.41/M)' },
+    { value: 'deepseek-ai/DeepSeek-V3.1-Terminus', label: 'DeepSeek V3.1 Terminus — Code Agent ($1/M)' },
+    { value: 'deepseek-ai/DeepSeek-V3.1', label: 'DeepSeek V3.1 — Hybrid Think ($1/M)' },
+    { value: 'deepseek-ai/DeepSeek-V3', label: 'DeepSeek V3 — Stable ($1/M)' },
     // ── MiniMax ───────────────────────────────────────────────────────
-    { value: 'MiniMaxAI/MiniMax-M2.5',                     label: 'MiniMax M2.5 — 80.2% SWE-Bench ($1.2/M)' },
-    { value: 'MiniMaxAI/MiniMax-M2.1',                     label: 'MiniMax M2.1 — Agentic Coding ($1.2/M)' },
+    { value: 'MiniMaxAI/MiniMax-M2.5', label: 'MiniMax M2.5 — 80.2% SWE-Bench ($1.2/M)' },
+    { value: 'MiniMaxAI/MiniMax-M2.1', label: 'MiniMax M2.1 — Agentic Coding ($1.2/M)' },
     // ── Kimi ──────────────────────────────────────────────────────────
-    { value: 'moonshotai/Kimi-K2.5',                       label: 'Kimi K2.5 — Multimodal Agentic ($3/M)' },
-    { value: 'moonshotai/Kimi-K2-Thinking',                label: 'Kimi K2 Thinking — HLE SOTA ($2.5/M)' },
-    { value: 'moonshotai/Kimi-K2-Instruct-0905',           label: 'Kimi K2 Instruct 0905 — Latest ($2/M)' },
-    { value: 'moonshotai/Kimi-K2-Instruct',                label: 'Kimi K2 Instruct — 1T MoE ($2.29/M)' },
+    { value: 'moonshotai/Kimi-K2.5', label: 'Kimi K2.5 — Multimodal Agentic ($3/M)' },
+    { value: 'moonshotai/Kimi-K2-Thinking', label: 'Kimi K2 Thinking — HLE SOTA ($2.5/M)' },
+    { value: 'moonshotai/Kimi-K2-Instruct-0905', label: 'Kimi K2 Instruct 0905 — Latest ($2/M)' },
+    { value: 'moonshotai/Kimi-K2-Instruct', label: 'Kimi K2 Instruct — 1T MoE ($2.29/M)' },
     // ── Qwen3 Flagship ────────────────────────────────────────────────
-    { value: 'Qwen/Qwen3-235B-A22B-Thinking-2507',         label: 'Qwen3 235B Thinking 2507 — SOTA ($0.6/M)' },
-    { value: 'Qwen/Qwen3-235B-A22B-Instruct-2507',         label: 'Qwen3 235B Instruct 2507 — Fast ($0.6/M)' },
-    { value: 'Qwen/Qwen3-Coder-480B-A35B-Instruct',        label: 'Qwen3 Coder 480B — Best Open Coder ($1/M)' },
-    { value: 'Qwen/Qwen3-Coder-30B-A3B-Instruct',          label: 'Qwen3 Coder 30B — Efficient ($0.28/M)' },
-    { value: 'Qwen/Qwen3-30B-A3B-Thinking-2507',           label: 'Qwen3 30B Thinking 2507 ($0.3/M)' },
-    { value: 'Qwen/Qwen3-30B-A3B-Instruct-2507',           label: 'Qwen3 30B Instruct 2507 ($0.3/M)' },
+    { value: 'Qwen/Qwen3-235B-A22B-Thinking-2507', label: 'Qwen3 235B Thinking 2507 — SOTA ($0.6/M)' },
+    { value: 'Qwen/Qwen3-235B-A22B-Instruct-2507', label: 'Qwen3 235B Instruct 2507 — Fast ($0.6/M)' },
+    { value: 'Qwen/Qwen3-Coder-480B-A35B-Instruct', label: 'Qwen3 Coder 480B — Best Open Coder ($1/M)' },
+    { value: 'Qwen/Qwen3-Coder-30B-A3B-Instruct', label: 'Qwen3 Coder 30B — Efficient ($0.28/M)' },
+    { value: 'Qwen/Qwen3-30B-A3B-Thinking-2507', label: 'Qwen3 30B Thinking 2507 ($0.3/M)' },
+    { value: 'Qwen/Qwen3-30B-A3B-Instruct-2507', label: 'Qwen3 30B Instruct 2507 ($0.3/M)' },
     // ── Qwen3 Next / VL ───────────────────────────────────────────────
-    { value: 'Qwen/Qwen3-Next-80B-A3B-Thinking',           label: 'Qwen3 Next 80B Thinking — Beats 32B ($0.57/M)' },
-    { value: 'Qwen/Qwen3-Next-80B-A3B-Instruct',           label: 'Qwen3 Next 80B Instruct ($1.4/M)' },
-    { value: 'Qwen/Qwen3-VL-235B-A22B-Instruct',           label: 'Qwen3 VL 235B — Vision Flagship ($1.5/M)' },
-    { value: 'Qwen/Qwen3-VL-32B-Instruct',                 label: 'Qwen3 VL 32B — Vision ($0.6/M)' },
+    { value: 'Qwen/Qwen3-Next-80B-A3B-Thinking', label: 'Qwen3 Next 80B Thinking — Beats 32B ($0.57/M)' },
+    { value: 'Qwen/Qwen3-Next-80B-A3B-Instruct', label: 'Qwen3 Next 80B Instruct ($1.4/M)' },
+    { value: 'Qwen/Qwen3-VL-235B-A22B-Instruct', label: 'Qwen3 VL 235B — Vision Flagship ($1.5/M)' },
+    { value: 'Qwen/Qwen3-VL-32B-Instruct', label: 'Qwen3 VL 32B — Vision ($0.6/M)' },
+  ],
+  ollama: [
+    { value: 'smollm2-135m', label: 'SmolLM2 135M — Keyword Extraction (Fastest)' },
+    { value: 'smollm2-1.7b', label: 'SmolLM2 1.7B — Health Triage & Alerts' },
+    { value: 'qwen2.5-1.5b', label: 'Qwen 2.5 1.5B — Structured Analysis & Compliance' },
+    { value: 'qwen2.5-3b', label: 'Qwen 2.5 3B — Advanced Reasoning & Reports' },
+    { value: 'llama3.2-1b', label: 'Llama 3.2 1B — Fast Triage & Classification' },
+    { value: 'llama3.2-3b', label: 'Llama 3.2 3B — Balanced Health Assessment' },
+    { value: 'phi3-mini', label: 'Phi-3 Mini 3.8B — Medical Reasoning' },
+    { value: 'medllama2', label: 'MedLlama2 7B — Medical Domain Specialist' },
   ],
 };
 
@@ -350,6 +376,13 @@ export interface EmailAlertSettings {
   smtpDevApiKey: string;       // smtp.dev API key for creating sender account
   senderEmail: string;         // auto-provisioned smtp.dev sender (stored after first run)
   senderPassword: string;      // auto-generated password for the sender smtp.dev account
+  resendApiKey: string;        // Resend API key
+  sendGridApiKey: string;      // SendGrid API key
+  resendFromEmail: string;     // Verified sender for Resend
+  sendGridFromEmail: string;   // Verified sender for SendGrid
+  emailJsPublicKey: string;    // EmailJS public key (free, works with any email)
+  emailJsServiceId: string;    // EmailJS service ID
+  emailJsTemplateId: string;   // EmailJS template ID
   leadTimeHours: number;       // how many hours ahead to scan forecast (1–72)
   minSeverityScore: number;    // 0–100 threshold to trigger email
   onlyCritical: boolean;       // restrict to critical-only events
@@ -359,12 +392,74 @@ export interface EmailAlertSettings {
 export const DEFAULT_EMAIL_ALERT_SETTINGS: EmailAlertSettings = {
   enabled: false,
   recipientEmail: '',
-  smtpDevApiKey: 'smtplabs_ekcW2c4f46ie4Frwh9y3gaj4Y5Pbo18eaT9mvrRd2QAj6dLB',
+  smtpDevApiKey: '',
   senderEmail: '',
   senderPassword: '',
+  resendApiKey: '',
+  sendGridApiKey: '',
+  resendFromEmail: '',
+  sendGridFromEmail: '',
+  emailJsPublicKey: '',
+  emailJsServiceId: '',
+  emailJsTemplateId: '',
   leadTimeHours: 12,
   minSeverityScore: 60,
   onlyCritical: false,
   sentAlertKeys: [],
 };
 
+
+
+// ─── Database Integration Settings ──────────────────────────────────────────
+export interface DatabaseSettings {
+  preferredDb: 'none' | 'supabase' | 'firebase';
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  firebaseConfigJson: string;
+  firebaseApiKey: string;
+}
+
+export const DEFAULT_DATABASE_SETTINGS: DatabaseSettings = {
+  preferredDb: 'none',
+  supabaseUrl: '',
+  supabaseAnonKey: '',
+  firebaseConfigJson: '',
+  firebaseApiKey: ''
+};
+
+// ─── MCP Orchestration Settings ───────────────────────────────────────────
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  endpoint: string;
+  enabled: boolean;
+  allowedTools: string[];
+  timeoutMs: number;
+  retryCount: number;
+}
+
+export interface McpSettings {
+  enabled: boolean;
+  allowlistedTools: string[];
+  defaultTimeoutMs: number;
+  defaultRetryCount: number;
+  servers: McpServerConfig[];
+}
+
+export const DEFAULT_MCP_SETTINGS: McpSettings = {
+  enabled: false,
+  allowlistedTools: ['outbreak_sweep', 'kg_expand', 'protocol_draft'],
+  defaultTimeoutMs: 5000,
+  defaultRetryCount: 1,
+  servers: [
+    {
+      id: 'local-biosentinel',
+      name: 'BioSentinel MCP Local',
+      endpoint: 'https://web-production-37f41.up.railway.app',
+      enabled: true,
+      allowedTools: ['outbreak_sweep'],
+      timeoutMs: 5000,
+      retryCount: 1,
+    },
+  ],
+};

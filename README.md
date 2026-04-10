@@ -6,7 +6,7 @@
 
 **Real-time environmental analysis · ML disease prediction · Personalized health guidance**
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Visit%20App-teal?style=for-the-badge)](https://bio-sentinelx.vercel.app)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Visit%20App-teal?style=for-the-badge)](https://bio-sentinel-x.vercel.app)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)](https://react.dev/)

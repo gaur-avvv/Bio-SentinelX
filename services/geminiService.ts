@@ -1,9 +1,13 @@
 import { GoogleGenAI } from "@google/genai";
 import { WeatherData, AnalysisResponse, ChatMessage, LifestyleData } from '../types';
-import { retrieveRelevant } from './vectorDB';
+import { retrieveRelevant, getAllDocuments } from './vectorDB';
 import { buildMemoryContext } from './memoryService';
 import { promptCache } from './promptCacheService';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
+import { analyzeEnvironmentalImpact, initializeKnowledgeGraph } from './knowledgeGraphService';
+import { MEDGEMMA_MODELS, chatCompletion, checkModelAvailability, getHFToken } from './huggingFaceService';
+import { executeMcpOutbreakSweep } from './mcpOrchestrationService';
+import { McpSettings, DEFAULT_MCP_SETTINGS } from '../types';
 
 // ============================================================
 // UTILITY: Strip reasoning-model <think> / <thinking> blocks
@@ -16,6 +20,30 @@ import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
  */
 function stripThinkingBlocks(text: string): string {
   return stripHiddenModelReasoning(text);
+}
+
+interface OrchestrationTrace {
+  deepAnalysis: boolean;
+  kgUsed: boolean;
+  ragUsed: boolean;
+  docsIndexed: number;
+  mcpUsed: boolean;
+  mcpSignals: number;
+  medgemmaAttempted: boolean;
+  medgemmaUsed: boolean;
+  fallbackUsed: boolean;
+  fallbackProvider: string;
+  finalProvider: string;
+  finalModel: string;
+}
+
+function withOrchestrationTrace(
+  responseText: string,
+  trace: OrchestrationTrace,
+  includeTrace?: boolean,
+): string {
+  if (!includeTrace) return responseText;
+  return `[ORCH_TRACE]${JSON.stringify(trace)}[/ORCH_TRACE]\n${responseText}`;
 }
 
 // ============================================================
@@ -235,7 +263,7 @@ async function generateWithSiliconFlow(
       model,
       messages: [
         { role: 'system', content: systemInstruction },
-        { role: 'user',   content: userPrompt },
+        { role: 'user', content: userPrompt },
       ],
       temperature: 0.7,
       max_tokens: 4096,
@@ -258,6 +286,35 @@ async function generateWithSiliconFlow(
   const data = await response.json() as any;
   promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
   return data.choices?.[0]?.message?.content || '';
+}
+
+async function tryMedGemmaFirst(
+  systemInstruction: string,
+  userPrompt: string,
+  preferredModel?: string,
+  maxTokens: number = 2048,
+): Promise<string | null> {
+  const token = getHFToken();
+  if (!token) return null;
+
+  const modelId = preferredModel && preferredModel.includes('medgemma')
+    ? preferredModel
+    : (MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id);
+
+  try {
+    const status = await checkModelAvailability(modelId);
+    if (!status.available && !status.loading) return null;
+    const text = await chatCompletion(
+      [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: userPrompt },
+      ],
+      { modelId, maxTokens, temperature: 0.3 }
+    );
+    return text || null;
+  } catch {
+    return null;
+  }
 }
 
 async function chatWithSiliconFlow(
@@ -306,9 +363,10 @@ export const generateHealthRiskAssessment = async (
   weatherFeedback: string,
   lifestyleData?: LifestyleData,
   reportImage?: string, // Base64 image
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash',
-  apiKey?: string
+  aiProvider: string,
+  aiModel: string,
+  apiKey?: string,
+  mlPrediction?: any,
 ): Promise<AnalysisResponse> => {
 
   const weatherContext = `
@@ -366,6 +424,17 @@ export const generateHealthRiskAssessment = async (
     - TOMORROW: ${weather.tomorrowSummary}
   `;
 
+  const mlPredictionContext = `
+    ### ML Intelligence Core Prediction
+    ${mlPrediction ? `
+    - Disease: ${mlPrediction.disease}
+    - Confidence: ${(mlPrediction.confidence * 100).toFixed(1)}%
+    - Risk Level: ${mlPrediction.riskLevel}
+    - Primary Trigger: ${mlPrediction.primaryTrigger}
+    - Recommendation: ${mlPrediction.recommendation}
+    ` : "No ML prediction available."}
+    `;
+
   const feedbackContext = `
     Local Field Observations: "${userFeedback || "None provided."}"
   `;
@@ -386,52 +455,45 @@ export const generateHealthRiskAssessment = async (
     - Allergies: ${lifestyleData.allergies}${bmiContext}
   ` : "No lifestyle data provided.";
 
-    // System instruction is cached per city — rebuilding it on every call for the same
-    // city wastes CPU. The static prefix (rules + geofencing + protocol) is also eligible
-    // for server-side prefix caching (Cerebras, OpenAI-compatible providers).
-    const { text: systemInstruction } = promptCache.getSystemInstruction(
-      `ha:${weather.city}:${weather.lat.toFixed(2)}:${weather.lon.toFixed(2)}`,
-      () => `
-    You are **BioSentinel Neural Engine**, a localized health-climate intelligence model.
+  // System instruction is cached per city — rebuilding it on every call for the same
+  // city wastes CPU. The static prefix (rules + geofencing + protocol) is also eligible
+  // for server-side prefix caching (Cerebras, OpenAI-compatible providers).
+  const { text: systemInstruction } = promptCache.getSystemInstruction(
+    `ha:${weather.city}:${weather.lat.toFixed(2)}:${weather.lon.toFixed(2)}`,
+    () => `
+    You are **BioSentinel Neural Engine**, a concise and clinically precise health-climate intelligence model.
 
-    ABSOLUTE RULES - FOLLOW EXACTLY:
-    1. DO NOT use any emoji characters anywhere in the report. No emojis at all.
-     2. DO NOT reveal your chain-of-thought or internal reasoning. Output ONLY the final report content.
-       - Do NOT include meta commentary like "Since the user asked...", "Let's check...", or "We'll focus on...".
-       - Do NOT output <think>, <thinking>, or <analysis> tags (or their escaped forms).
-     3. ALL bullet point labels MUST be on the SAME line as their content. Never split a bold label onto its own line.
-       CORRECT: - **Category Name:** Description text here immediately on the same line.
-       WRONG:   - **Category Name:**
-                  Description text on the next line.
-     4. Use only standard markdown hyphen list marker: - (not * or •).
-     5. Use **bold**: for category labels inside lists, inline with text.
+    ABSOLUTE RULES:
+    1. NO emoji characters anywhere.
+    2. NO chain-of-thought, meta commentary, <think>/<thinking> tags.
+    3. Bullet labels MUST be on the SAME line as content: - **Label:** Text here.
+    4. Use only hyphen list markers (-).
+    5. Use **bold** for category labels inline with text.
 
-    CRITICAL GEOFENCING PROTOCOL:
-    1. You are analyzing ${weather.city}.
-    2. DO NOT include or mention medical facilities that are not in ${weather.city} or not within 1km radius. If none found within 1km, skip the medical resources section entirely.
+    TOTAL REPORT LENGTH: STRICTLY UNDER 1200 WORDS. Be concise and clinical.
 
-    DEEP DATA CORRELATION & HISTORICAL TREND PROTOCOL:
-    - Actively correlate provided health data with current and forecasted environmental metrics.
-    - ATMOSPHERIC MODELING: Use Boundary Layer Height, CAPE, Lifted Index, CIN, VPD, Wet-Bulb Temperature to assess microclimate health risks.
-    - WEATHER-HEALTH CORRELATION: COMPREHENSIVE — analyze EVERY factor that has non-N/A data. For EACH factor include: measured value → WHO/EPA/NIOSH threshold → specific physiological mechanism → most at-risk population subgroups.
-    - HISTORICAL TREND: 3-4 sentences specific to the city coordinates.
-    - SYNERGISTIC THREATS: Identify compounding interactions between factors (e.g., High Temp + Poor AQI, High UV + Low BLH).
+    GEOFENCING: You are analyzing ${weather.city}. Do NOT mention facilities outside 1km radius.
 
-    FUTURE PREDICTION PROTOCOL:
-    - Predict health impacts over 3-7 day forecast window.
-    - Assess disease outbreak environmental suitability.
-    - Issue EARLY WARNING if conditions match outbreak precursors.
+    ANALYSIS PROTOCOL:
+    - Focus on the TOP 3-5 most impactful environmental factors only. Skip minor/normal-range metrics.
+    - For each impactful factor: measured value -> threshold -> health mechanism (1 sentence).
+    - Identify 1-2 synergistic threat combinations.
+    - Historical trend: 2 sentences max.
+    - Future outlook: 3-day window, 3-4 bullet points.
+    - Personalize recommendations to the user's profile (age, BMI, medication, allergies, lifestyle, medical history).
+    - Prefer quantified language: include explicit values, ranges, confidence, and risk tier rationale.
+    - If ML model prediction exists, reconcile it with meteorological evidence and explain agreement/divergence.
 
-    SECTION BREVITY REQUIREMENTS:
-    - Section 1 (Prevention): Max 400 words
-    - Section 2 (Weather Correlation): COMPREHENSIVE — no word limit. Cover ALL non-N/A factors using the exact sub-section structure defined below.
-    - Section 3 (Risk Assessment): 4-6 bullet risks max, 2 sentences each
-    - Section 4 (Future Outlook): Max 300 words, 3-5 day window
-    - Section 5 (Disease Warning): Max 150 words
-    - Section 6 (Safety Protocols): Exactly 4-5 inline bullet points
-    - Section 7 (Disclaimer): 2 sentences only
+    SECTION WORD LIMITS (STRICT):
+    - Section 1 (Prevention): Max 150 words, 4-5 bullet points total
+    - Section 2 (Weather-Health): Max 400 words, cover only TOP impactful factors
+    - Section 3 (Risk Assessment): Max 4 risks, 1 sentence each
+    - Section 4 (Future Outlook): Max 150 words
+    - Section 5 (Disease Warning): Max 80 words
+    - Section 6 (Safety): Exactly 3-4 bullet points
+    - Section 7 (Disclaimer): 1-2 sentences
   `
-    );
+  );
 
   // ── RAG retrieval: pull relevant passages from user's Research Library ──────
   const _ragQuery = [
@@ -452,101 +514,61 @@ export const generateHealthRiskAssessment = async (
 
   // Build the flat user prompt (used by all providers)
   const userPrompt = `${_ragContext ? _ragContext + '\n\n---\n\n' : ''}
-    ### 1. Telemetry (${weather.city})
+    ### Telemetry (${weather.city})
     ${weatherContext}
 
-    ### 2. Ground Intel & Lifestyle
+    ### Ground Intel & Lifestyle
     ${feedbackContext}
     ${lifestyleContext}
 
-    ### 3. Clinical Data
-    ${datasetSummary || "No CSV data provided. Please analyze the provided report image if available."}
+    ### ML Intelligence
+    ${mlPredictionContext}
 
-    ### ANALYSIS TASKS:
-    - Analyze the direct weather-to-health link for ${weather.city}, focusing on the top 3 most impactful factors only.
-    - Research historical health-weather patterns specific to ${weather.city} (brief, 3-4 sentences).
-    - Project how conditions will evolve over the next 3-5 days and what health impacts that implies.
-    - Assess local disease outbreak risk based on current environmental conditions.
-    - Generate personalized inline bullet-point recommendations based on user profile and current risks.
+    ### Clinical Data
+    ${datasetSummary || "No clinical CSV data."}
 
-    ### REPORT STRUCTURE - GENERATE EXACTLY THESE SECTIONS IN ORDER:
+    IMPORTANT: Keep the ENTIRE report under 1200 words. Be concise and data-driven.
+
+    ### REPORT STRUCTURE — GENERATE EXACTLY THESE SECTIONS:
 
     ### 1. Prevention & Precaution Measures
-    Immediate actions and long-term lifestyle guidance. Sub-sections:
-    #### Immediate Actions
-    #### Precaution Measures
-    #### Long-term Prevention
+    4-5 actionable bullet points covering immediate actions, precautions, and long-term tips. Max 150 words.
 
     ### 2. Weather-Health Correlation
-    MANDATORY: Analyze EVERY sensor/metric that has a non-N/A value. Skip only metrics explicitly showing 'N/A'.
-    Start with a 2-3 sentence "Summary of Findings" paragraph.
-    Then create ONE sub-section per factor group below (only if data exists):
-
-    #### Thermal Stress
-    Include: Temperature, Feels-Like, Wet-Bulb Temperature, Dew Point, VPD.
-    For each: state measured value → compare to WHO/NIOSH threshold → explain physiological mechanism → name at-risk subgroups.
-    Note the MMT (Minimum Mortality Temperature) zone and whether current temp is in cold-stress, optimal, or heat-stress zone.
-
-    #### Atmospheric Pressure & Wind
-    Include: Barometric Pressure, Surface Pressure, Wind Speed, Gusts, BLH.
-    For each: state measured value → threshold/normal range → pollutant dispersion or cardiovascular mechanism → at-risk groups.
-
-    #### Atmospheric Stability & Storm Risk
-    Include: CAPE, Lifted Index, CIN, Freezing Level Height.
-    For each: state measured value → interpret stability classification → health implication (stress response, injury risk, cardiovascular) → at-risk groups.
-
-    #### Precipitation & Soil Conditions
-    Include: Precipitation probability, Soil Moisture, Soil Temperature, Evapotranspiration, Total Column Water Vapour.
-    For each: state measured value → interpret relative to norms → disease vector or dehydration mechanism → at-risk groups.
-
-    #### Solar Radiation & UV Exposure
-    Include: UV Index, UV Clear-Sky, Shortwave Radiation, Shortwave Radiation Sum, Sunshine Duration, Cloud Cover layers.
-    For each: state measured value → compare to WHO UV categories (Low/Moderate/High/Very High/Extreme ≥11) and EPA thresholds → photokeratitis/skin cancer/Vitamin D synthesis mechanism → at-risk groups (fair skin, outdoor workers, children).
-
-    #### Air Quality — Particulates & Gases
-    Include: PM2.5, PM10, O3, NO2, SO2, CO, CO2, Dust, Ammonia, Methane, AOD.
-    For each non-N/A value: state measured value → compare to WHO 24h guideline (PM2.5: 15 µg/m³, PM10: 45 µg/m³, O3: 100 µg/m³, NO2: 25 µg/m³, SO2: 40 µg/m³, CO: 4000 µg/m³) → specific organ/system mechanism → at-risk subgroups.
-    Note whether values exceed WHO AQG, Interim Target 1/2/3, or EPA NAAQS.
-
-    #### Pollen & Biological Allergens
-    Include all pollen types that have non-N/A values (Alder, Birch, Grass, Mugwort, Olive, Ragweed).
-    For each: state measured value → compare to low/moderate/high/very high pollen count thresholds → IgE-mediated allergic response mechanism → at-risk groups (asthma, rhinitis, atopic dermatitis patients).
-    If all pollen values are N/A, note seasonal and geographic likelihood of pollen exposure.
-
-    #### Synergistic & Compounding Threats
-    Identify 2-4 specific multi-factor interactions from the data (e.g., high temp + poor AQI = compounded respiratory+cardiovascular load; high UV + low BLH = pollutant photochemistry + UV exposure; high VPD + low humidity = airway desiccation + PM concentration). For each: name the interacting factors → combined physiological burden → most vulnerable group.
-
-    #### Historical Climate Trend (${weather.lat}, ${weather.lon})
-    3-4 sentences on the region's historical climate patterns, endemic health risks, and how current readings compare to seasonal norms for this specific location.
+    1-2 sentence summary, then analyze ONLY the top 3-5 most concerning factors (those exceeding thresholds or posing real risk). For each: value -> threshold -> health impact (1 sentence). End with 1-2 synergistic threats and 2 sentences of historical context. Max 400 words total.
 
     ### 3. Current Health Risk Assessment
-    4-6 risks, each on ONE line:
-    - **[SEVERITY] Risk Name:** Brief explanation linking weather, history, and user profile. 2 sentences max.
-    Severity levels: CRITICAL / HIGH / MODERATE / LOW
+    Max 4 risks, each ONE line:
+    - **[SEVERITY] Risk Name:** One-sentence explanation. (CRITICAL/HIGH/MODERATE/LOW)
 
-    ### 4. Future Outlook & Predictions
-    MAX 300 WORDS. Cover the 3-5 day forecast window.
-    #### 3-Day Forecast Impact
-    #### Trend Warnings
-    #### Recommended Adaptive Actions
+    ### 4. Future Outlook (3-Day)
+    3-4 bullet points on forecast health impacts and adaptive actions. Max 150 words.
 
-    ### 5. Disease Outbreak Early Warning
-    MAX 150 WORDS. State overall risk level, top 2 disease vectors of concern, and environmental precursors.
-    If high risk: include a line starting with EARLY WARNING: (no bold markers, just plain prefix).
+    ### 5. Disease Outbreak Warning
+    Overall risk level + top 1-2 concerns. Max 80 words. Use EARLY WARNING: prefix if high risk.
+    If ML Intelligence is available, include prediction label, confidence, and top 2 drivers in this section.
 
-    ### 6. Emergency & Safety Protocols
-    EXACTLY 4-5 bullet points. Same inline format:
-    - **Protocol:** Specific action step on the same line.
+    ### 6. Safety Protocols
+    3-4 bullet points: - **Protocol:** Action step.
+    Make each action explicitly personalized where possible (e.g., respiratory-sensitive users, high-BMI users, users on antihistamines/inhalers).
 
     ### 7. Medical Disclaimer
-    EXACTLY 2 sentences. No bold, no lists.
+    1-2 sentences. No bold, no lists.
   `;
 
   // ============================================================
   // ROUTE TO PROVIDER
   // ============================================================
 
-  if (aiProvider === 'groq') {
+  // MedGemma is always attempted first for report generation when HF token is configured.
+  const medgemmaFirst = await tryMedGemmaFirst(systemInstruction, userPrompt, aiModel, 3072);
+  if (medgemmaFirst) {
+    return { markdown: stripThinkingBlocks(medgemmaFirst) || 'Analysis unavailable.', groundingChunks: [] };
+  }
+
+  const routeProvider = aiProvider === 'huggingface' ? 'gemini' : aiProvider;
+
+  if (routeProvider === 'groq') {
     if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
     try {
       const text = await generateWithGroq(systemInstruction, userPrompt, aiModel, apiKey);
@@ -556,7 +578,7 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
-  if (aiProvider === 'pollinations') {
+  if (routeProvider === 'pollinations') {
     try {
       const text = await generateWithPollinations(systemInstruction, userPrompt, aiModel, apiKey);
       return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
@@ -565,7 +587,7 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
-  if (aiProvider === 'openrouter') {
+  if (routeProvider === 'openrouter') {
     if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
     try {
       const text = await generateWithOpenRouter(systemInstruction, userPrompt, aiModel, apiKey);
@@ -575,7 +597,7 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
-  if (aiProvider === 'siliconflow') {
+  if (routeProvider === 'siliconflow') {
     if (!apiKey) throw new Error('SiliconFlow API key is missing. Please add it in the sidebar.');
     try {
       const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey!));
@@ -586,8 +608,21 @@ export const generateHealthRiskAssessment = async (
     }
   }
 
+  // ---- Ollama (Small Models) ----
+  if (routeProvider === 'ollama') {
+    try {
+      const { runSmallModelPipeline } = await import('./smallModelService');
+      const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Generate health risk assessment', '', 'health_assessment', 1024, systemInstruction);
+      return { markdown: stripThinkingBlocks(result) || 'Analysis unavailable.', groundingChunks: [] };
+    } catch (error: any) {
+      throw new Error(error?.message || 'Ollama small model generation failed.');
+    }
+  }
+
   // ---- Gemini (default) ----
-  const geminiKey = apiKey || process.env.API_KEY;
+  const geminiKey = routeProvider === 'gemini' && aiProvider === 'huggingface'
+    ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+    : (apiKey || process.env.API_KEY);
   if (!geminiKey) {
     throw new Error('Gemini API Key is missing. Please configure it in the sidebar.');
   }
@@ -616,6 +651,16 @@ export const generateHealthRiskAssessment = async (
     return { markdown: text, groundingChunks };
 
   } catch (error: any) {
+    try {
+      const groqFallbackKey = localStorage.getItem('biosentinel_groq_key') || '';
+      if (groqFallbackKey) {
+        const groqText = await generateWithGroq(systemInstruction, userPrompt, 'llama-3.1-8b-instant', groqFallbackKey);
+        return { markdown: stripThinkingBlocks(groqText) || 'Analysis unavailable.', groundingChunks: [] };
+      }
+    } catch {
+      // Continue to mapped error below.
+    }
+
     console.error('Gemini API Error:', error);
     let userMessage = 'Neural core computation error.';
     if (error?.message?.includes('API_KEY_INVALID') || error?.status === 'INVALID_ARGUMENT') {
@@ -662,8 +707,8 @@ export interface HistoricalResearchInput {
 
 export const analyzeHistoricalClimateHealth = async (
   input: HistoricalResearchInput,
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash',
+  aiProvider: string,
+  aiModel: string,
   apiKey?: string
 ): Promise<string> => {
 
@@ -773,7 +818,7 @@ EXACTLY 2 sentences. Plain text, no bold, no lists.`
     // Non-fatal — research continues without RAG context
   }
 
-  const userPrompt = `${ _ragContext ? _ragContext + '\n\n---\n\n' : '' }RESEARCH REQUEST: Perform a comprehensive scientific literature review and climate-health correlation analysis for the following historical weather data.
+  const userPrompt = `${_ragContext ? _ragContext + '\n\n---\n\n' : ''}RESEARCH REQUEST: Perform a comprehensive scientific literature review and climate-health correlation analysis for the following historical weather data.
 
 Location: ${input.location} (Lat: ${input.lat}, Lon: ${input.lon})
 Analysis Period: ${input.period}
@@ -842,6 +887,13 @@ RESEARCH TASKS:
     return stripThinkingBlocks(text) || 'Research analysis unavailable.';
   }
 
+  // ---- Ollama (Small Models) ----
+  if (aiProvider === 'ollama') {
+    const { runSmallModelPipeline } = await import('./smallModelService');
+    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze historical climate health data', '', 'historical_research', 1024, systemInstruction);
+    return stripThinkingBlocks(result) || 'Research analysis unavailable.';
+  }
+
   // ---- Gemini (default, with Google Search grounding) ----
   const key = apiKey || process.env.API_KEY;
   if (!key) throw new Error('Gemini API Key missing. Please configure it in the sidebar.');
@@ -879,9 +931,38 @@ export const chatWithWeatherAssistant = async (
   message: string,
   apiKey?: string,
   mlPrediction?: any,
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash'
+  aiProvider: string,
+  aiModel: string,
+  options?: {
+    deepAnalysis?: boolean;
+    agenticMode?: boolean;
+    useMcpTools?: boolean;
+    llamaCloudEnabled?: boolean;
+    includeTrace?: boolean;
+    mcpSettings?: McpSettings;
+  }
 ): Promise<string> => {
+  const deepAnalysis = Boolean(options?.deepAnalysis);
+  const trace: OrchestrationTrace = {
+    deepAnalysis,
+    kgUsed: false,
+    ragUsed: false,
+    docsIndexed: 0,
+    mcpUsed: false,
+    mcpSignals: 0,
+    medgemmaAttempted: false,
+    medgemmaUsed: false,
+    fallbackUsed: false,
+    fallbackProvider: 'none',
+    finalProvider: 'gemini',
+    finalModel: aiModel,
+  };
+
+  const finish = (text: string, provider: string, model?: string) => {
+    trace.finalProvider = provider;
+    trace.finalModel = model || aiModel;
+    return withOrchestrationTrace(stripThinkingBlocks(text || "I'm sorry, I couldn't process that request."), trace, options?.includeTrace);
+  };
   const weatherContext = `
     Current context for ${weather.city}:
     - Temp: ${weather.temp}°C
@@ -928,21 +1009,85 @@ export const chatWithWeatherAssistant = async (
   ].filter(Boolean).join(' ');
 
   let _chatRagContext = '';
+  let docsCatalogContext = '';
+
+  if (deepAnalysis) {
+    try {
+      const docs = getAllDocuments();
+      trace.docsIndexed = docs.length;
+      if (docs.length > 0) {
+        const topDocs = docs.slice(0, 6).map((d, i) => `${i + 1}. ${d.title} (${d.source})`).join('\n');
+        docsCatalogContext = `\nRESEARCH DOCUMENT INDEX (auto-loaded for deep analysis):\n${topDocs}`;
+      }
+    } catch {
+      trace.docsIndexed = 0;
+    }
+  }
+
   try {
     _chatRagContext = await retrieveRelevant(_chatRagQuery, 4, apiKey || undefined);
+    trace.ragUsed = Boolean(_chatRagContext && _chatRagContext.trim());
   } catch (_e) {
     // Non-fatal
+  }
+
+  if (deepAnalysis && !_chatRagContext && trace.docsIndexed > 0) {
+    try {
+      const fallbackQuery = [weather.city, weather.description, 'health risks', 'clinical guidance', message].join(' ');
+      _chatRagContext = await retrieveRelevant(fallbackQuery, 8, apiKey || undefined);
+      trace.ragUsed = Boolean(_chatRagContext && _chatRagContext.trim());
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  let kgContext = '';
+  let mcpContext = '';
+  if (deepAnalysis) {
+    try {
+      initializeKnowledgeGraph();
+      const kg = analyzeEnvironmentalImpact({
+        temperature: weather.temp,
+        humidity: weather.humidity,
+        aqi: weather.aqi,
+        pm25: weather.advancedData?.pm2_5,
+        uvIndex: weather.uvIndex ?? undefined,
+      });
+      const topChains = kg.chains.slice(0, 3).map((chain, idx) => {
+        const labels = chain.nodes.map(n => n.label).join(' -> ');
+        return `${idx + 1}. ${labels} (strength ${chain.totalStrength.toFixed(2)})`;
+      }).join('\n');
+      trace.kgUsed = kg.chains.length > 0;
+      kgContext = `\nKNOWLEDGE GRAPH FINDINGS:\n${kg.summary}${topChains ? `\nTop causal pathways:\n${topChains}` : ''}`;
+    } catch {
+      kgContext = '';
+    }
+
+    if (options?.useMcpTools) {
+      trace.mcpUsed = true;
+      try {
+        const mcp = await executeMcpOutbreakSweep(weather.city, options?.mcpSettings || DEFAULT_MCP_SETTINGS);
+        trace.mcpSignals = mcp.trace.signals;
+        if (!mcp.trace.success && mcp.trace.error) {
+          trace.fallbackUsed = true;
+          trace.fallbackProvider = `mcp:${mcp.trace.error}`;
+        }
+        mcpContext = `\n${mcp.context}`;
+      } catch {
+        mcpContext = '\nMCP TOOL SIGNALS: regional sweep unavailable.';
+      }
+    }
   }
 
   // ── Lifestyle & feedback context from localStorage ──────────────────────────
   let lifestyleContext = '';
   try {
     const rawLifestyle = localStorage.getItem('biosentinel_lifestyle_data');
-    const rawFeedback  = localStorage.getItem('biosentinel_user_feedback');
+    const rawFeedback = localStorage.getItem('biosentinel_user_feedback');
     const ld = rawLifestyle ? JSON.parse(rawLifestyle) : null;
     if (ld) {
       const h = parseFloat(ld.height || '0');
-      const w = parseFloat(ld.weight  || '0');
+      const w = parseFloat(ld.weight || '0');
       const bmiStr = (h > 50 && w > 10)
         ? (() => { const bmi = w / Math.pow(h / 100, 2); return ` | BMI: ${bmi.toFixed(1)}`; })()
         : '';
@@ -1013,17 +1158,38 @@ export const chatWithWeatherAssistant = async (
       ${mlContext}
       ${memoryContext}
       ${lifestyleContext}
+      ${docsCatalogContext}
+      ${deepAnalysis ? `\nDEEP ANALYSIS MODE: ACTIVE${options?.agenticMode ? ' (AGENTIC ORCHESTRATION ENABLED)' : ''}${options?.useMcpTools ? ' (MCP TOOLS ENABLED)' : ''}${options?.llamaCloudEnabled ? ' (LLAMAINDEX PARSER READY)' : ''}` : ''}
       ${_chatRagContext ? `\nRESEARCH LIBRARY CONTEXT (use to ground your response in user-uploaded evidence):\n${_chatRagContext}` : ''}`;
+
+  const userMessage = deepAnalysis
+    ? `${message}\n\n${kgContext}${mcpContext}\n\nRespond with sections: 1) Causal Pathway 2) Evidence Summary 3) Actions.`
+    : message;
 
   // ---- Build OpenAI-format messages (shared by Groq & Pollinations) ----
   const oaiMessages = [
     { role: 'system', content: systemInstruction },
     ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text })),
-    { role: 'user', content: message },
+    { role: 'user', content: userMessage },
   ];
 
+  if (deepAnalysis || aiProvider === 'huggingface') {
+    trace.medgemmaAttempted = true;
+    if (aiProvider === 'huggingface' && !getHFToken()) {
+      trace.fallbackUsed = true;
+      trace.fallbackProvider = 'missing_hf_token';
+    }
+    const medgemmaFirst = await tryMedGemmaFirst(systemInstruction, userMessage, aiModel, 2048);
+    if (medgemmaFirst) {
+      trace.medgemmaUsed = true;
+      return finish(medgemmaFirst, 'huggingface', aiModel.includes('medgemma') ? aiModel : (MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id));
+    }
+  }
+
+  const routeProvider = aiProvider === 'huggingface' ? 'gemini' : aiProvider;
+
   // ---- Groq ----
-  if (aiProvider === 'groq') {
+  if (routeProvider === 'groq') {
     if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -1039,11 +1205,11 @@ export const chatWithWeatherAssistant = async (
     }
     const data = await res.json() as any;
     promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-    return stripThinkingBlocks(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.");
+    return finish(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'groq', aiModel);
   }
 
   // ---- Pollinations ----
-  if (aiProvider === 'pollinations') {
+  if (routeProvider === 'pollinations') {
     const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey) pollinationsHeaders['Authorization'] = `Bearer ${apiKey}`;
     const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
@@ -1061,11 +1227,11 @@ export const chatWithWeatherAssistant = async (
     }
     const data = await res.json() as any;
     promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-    return stripThinkingBlocks(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.");
+    return finish(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'pollinations', aiModel);
   }
 
   // ---- OpenRouter ----
-  if (aiProvider === 'openrouter') {
+  if (routeProvider === 'openrouter') {
     if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -1087,31 +1253,44 @@ export const chatWithWeatherAssistant = async (
     }
     const orData = await res.json() as any;
     promptCache.recordServerCacheHit(promptCache.extractCachedTokens(orData));
-    return stripThinkingBlocks(orData.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.");
+    return finish(orData.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'openrouter', aiModel);
   }
 
   // ---- SiliconFlow ----
-  if (aiProvider === 'siliconflow') {
+  if (routeProvider === 'siliconflow') {
     const text = await withRetry(() => chatWithSiliconFlow(
       oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
       aiModel,
       apiKey || ''
     ));
-    return stripThinkingBlocks(text);
+    return finish(text, 'siliconflow', aiModel);
   }
 
   // ---- Cerebras ----
-  if (aiProvider === 'cerebras') {
+  if (routeProvider === 'cerebras') {
     const text = await chatWithCerebras(
       oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
       aiModel,
       apiKey || ''
     );
-    return stripThinkingBlocks(text);
+    return finish(text, 'cerebras', aiModel);
+  }
+
+  // ---- Ollama (Small Models) ----
+  if (routeProvider === 'ollama') {
+    const { chatWithOllama } = await import('./smallModelService');
+    const text = await chatWithOllama(
+      oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+      aiModel,
+      1024
+    );
+    return finish(text, 'ollama', aiModel);
   }
 
   // ---- Gemini (default) ----
-  const key = apiKey || process.env.API_KEY;
+  const key = routeProvider === 'gemini' && aiProvider === 'huggingface'
+    ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+    : (apiKey || process.env.API_KEY);
   if (!key) throw new Error('Gemini API Key missing. Please configure it in the sidebar.');
   const ai = new GoogleGenAI({ apiKey: key });
 
@@ -1126,9 +1305,19 @@ export const chatWithWeatherAssistant = async (
     history: chatHistory,
     config: { systemInstruction },
   });
-
-  const response = await chat.sendMessage({ message });
-  return stripThinkingBlocks(response.text || "I'm sorry, I couldn't process that request.");
+  try {
+    const response = await chat.sendMessage({ message: userMessage });
+    return finish(response.text || "I'm sorry, I couldn't process that request.", 'gemini', aiModel);
+  } catch (error: any) {
+    const groqFallbackKey = localStorage.getItem('biosentinel_groq_key') || '';
+    if (groqFallbackKey) {
+      trace.fallbackUsed = true;
+      trace.fallbackProvider = 'groq';
+      const groqText = await generateWithGroq(systemInstruction, userMessage, 'llama-3.1-8b-instant', groqFallbackKey);
+      return finish(groqText || "I'm sorry, I couldn't process that request.", 'groq', 'llama-3.1-8b-instant');
+    }
+    throw error;
+  }
 };
 
 // ============================================================
@@ -1217,8 +1406,8 @@ export interface FloodAnalysisInput {
 
 export const analyzeFloodRisk = async (
   input: FloodAnalysisInput,
-  aiProvider: string = 'gemini',
-  aiModel: string = 'gemini-2.5-flash',
+  aiProvider: string,
+  aiModel: string,
   apiKey?: string
 ): Promise<string> => {
   const systemInstruction = `You are an expert hydrologist, flood risk analyst, and urban disaster management specialist with deep knowledge of GloFAS v4 global river discharge models, precipitation-driven catchment response, machine learning flood prediction systems, river catchment hydrology, urban drainage infrastructure, and WHO/UNDRR disaster risk frameworks. When ML model data is available, synthesise it with hydrological data for a combined multi-model consensus view. Always cite specific numerical values and be direct about uncertainty.
@@ -1255,12 +1444,12 @@ ABSOLUTE OUTPUT RULES (follow exactly):
 - ML Recommendation: ${input.mlPrediction.recommendation}
 - Contributing Factors:
 ${Object.entries(input.mlPrediction.contributing_factors)
-  .sort((a, b) => b[1] - a[1])
-  .map(([k, v]) => `  · ${k}: ${(v * 100).toFixed(1)}%`).join('\n')}
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `  · ${k}: ${(v * 100).toFixed(1)}%`).join('\n')}
 ${input.mlModelStats ? `- Model Quality: Accuracy ${((input.mlModelStats.accuracy ?? 0) * 100).toFixed(2)}%, F1 ${(input.mlModelStats.f1_score ?? 0).toFixed(4)}, ROC-AUC ${(input.mlModelStats.roc_auc ?? 0).toFixed(4)} (trained on ${input.mlModelStats.training_samples?.toLocaleString()} samples)
 - Top Predictive Features: ${input.mlModelStats.feature_importances ? Object.entries(input.mlModelStats.feature_importances).slice(0, 3).map(([k, v]) => `${k} (${(v * 100).toFixed(1)}%)`).join(', ') : 'N/A'}` : ''}` : '';
   const compactOrFull = input.detailLevel ?? 'compact';
-  
+
   const futureWeatherSummary = input.futureWeather ? `
   
 **FUTURE WEATHER (near-term precipitation forecast)**
@@ -1268,28 +1457,28 @@ ${input.mlModelStats ? `- Model Quality: Accuracy ${((input.mlModelStats.accurac
 - Next 7 days total precipitation: ${input.futureWeather.precipitation7dTotalMm != null ? `${input.futureWeather.precipitation7dTotalMm.toFixed(1)} mm` : 'N/A'}
 - Peak daily precipitation: ${input.futureWeather.precipitationMaxDayMm != null ? `${input.futureWeather.precipitationMaxDayMm.toFixed(1)} mm` : 'N/A'}${input.futureWeather.precipitationMaxDayDate ? ` on ${input.futureWeather.precipitationMaxDayDate}` : ''}
 ` : '';
-  
+
   const monthlyBlock = input.forecastDischargeMonthly && input.forecastDischargeMonthly.length ? `
   
 **MONTHLY DISCHARGE OUTLOOK (derived from daily ensemble median)**
 ${input.forecastDischargeMonthly
-  .slice(0, 8)
-  .map(m => `- ${m.month}: mean ${m.dischargeMedianMean != null ? m.dischargeMedianMean.toFixed(2) : 'N/A'} m³/s · max ${m.dischargeMedianMax != null ? m.dischargeMedianMax.toFixed(2) : 'N/A'} m³/s (${m.days} days)`)
-  .join('\n')}
+      .slice(0, 8)
+      .map(m => `- ${m.month}: mean ${m.dischargeMedianMean != null ? m.dischargeMedianMean.toFixed(2) : 'N/A'} m³/s · max ${m.dischargeMedianMax != null ? m.dischargeMedianMax.toFixed(2) : 'N/A'} m³/s (${m.days} days)`)
+      .join('\n')}
 ` : '';
 
   const futurePredictionBlock = input.futurePrediction?.windows?.length ? `
 
 **FUTURE FLOOD PREDICTION (computed from GloFAS daily forecast)**
 ${input.futurePrediction.windows.map(w => {
-  const ml = w.mostLikelyMean != null ? `${w.mostLikelyMean.toFixed(2)} m³/s` : 'N/A';
-  const best = w.bestCaseLow != null ? w.bestCaseLow.toFixed(2) : '—';
-  const worst = w.worstCaseHigh != null ? w.worstCaseHigh.toFixed(2) : '—';
-  const precip = w.precipTotalMm != null ? `${w.precipTotalMm.toFixed(1)} mm` : 'N/A';
-  return `- ${w.label}: most-likely ${ml} · best ${best} · worst ${worst} · precip ${precip} · days median>P75 ${w.daysMedianExceedsHistP75} · days forecastP75>P75 ${w.daysEnsembleP75ExceedsHistP75}`;
-}).join('\n')}
+    const ml = w.mostLikelyMean != null ? `${w.mostLikelyMean.toFixed(2)} m³/s` : 'N/A';
+    const best = w.bestCaseLow != null ? w.bestCaseLow.toFixed(2) : '—';
+    const worst = w.worstCaseHigh != null ? w.worstCaseHigh.toFixed(2) : '—';
+    const precip = w.precipTotalMm != null ? `${w.precipTotalMm.toFixed(1)} mm` : 'N/A';
+    return `- ${w.label}: most-likely ${ml} · best ${best} · worst ${worst} · precip ${precip} · days median>P75 ${w.daysMedianExceedsHistP75} · days forecastP75>P75 ${w.daysEnsembleP75ExceedsHistP75}`;
+  }).join('\n')}
 ` : '';
-  
+
   const dailyTable = (compactOrFull === 'full' && (input.forecastDischargeDaily?.length || input.futureWeather?.precipitationDailyMm?.length)) ? (() => {
     const dischargeByDate = new Map((input.forecastDischargeDaily ?? []).map(d => [d.date, d] as const));
     const precipByDate = new Map((input.futureWeather?.precipitationDailyMm ?? []).map(p => [p.date, p] as const));
@@ -1297,7 +1486,7 @@ ${input.futurePrediction.windows.map(w => {
       ...(input.forecastDischargeDaily ?? []).map(d => d.date),
       ...(input.futureWeather?.precipitationDailyMm ?? []).map(p => p.date),
     ])).sort();
-  
+
     const rows = dates.slice(0, 30).map(date => {
       const d = dischargeByDate.get(date);
       const p = precipByDate.get(date);
@@ -1306,10 +1495,10 @@ ${input.futurePrediction.windows.map(w => {
       const qMax = d?.dischargeMax;
       const pr = p?.precipitationSumMm;
       const pop = p?.popPct;
-  
+
       return `| ${date} | ${pr != null ? pr.toFixed(1) : '—'} | ${pop != null ? `${Math.round(pop)}%` : '—'} | ${qMed != null ? qMed.toFixed(2) : '—'} | ${qP75 != null ? qP75.toFixed(2) : '—'} | ${qMax != null ? qMax.toFixed(2) : '—'} |`;
     });
-  
+
     return `
   
 **FULL DAILY OUTLOOK (precipitation + discharge)**
@@ -1420,6 +1609,12 @@ List 5 specific numerical thresholds that should trigger escalated response (e.g
   if (aiProvider === 'siliconflow') {
     const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey || ''));
     return stripThinkingBlocks(text);
+  }
+  // ---- Ollama (Small Models) ----
+  if (aiProvider === 'ollama') {
+    const { runSmallModelPipeline } = await import('./smallModelService');
+    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze flood risk', '', 'flood_analysis', 1024, systemInstruction);
+    return stripThinkingBlocks(result) || 'Unable to generate flood analysis.';
   }
   // ---- Gemini (default) ----
   const key = apiKey || process.env.API_KEY;

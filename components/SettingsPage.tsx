@@ -3,9 +3,9 @@ import {
   Settings, MapPin, Key, CheckCircle2, Crosshair, Zap, ShieldCheck, Loader2,
   Server, Wifi, WifiOff, ChevronDown, Brain, Sun, Sunset, Moon, Palette, Wand2,
   RefreshCw, Globe, Cpu, Lock, Info, Bell, BellRing, Clock, CloudRain, Wind,
-  AlertTriangle, Bot, Activity, Biohazard, Mail, MailCheck, Send,
+  AlertTriangle, Bot, Activity, Biohazard, Mail, MailCheck, Send, Database,
 } from 'lucide-react';
-import { LoadingState, AiProvider, AI_MODELS, NotificationSettings, ForecastUpdatePeriod, DEFAULT_NOTIFICATION_SETTINGS, EmailAlertSettings } from '../types';
+import { LoadingState, AiProvider, AI_MODELS, NotificationSettings, ForecastUpdatePeriod, DEFAULT_NOTIFICATION_SETTINGS, EmailAlertSettings, DatabaseSettings, McpSettings } from '../types';
 import { geocodeLocation } from '../services/weatherService';
 import { checkBioSentinelHealth } from '../services/mlService';
 import { sendTestEmail } from '../services/forecastEmailService';
@@ -39,12 +39,16 @@ export interface SettingsPageProps {
   setGroqKey: (key: string) => void;
   pollinationsKey: string;
   setPollinationsKey: (key: string) => void;
+  huggingFaceKey: string;
+  setHuggingFaceKey: (key: string) => void;
   openrouterKey: string;
   setOpenrouterKey: (key: string) => void;
   siliconflowKey: string;
   setSiliconflowKey: (key: string) => void;
   cerebrasKey: string;
   setCerebrasKey: (key: string) => void;
+  ollamaEndpoint: string;
+  setOllamaEndpoint: (endpoint: string) => void;
   aiProvider: AiProvider;
   setAiProvider: (p: AiProvider) => void;
   aiModel: string;
@@ -53,8 +57,20 @@ export interface SettingsPageProps {
   setUseOpenWeather: (use: boolean) => void;
   openWeatherKey: string;
   setOpenWeatherKey: (key: string) => void;
+  bioSentinelApiUrl: string;
+  setBioSentinelApiUrl: (url: string) => void;
   mlApiKey: string;
   setMlApiKey: (key: string) => void;
+  surveillanceApiUrl: string;
+  setSurveillanceApiUrl: (url: string) => void;
+  surveillanceApiKey: string;
+  setSurveillanceApiKey: (key: string) => void;
+  databaseSettings: DatabaseSettings;
+  setDatabaseSettings: (patch: Partial<DatabaseSettings>) => void;
+  floodMlApiUrl: string;
+  setFloodMlApiUrl: (url: string) => void;
+  mcpSettings: McpSettings;
+  setMcpSettings: (patch: Partial<McpSettings>) => void;
   mapplsToken: string;
   setMapplsToken: (key: string) => void;
   mapProvider: 'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis';
@@ -79,21 +95,18 @@ const Card: React.FC<{
 }> = ({ icon, title, subtitle, badge, children, accent = 'teal', defaultOpen = false }) => {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className={`bg-white dark:bg-slate-900 border rounded-3xl shadow-sm overflow-hidden transition-all duration-200 ${
-      open ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 dark:border-slate-800'
-    }`}>
+    <div className={`bg-white dark:bg-slate-900 border rounded-3xl shadow-sm overflow-hidden transition-all duration-200 ${open ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 dark:border-slate-800'
+      }`}>
       {/* ── Clickable header ── */}
       <button
         onClick={() => setOpen(v => !v)}
-        className={`w-full flex items-center gap-3 px-5 py-4 text-left transition-colors group ${
-          open ? 'bg-slate-50 dark:bg-slate-800/60' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-        }`}
+        className={`w-full flex items-center gap-3 px-5 py-4 text-left transition-colors group ${open ? 'bg-slate-50 dark:bg-slate-800/60' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+          }`}
       >
-        <div className={`p-2.5 rounded-2xl flex-shrink-0 transition-colors ${
-          open
-            ? `bg-${accent}-100 dark:bg-${accent}-900/50 text-${accent}-600 dark:text-${accent}-400`
-            : `bg-${accent}-50 dark:bg-${accent}-950/40 text-${accent}-500 dark:text-${accent}-500`
-        }`}>
+        <div className={`p-2.5 rounded-2xl flex-shrink-0 transition-colors ${open
+          ? `bg-${accent}-100 dark:bg-${accent}-900/50 text-${accent}-600 dark:text-${accent}-400`
+          : `bg-${accent}-50 dark:bg-${accent}-950/40 text-${accent}-500 dark:text-${accent}-500`
+          }`}>
           {icon}
         </div>
         <div className="flex-1 min-w-0">
@@ -108,9 +121,8 @@ const Card: React.FC<{
         <ChevronDown className={`w-4 h-4 text-slate-400 flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
       {/* ── Collapsible body ── */}
-      <div className={`transition-all duration-200 ease-in-out overflow-hidden ${
-        open ? 'max-h-[9999px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'
-      }`}>
+      <div className={`transition-all duration-200 ease-in-out overflow-hidden ${open ? 'max-h-[9999px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'
+        }`}>
         <div className="px-5 pb-5 pt-4 space-y-5 border-t border-slate-100 dark:border-slate-800">
           {children}
         </div>
@@ -147,10 +159,18 @@ const KeyInput: React.FC<{
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   location, setLocation, onFetchWeather, loadingState, hasWeatherData, detectedCity,
   geminiKey, setGeminiKey, groqKey, setGroqKey, pollinationsKey, setPollinationsKey,
+  huggingFaceKey, setHuggingFaceKey,
   openrouterKey, setOpenrouterKey, siliconflowKey, setSiliconflowKey, cerebrasKey, setCerebrasKey,
+  ollamaEndpoint, setOllamaEndpoint,
   aiProvider, setAiProvider, aiModel, setAiModel,
   useOpenWeather, setUseOpenWeather, openWeatherKey, setOpenWeatherKey,
+  bioSentinelApiUrl, setBioSentinelApiUrl,
   mlApiKey, setMlApiKey, mapplsToken, setMapplsToken,
+  surveillanceApiUrl, setSurveillanceApiUrl,
+  surveillanceApiKey, setSurveillanceApiKey,
+  floodMlApiUrl, setFloodMlApiUrl,
+  databaseSettings, setDatabaseSettings,
+  mcpSettings, setMcpSettings,
   mapProvider, setMapProvider, mapTilerKey, setMapTilerKey,
   mapboxToken, setMapboxToken,
   arcGisKey, setArcGisKey,
@@ -171,6 +191,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     weatherCardMode, setWeatherCardMode, weatherThemeLocked, setWeatherThemeLocked,
     customColors, setCustomColors, useCustomColors, setUseCustomColors, autoWeatherTheme,
   } = useTheme();
+
+  const normalizedMlApiBaseUrl = bioSentinelApiUrl.trim().replace(/\/+$/, '');
+  const normalizedSurveillanceApiBaseUrl = surveillanceApiUrl.trim().replace(/\/+$/, '');
+  const mlOpenApiUrl = normalizedMlApiBaseUrl ? `${normalizedMlApiBaseUrl}/openapi.json` : '';
 
   /* ── API health check ──────────────────────────────────────────────────── */
   useEffect(() => {
@@ -276,11 +300,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           )}
           <button
             onClick={onFetchWeather} disabled={!location || isLoading}
-            className={`w-full py-3 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all ${
-              !location || isLoading
-                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                : 'bg-slate-900 dark:bg-teal-600 text-white hover:bg-teal-600 dark:hover:bg-teal-500 shadow-lg active:scale-95'
-            }`}>
+            className={`w-full py-3 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all ${!location || isLoading
+              ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+              : 'bg-slate-900 dark:bg-teal-600 text-white hover:bg-teal-600 dark:hover:bg-teal-500 shadow-lg active:scale-95'
+              }`}>
             {isLoading
               ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Connecting…</>
               : <><RefreshCw className="w-3.5 h-3.5" /> {hasWeatherData ? 'Refresh Weather' : 'Get Weather'}</>}
@@ -343,11 +366,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {/* Custom colours */}
           <button
             onClick={() => setShowCustomColors(v => !v)}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all border ${
-              useCustomColors
-                ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700 text-purple-700 dark:text-purple-300'
-                : 'bg-slate-100 dark:bg-slate-800 border-transparent text-slate-500 dark:text-slate-400 hover:border-slate-200 dark:hover:border-slate-700'
-            }`}>
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all border ${useCustomColors
+              ? 'bg-purple-50 dark:bg-purple-900/30 border-purple-200 dark:border-purple-700 text-purple-700 dark:text-purple-300'
+              : 'bg-slate-100 dark:bg-slate-800 border-transparent text-slate-500 dark:text-slate-400 hover:border-slate-200 dark:hover:border-slate-700'
+              }`}>
             <div className="flex items-center gap-1.5">
               <Palette className="w-3.5 h-3.5" /> Custom Colours
             </div>
@@ -416,61 +438,168 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           )}
         </Card>
 
-        {/* 3. Bio-Sentinel API ───────────────────────────────────────── */}
-        <Card
-          icon={<Server className="w-5 h-5" />}
-          title="Bio-Sentinel API"
-          subtitle="ML backend status"
-          badge={apiStatus === 'checking' ? 'Connecting…' : apiStatus}
-          accent={apiStatus === 'online' ? 'emerald' : apiStatus === 'offline' ? 'rose' : 'slate'}
-        >
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
-            <div className="flex items-center gap-3">
-              <div className={`p-2 rounded-xl ${
-                apiStatus === 'online' ? 'bg-emerald-500 text-white'
-                : apiStatus === 'offline' ? 'bg-rose-500 text-white'
-                : 'bg-slate-300 dark:bg-slate-600 text-slate-500'
-              }`}>
-                <Server className="w-3.5 h-3.5" />
-              </div>
-              <div>
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Status</p>
-                <p className={`text-xs font-black uppercase ${
-                  apiStatus === 'online' ? 'text-emerald-600 dark:text-emerald-400'
-                  : apiStatus === 'offline' ? 'text-rose-600 dark:text-rose-400'
-                  : 'text-slate-500'
-                }`}>
-                  {apiStatus === 'checking' ? 'Connecting…' : apiStatus}
+        {/* 3. System Integration ───────────────────────────────────────── */}
+        <Card icon={<Activity className="w-5 h-5" />} title="System Integration" subtitle="Backend engines & hub consensus"
+          badge={apiStatus === 'online' ? 'All Systems Go' : 'Offline Mode'}
+          accent="blue"
+          defaultOpen={true}>
+
+          <div className="space-y-4">
+            {/* 1. Disease Risk Hub */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                  <Brain className="w-3.5 h-3.5 text-blue-500" /> Disease Risk Hub
                 </p>
+                <div className="flex gap-1.5">
+                  <button onClick={() => setBioSentinelApiUrl('https://web-production-f898c8.up.railway.app')}
+                    className="text-[8px] font-black px-2 py-0.5 rounded-md bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 uppercase tracking-widest hover:bg-violet-200 transition-colors">Railway</button>
+                  <button onClick={() => setBioSentinelApiUrl('http://localhost:8000')}
+                    className="text-[8px] font-black px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 uppercase tracking-widest hover:bg-emerald-200 transition-colors">Local</button>
+                </div>
+              </div>
+              <div className="relative group">
+                <Server className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
+                <input
+                  type="url" value={bioSentinelApiUrl} onChange={e => setBioSentinelApiUrl(e.target.value)}
+                  placeholder="https://disease-api.railway.app"
+                  className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-blue-500 transition-all shadow-sm"
+                />
               </div>
             </div>
-            <div className="relative">
-              {apiStatus === 'online'    && <><Wifi      className="w-4 h-4 text-emerald-500" /><span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-400 rounded-full animate-ping" /></>}
-              {apiStatus === 'offline'   && <WifiOff    className="w-4 h-4 text-rose-500" />}
-              {apiStatus === 'checking'  && <Loader2    className="w-4 h-4 text-slate-400 animate-spin" />}
+
+            {/* 2. Surveillance Hub */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                  <Biohazard className="w-3.5 h-3.5 text-rose-500" /> Surveillance Hub
+                </p>
+                <div className="flex gap-1.5">
+                  <button onClick={() => setSurveillanceApiUrl('https://web-production-37f41.up.railway.app')}
+                    className="text-[8px] font-black px-2 py-0.5 rounded-md bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 uppercase tracking-widest hover:bg-violet-200 transition-colors">Railway</button>
+                  <button onClick={() => setSurveillanceApiUrl('http://localhost:8000')}
+                    className="text-[8px] font-black px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 uppercase tracking-widest hover:bg-emerald-200 transition-colors">Local</button>
+                </div>
+              </div>
+              <div className="relative group">
+                <Globe className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
+                <input
+                  type="url" value={surveillanceApiUrl} onChange={e => setSurveillanceApiUrl(e.target.value)}
+                  placeholder="https://surveillance-api.railway.app"
+                  className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-blue-500 transition-all shadow-sm"
+                />
+              </div>
+            </div>
+
+            {/* 3. Flood Engine */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5 text-sky-500" /> Flood Risk Engine
+                </p>
+                <div className="flex gap-1.5">
+                  <button onClick={() => setFloodMlApiUrl('https://web-production-24253.up.railway.app')}
+                    className="text-[8px] font-black px-2 py-0.5 rounded-md bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 uppercase tracking-widest hover:bg-violet-200 transition-colors">Railway</button>
+                  <button onClick={() => setFloodMlApiUrl('http://localhost:8000')}
+                    className="text-[8px] font-black px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 uppercase tracking-widest hover:bg-emerald-200 transition-colors">Local</button>
+                </div>
+              </div>
+              <div className="relative group">
+                <Zap className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
+                <input
+                  type="url" value={floodMlApiUrl} onChange={e => setFloodMlApiUrl(e.target.value)}
+                  placeholder="https://flood-api.railway.app"
+                  className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-blue-500 transition-all shadow-sm"
+                />
+              </div>
             </div>
           </div>
 
-          <KeyInput
-            label="ML API Key (optional)"
-            value={mlApiKey}
-            onChange={setMlApiKey}
-            placeholder="sk-bs-..."
-            note="Leave blank for public access. Required for private deployments."
-          />
+          <div className="pt-2">
+            <KeyInput
+              label="System-Wide API Key (optional)"
+              value={mlApiKey}
+              onChange={setMlApiKey}
+              placeholder="sk-bs-..."
+              note="Applies to Disease Prediction and Flood Hubs. Surveillance Key managed separately if required."
+            />
+          </div>
+        </Card>
+          </div>
         </Card>
 
-        {/* 4. Weather Data Source ────────────────────────────────────── */}
+        {/* 4. Database Configuration ─────────────────────────────────── */}
+        <Card icon={<Database className="w-5 h-5" />} title="Database Configuration" subtitle="Symptom surveillance storage"
+          badge={databaseSettings.preferredDb.toUpperCase()}
+          accent="cyan">
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Preferred Backend</span>
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
+                {(['none', 'supabase', 'firebase'] as const).map(db => (
+                  <button
+                    key={db}
+                    onClick={() => setDatabaseSettings({ preferredDb: db })}
+                    className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${databaseSettings.preferredDb === db
+                      ? 'bg-white dark:bg-slate-700 text-cyan-600 dark:text-cyan-300 shadow-sm'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                      }`}
+                  >
+                    {db}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[9px] font-bold text-slate-400">If the preferred provider fails, Bio-SentinelX automatically attempts the other configured provider.</p>
+            </div>
+
+            <div className="space-y-2.5 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Supabase</p>
+              <input
+                type="url"
+                value={databaseSettings.supabaseUrl}
+                onChange={e => setDatabaseSettings({ supabaseUrl: e.target.value })}
+                placeholder="https://your-project.supabase.co"
+                className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-xs font-bold text-slate-700 dark:text-slate-200 placeholder-slate-300 focus:border-cyan-500"
+              />
+              <input
+                type="password"
+                value={databaseSettings.supabaseAnonKey}
+                onChange={e => setDatabaseSettings({ supabaseAnonKey: e.target.value })}
+                placeholder="Supabase anon key"
+                className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-xs font-bold text-slate-700 dark:text-slate-200 placeholder-slate-300 focus:border-cyan-500"
+              />
+            </div>
+
+            <div className="space-y-2.5 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Firebase</p>
+              <textarea
+                value={databaseSettings.firebaseConfigJson}
+                onChange={e => setDatabaseSettings({ firebaseConfigJson: e.target.value })}
+                placeholder='Paste Firebase config JSON or RTDB URL (databaseURL)'
+                rows={3}
+                className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-xs font-bold text-slate-700 dark:text-slate-200 placeholder-slate-300 focus:border-cyan-500 resize-none"
+              />
+              <input
+                type="password"
+                value={databaseSettings.firebaseApiKey}
+                onChange={e => setDatabaseSettings({ firebaseApiKey: e.target.value })}
+                placeholder="Firebase Web API Key (optional)"
+                className="w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-xs font-bold text-slate-700 dark:text-slate-200 placeholder-slate-300 focus:border-cyan-500"
+              />
+            </div>
+          </div>
+        </Card>
+
+        {/* 5. Weather Data Source ────────────────────────────────────── */}
         <Card icon={<Globe className="w-5 h-5" />} title="Weather Source" subtitle="Data provider"
           badge={useOpenWeather ? 'OpenWeather' : 'Open-Meteo'}
           accent="sky">
           <div className="space-y-4">
             {/* Toggle */}
-            <div className={`p-4 rounded-2xl border transition-all ${
-              useOpenWeather
-                ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/50'
-                : 'bg-teal-50 dark:bg-teal-950/30 border-teal-100 dark:border-teal-800/50'
-            }`}>
+            <div className={`p-4 rounded-2xl border transition-all ${useOpenWeather
+              ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800/50'
+              : 'bg-teal-50 dark:bg-teal-950/30 border-teal-100 dark:border-teal-800/50'
+              }`}>
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <ShieldCheck className={`w-4 h-4 ${useOpenWeather ? 'text-sky-600 dark:text-sky-400' : 'text-teal-600 dark:text-teal-400'}`} />
@@ -512,11 +641,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <button
                       key={p}
                       onClick={() => setMapProvider(p)}
-                      className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                        mapProvider === p
-                          ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-300 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                      }`}
+                      className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mapProvider === p
+                        ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-300 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                        }`}
                     >
                       {p === 'arcgis' ? '🌏 ArcGIS' : p === 'osm' ? '🌍 Free' : p === 'mappls' ? 'Mappls' : p === 'maptiler' ? 'MapTiler' : 'Mapbox'}
                     </button>
@@ -591,19 +719,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </Card>
 
-        {/* 5. AI Neural Engine ───────────────────────────────────────── */}
+        {/* 6. AI Neural Engine ───────────────────────────────────────── */}
         <Card icon={<Brain className="w-5 h-5" />} title="AI Neural Engine" subtitle="Provider & model"
           badge={aiProvider.charAt(0).toUpperCase() + aiProvider.slice(1)}
           accent="violet">
           {/* Provider tabs */}
-          <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-            {(['gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras'] as AiProvider[]).map(p => (
+          <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
+            {(['huggingface', 'gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras', 'ollama'] as AiProvider[]).map(p => (
               <button key={p}
                 onClick={() => { setAiProvider(p); setAiModel(AI_MODELS[p][0].value); }}
-                className={`py-2 px-1 rounded-xl text-[8px] font-black uppercase tracking-wide transition-all ${
-                  aiProvider === p ? 'bg-white dark:bg-slate-700 text-violet-600 dark:text-violet-300 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
-                }`}>
-                {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'Router' : p === 'siliconflow' ? 'Silicon' : p === 'cerebras' ? 'Cerebras' : p.charAt(0).toUpperCase() + p.slice(1)}
+                className={`py-2 px-1 rounded-xl text-[8px] font-black uppercase tracking-wide transition-all ${aiProvider === p ? 'bg-white dark:bg-slate-700 text-violet-600 dark:text-violet-300 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                  }`}>
+                {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'Router' : p === 'siliconflow' ? 'Silicon' : p === 'cerebras' ? 'Cerebras' : p === 'ollama' ? 'Ollama' : p === 'huggingface' ? 'MedGemma' : p.charAt(0).toUpperCase() + p.slice(1)}
               </button>
             ))}
           </div>
@@ -623,11 +750,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <TokenPanelBoundary aiProvider={aiProvider} aiModel={aiModel} />
         </Card>
 
-        {/* 6. API Keys ────────────────────────────────────────────────── */}
+        {/* 7. API Keys ────────────────────────────────────────────────── */}
         <Card icon={<Lock className="w-5 h-5" />} title="API Keys" subtitle="Provider credentials"
-          badge={geminiKey || groqKey || pollinationsKey || openrouterKey || siliconflowKey || cerebrasKey ? 'Configured' : 'Not set'}
+          badge={huggingFaceKey || geminiKey || groqKey || pollinationsKey || openrouterKey || siliconflowKey || cerebrasKey ? 'Configured' : 'Not set'}
           accent="rose">
           <div className="space-y-4">
+            {aiProvider === 'huggingface' && (
+              <KeyInput label="Hugging Face Token" value={huggingFaceKey} onChange={setHuggingFaceKey}
+                placeholder="hf_..." getKeyUrl="https://huggingface.co/settings/tokens"
+                note="Used for MedGemma models. This powers the MedGemma -> Gemini -> Groq fallback chain." />
+            )}
             {aiProvider === 'pollinations' && (
               <KeyInput label="Pollinations Auth Key" value={pollinationsKey} onChange={setPollinationsKey}
                 placeholder="sk_…" getKeyUrl="https://enter.pollinations.ai"
@@ -657,6 +789,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 placeholder="csk-…" getKeyUrl="https://cloud.cerebras.ai"
                 note="Get a free API key at cloud.cerebras.ai. World's fastest inference — ~3000 tok/s with GPT OSS 120B." />
             )}
+            {aiProvider === 'ollama' && (
+              <KeyInput label="Ollama Endpoint" value={ollamaEndpoint} onChange={setOllamaEndpoint}
+                placeholder="http://localhost:11434" getKeyUrl="https://ollama.com"
+                note="Local inference — no API key needed. Install Ollama and pull models (e.g. ollama pull qwen2.5:1.5b) to get started." />
+            )}
 
             {/* Always show all keys section (collapsed/separated) */}
             <details className="group">
@@ -665,18 +802,76 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 All Provider Keys
               </summary>
               <div className="pt-3 space-y-3">
+                <KeyInput label="Hugging Face" value={huggingFaceKey} onChange={setHuggingFaceKey} placeholder="hf_..." getKeyUrl="https://huggingface.co/settings/tokens" />
                 <KeyInput label="Gemini" value={geminiKey} onChange={setGeminiKey} placeholder="AIza…" getKeyUrl="https://ai.google.dev/gemini-api/docs/api-key" />
                 <KeyInput label="Groq" value={groqKey} onChange={setGroqKey} placeholder="gsk_…" getKeyUrl="https://console.groq.com/keys" />
                 <KeyInput label="Pollinations" value={pollinationsKey} onChange={setPollinationsKey} placeholder="sk_…" getKeyUrl="https://enter.pollinations.ai" />
                 <KeyInput label="OpenRouter" value={openrouterKey} onChange={setOpenrouterKey} placeholder="sk-or-…" getKeyUrl="https://openrouter.ai/keys" />
                 <KeyInput label="SiliconFlow" value={siliconflowKey} onChange={setSiliconflowKey} placeholder="sk-…" getKeyUrl="https://cloud.siliconflow.com/account/ak" />
                 <KeyInput label="Cerebras" value={cerebrasKey} onChange={setCerebrasKey} placeholder="csk-…" getKeyUrl="https://cloud.cerebras.ai" />
+                <KeyInput label="Ollama Endpoint" value={ollamaEndpoint} onChange={setOllamaEndpoint} placeholder="http://localhost:11434" getKeyUrl="https://ollama.com" />
               </div>
             </details>
           </div>
         </Card>
 
-        {/* 7. Notifications & Alerts ─────────────────────────────────&#x2F;*/}
+        {/* 9. Notifications & Alerts ─────────────────────────────────&#x2F;*/}
+        <Card icon={<Cpu className="w-5 h-5" />} title="MCP Orchestration" subtitle="Tool guardrails and budgets"
+          badge={mcpSettings.enabled ? 'Enabled' : 'Disabled'}
+          accent="indigo">
+          <div className="space-y-4">
+            <label className="flex items-center justify-between p-3 rounded-2xl border bg-indigo-50 dark:bg-indigo-950/30 border-indigo-100 dark:border-indigo-800/50">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Enable MCP Runtime</p>
+                <p className="text-[8px] font-bold text-slate-400">When enabled, Deep Analysis can invoke MCP tools with guardrails.</p>
+              </div>
+              <input
+                type="checkbox"
+                checked={mcpSettings.enabled}
+                onChange={(e) => setMcpSettings({ enabled: e.target.checked })}
+                className="h-4 w-4"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Default Timeout (ms)</p>
+                <input
+                  type="number"
+                  min={1000}
+                  step={500}
+                  value={mcpSettings.defaultTimeoutMs}
+                  onChange={(e) => setMcpSettings({ defaultTimeoutMs: Math.max(1000, Number(e.target.value) || 1000) })}
+                  className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl outline-none text-xs font-bold"
+                />
+              </div>
+              <div>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Default Retries</p>
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={mcpSettings.defaultRetryCount}
+                  onChange={(e) => setMcpSettings({ defaultRetryCount: Math.max(0, Math.min(5, Number(e.target.value) || 0)) })}
+                  className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl outline-none text-xs font-bold"
+                />
+              </div>
+            </div>
+
+            <div>
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Tool Allowlist (comma-separated)</p>
+              <input
+                type="text"
+                value={mcpSettings.allowlistedTools.join(', ')}
+                onChange={(e) => setMcpSettings({ allowlistedTools: e.target.value.split(',').map(v => v.trim()).filter(Boolean) })}
+                placeholder="outbreak_sweep, kg_expand, protocol_draft"
+                className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl outline-none text-xs font-bold"
+              />
+            </div>
+          </div>
+        </Card>
+
+        {/* 8. Notifications & Alerts ─────────────────────────────────&#x2F;*/}
         <Card icon={<BellRing className="w-5 h-5" />} title="Notifications" subtitle="Alerts & forecast schedule"
           badge={`${Object.values(notificationSettings.alerts).filter(Boolean).length}/7 on`}
           accent="amber">
@@ -692,18 +887,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 {([
                   { label: '15 min', value: 15 },
                   { label: '30 min', value: 30 },
-                  { label: '1 hr',   value: 60 },
-                  { label: '3 hr',   value: 180 },
-                  { label: '6 hr',   value: 360 },
-                  { label: '12 hr',  value: 720 },
+                  { label: '1 hr', value: 60 },
+                  { label: '3 hr', value: 180 },
+                  { label: '6 hr', value: 360 },
+                  { label: '12 hr', value: 720 },
                 ] as { label: string; value: ForecastUpdatePeriod }[]).map(opt => (
                   <button key={opt.value}
                     onClick={() => setNotificationSettings({ ...notificationSettings, forecastUpdatePeriodMinutes: opt.value })}
-                    className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-                      notificationSettings.forecastUpdatePeriodMinutes === opt.value
-                        ? 'bg-amber-500 text-white shadow-lg shadow-amber-300/30'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-900/30 hover:text-amber-600'
-                    }`}>
+                    className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${notificationSettings.forecastUpdatePeriodMinutes === opt.value
+                      ? 'bg-amber-500 text-white shadow-lg shadow-amber-300/30'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-900/30 hover:text-amber-600'
+                      }`}>
                     {opt.label}
                   </button>
                 ))}
@@ -719,20 +913,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="flex gap-1.5">
                 <button
                   onClick={() => setNotificationSettings({ ...notificationSettings, alertMode: 'ai' })}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-                    notificationSettings.alertMode === 'ai'
-                      ? 'bg-violet-500 text-white shadow-lg shadow-violet-300/30'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-violet-50 dark:hover:bg-violet-900/30'
-                  }`}>
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${notificationSettings.alertMode === 'ai'
+                    ? 'bg-violet-500 text-white shadow-lg shadow-violet-300/30'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-violet-50 dark:hover:bg-violet-900/30'
+                    }`}>
                   <Bot className="w-3 h-3" />AI-Powered
                 </button>
                 <button
                   onClick={() => setNotificationSettings({ ...notificationSettings, alertMode: 'normal' })}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-                    notificationSettings.alertMode === 'normal'
-                      ? 'bg-slate-800 text-white shadow-lg'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}>
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${notificationSettings.alertMode === 'normal'
+                    ? 'bg-slate-800 text-white shadow-lg'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}>
                   <Bell className="w-3 h-3" />Standard
                 </button>
               </div>
@@ -799,21 +991,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               ]).map(item => {
                 const isOn = notificationSettings.alerts[item.key];
                 return (
-                  <label key={item.key} className={`flex items-center justify-between p-3 rounded-2xl border cursor-pointer transition-all ${
-                    isOn
-                      ? `bg-${item.color}-50 dark:bg-${item.color}-950/30 border-${item.color}-100 dark:border-${item.color}-800/50`
-                      : 'bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700'
-                  }`}>
+                  <label key={item.key} className={`flex items-center justify-between p-3 rounded-2xl border cursor-pointer transition-all ${isOn
+                    ? `bg-${item.color}-50 dark:bg-${item.color}-950/30 border-${item.color}-100 dark:border-${item.color}-800/50`
+                    : 'bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700'
+                    }`}>
                     <div className="flex items-center gap-2.5">
-                      <div className={`p-1.5 rounded-xl transition-colors ${
-                        isOn ? `bg-${item.color}-100 dark:bg-${item.color}-900/50 text-${item.color}-600 dark:text-${item.color}-400` : 'bg-slate-200 dark:bg-slate-700 text-slate-400'
-                      }`}>
+                      <div className={`p-1.5 rounded-xl transition-colors ${isOn ? `bg-${item.color}-100 dark:bg-${item.color}-900/50 text-${item.color}-600 dark:text-${item.color}-400` : 'bg-slate-200 dark:bg-slate-700 text-slate-400'
+                        }`}>
                         {item.icon}
                       </div>
                       <div>
-                        <p className={`text-[10px] font-black uppercase tracking-wide ${
-                          isOn ? `text-${item.color}-800 dark:text-${item.color}-200` : 'text-slate-500 dark:text-slate-400'
-                        }`}>{item.label}</p>
+                        <p className={`text-[10px] font-black uppercase tracking-wide ${isOn ? `text-${item.color}-800 dark:text-${item.color}-200` : 'text-slate-500 dark:text-slate-400'
+                          }`}>{item.label}</p>
                         <p className="text-[8px] font-bold text-slate-400">{item.desc}</p>
                       </div>
                     </div>
@@ -824,11 +1013,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                           ...notificationSettings,
                           alerts: { ...notificationSettings.alerts, [item.key]: e.target.checked },
                         })} />
-                      <div className={`w-9 h-5 rounded-full transition-colors ${
-                        isOn ? `bg-${item.color}-500` : 'bg-slate-300 dark:bg-slate-600'
-                      } relative after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all ${
-                        isOn ? 'after:translate-x-4' : 'after:translate-x-0'
-                      }`} />
+                      <div className={`w-9 h-5 rounded-full transition-colors ${isOn ? `bg-${item.color}-500` : 'bg-slate-300 dark:bg-slate-600'
+                        } relative after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all ${isOn ? 'after:translate-x-4' : 'after:translate-x-0'
+                        }`} />
                     </div>
                   </label>
                 );
@@ -844,7 +1031,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </Card>
 
-        {/* 8. Email Early-Warning ─────────────────────────────────── */}
+        {/* 9. Email Early-Warning ─────────────────────────────────── */}
         <Card icon={<Mail className="w-5 h-5" />} title="Email Early-Warning" subtitle="Proactive severe weather alerts"
           badge={emailAlertSettings.enabled ? 'Active' : 'Off'}
           accent="rose">
@@ -893,9 +1080,83 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </p>
             </div>
 
-            {/* smtp.dev API Key */}
+            {/* EmailJS Configuration (Primary - works with any email) */}
+            <div className="space-y-3 p-3 bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-800 rounded-2xl">
+              <div className="flex items-center gap-2">
+                <Mail className="w-3.5 h-3.5 text-cyan-500" />
+                <span className="text-[9px] font-black text-cyan-700 dark:text-cyan-300 uppercase tracking-widest">Resend</span>
+              </div>
+              <input
+                type="password"
+                value={emailAlertSettings.resendApiKey}
+                onChange={e => setEmailAlertSettings({ resendApiKey: e.target.value })}
+                placeholder="Resend API key (re_...)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-cyan-100 dark:border-cyan-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-cyan-500 transition-all"
+              />
+              <input
+                type="email"
+                value={emailAlertSettings.resendFromEmail}
+                onChange={e => setEmailAlertSettings({ resendFromEmail: e.target.value })}
+                placeholder="Resend verified sender email"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-cyan-100 dark:border-cyan-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-cyan-500 transition-all"
+              />
+            </div>
+
+            <div className="space-y-3 p-3 bg-sky-50 dark:bg-sky-950/20 border border-sky-100 dark:border-sky-800 rounded-2xl">
+              <div className="flex items-center gap-2">
+                <Mail className="w-3.5 h-3.5 text-sky-500" />
+                <span className="text-[9px] font-black text-sky-700 dark:text-sky-300 uppercase tracking-widest">SendGrid</span>
+              </div>
+              <input
+                type="password"
+                value={emailAlertSettings.sendGridApiKey}
+                onChange={e => setEmailAlertSettings({ sendGridApiKey: e.target.value })}
+                placeholder="SendGrid API key (SG....)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-sky-100 dark:border-sky-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-sky-500 transition-all"
+              />
+              <input
+                type="email"
+                value={emailAlertSettings.sendGridFromEmail}
+                onChange={e => setEmailAlertSettings({ sendGridFromEmail: e.target.value })}
+                placeholder="SendGrid verified sender email"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-sky-100 dark:border-sky-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-sky-500 transition-all"
+              />
+            </div>
+
+            <div className="space-y-3 p-3 bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-800 rounded-2xl">
+              <div className="flex items-center gap-2">
+                <Mail className="w-3.5 h-3.5 text-indigo-500" />
+                <span className="text-[9px] font-black text-indigo-700 dark:text-indigo-300 uppercase tracking-widest">EmailJS (Recommended)</span>
+                <a href="https://www.emailjs.com/" target="_blank" rel="noopener noreferrer"
+                  className="ml-auto text-[8px] font-black text-indigo-500 hover:underline">Setup Guide</a>
+              </div>
+              <p className="text-[8px] font-bold text-slate-400">Free plan: 200 emails/month. Works with any email address (Gmail, Outlook, etc).</p>
+              <input
+                type="text"
+                value={emailAlertSettings.emailJsPublicKey}
+                onChange={e => setEmailAlertSettings({ emailJsPublicKey: e.target.value })}
+                placeholder="Public Key (e.g. user_xxxxxxx)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-indigo-500 transition-all"
+              />
+              <input
+                type="text"
+                value={emailAlertSettings.emailJsServiceId}
+                onChange={e => setEmailAlertSettings({ emailJsServiceId: e.target.value })}
+                placeholder="Service ID (e.g. service_xxxxxxx)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-indigo-500 transition-all"
+              />
+              <input
+                type="text"
+                value={emailAlertSettings.emailJsTemplateId}
+                onChange={e => setEmailAlertSettings({ emailJsTemplateId: e.target.value })}
+                placeholder="Template ID (e.g. template_xxxxxxx)"
+                className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-700 rounded-xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:border-indigo-500 transition-all"
+              />
+            </div>
+
+            {/* smtp.dev API Key (Fallback) */}
             <div className="space-y-1.5">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">smtp.dev API Key</span>
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">smtp.dev API Key (Fallback)</span>
               <div className="relative group">
                 <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 group-focus-within:text-rose-500 transition-colors" />
                 <input
@@ -919,11 +1180,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 {[3, 6, 12, 24, 48, 72].map(h => (
                   <button key={h}
                     onClick={() => setEmailAlertSettings({ leadTimeHours: h })}
-                    className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${
-                      emailAlertSettings.leadTimeHours === h
-                        ? 'bg-rose-500 text-white shadow-lg shadow-rose-300/30'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:text-rose-600'
-                    }`}>
+                    className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wide transition-all ${emailAlertSettings.leadTimeHours === h
+                      ? 'bg-rose-500 text-white shadow-lg shadow-rose-300/30'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:text-rose-600'
+                      }`}>
                     {h}h
                   </button>
                 ))}
@@ -934,10 +1194,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Min Risk Score to Email</p>
-                <span className={`text-[9px] font-black ${
-                  emailAlertSettings.minSeverityScore >= 75 ? 'text-rose-600' :
+                <span className={`text-[9px] font-black ${emailAlertSettings.minSeverityScore >= 75 ? 'text-rose-600' :
                   emailAlertSettings.minSeverityScore >= 55 ? 'text-amber-600' : 'text-teal-600'
-                }`}>{emailAlertSettings.minSeverityScore}/100</span>
+                  }`}>{emailAlertSettings.minSeverityScore}/100</span>
               </div>
               <input
                 type="range" min={30} max={90} step={5}
@@ -987,32 +1246,31 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 setEmailTestMsg(result.message);
                 setTimeout(() => setEmailTestStatus('idle'), 6000);
               }}
-              className={`w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                !emailAlertSettings.recipientEmail
-                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                  : emailTestStatus === 'loading'
+              className={`w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${!emailAlertSettings.recipientEmail
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                : emailTestStatus === 'loading'
                   ? 'bg-rose-400 text-white cursor-wait'
                   : emailTestStatus === 'ok'
-                  ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-300/30'
-                  : emailTestStatus === 'err'
-                  ? 'bg-red-500 text-white'
-                  : 'bg-rose-500 text-white hover:bg-rose-600 shadow-lg shadow-rose-200/40 active:scale-95'
-              }`}>
+                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-300/30'
+                    : emailTestStatus === 'err'
+                      ? 'bg-red-500 text-white'
+                      : 'bg-rose-500 text-white hover:bg-rose-600 shadow-lg shadow-rose-200/40 active:scale-95'
+                }`}>
               {emailTestStatus === 'loading' ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending…</>
-               : emailTestStatus === 'ok'     ? <><MailCheck className="w-3.5 h-3.5" /> Sent!</>
-               : emailTestStatus === 'err'    ? <><AlertTriangle className="w-3.5 h-3.5" /> Failed</>
-               : <><Send className="w-3.5 h-3.5" /> Send Test Email</>}
+                : emailTestStatus === 'ok' ? <><MailCheck className="w-3.5 h-3.5" /> Sent!</>
+                  : emailTestStatus === 'err' ? <><AlertTriangle className="w-3.5 h-3.5" /> Failed</>
+                    : <><Send className="w-3.5 h-3.5" /> Send Test Email</>}
             </button>
             {emailTestMsg && (
-              <p className={`text-[9px] font-bold text-center ${
-                emailTestStatus === 'ok' ? 'text-emerald-600' : 'text-red-500'
-              }`}>{emailTestMsg}</p>
+              <p className={`text-[9px] font-bold text-center ${emailTestStatus === 'ok' ? 'text-emerald-600' : 'text-red-500'
+                }`}>{emailTestMsg}</p>
             )}
 
             <p className="text-[9px] font-bold text-slate-400 leading-relaxed text-center">
-              ⚠ Requires recipient to be an smtp.dev address. See
-              {' '}<a href="https://app.smtp.dev" target="_blank" rel="noopener noreferrer"
-                className="text-rose-500 hover:underline">app.smtp.dev</a> to create a free test inbox.
+              Provider order: Resend → SendGrid → EmailJS → smtp.dev fallback.
+              Configure at least one provider with a valid sender identity. See
+              {' '}<a href="https://www.emailjs.com/docs/" target="_blank" rel="noopener noreferrer"
+                className="text-rose-500 hover:underline">EmailJS docs</a> for setup instructions.
             </p>
 
           </div>

@@ -10,16 +10,39 @@ import { WeatherData, HealthRecord, LifestyleData } from '../types';
 // ===========================
 
 const CONFIG = {
-  // Bio-Sentinel API endpoint (production Railway deployment)
-  bioSentinelAPI: (import.meta.env.VITE_BIOSENTINEL_API as string) || 'https://bio-sentinel-production.up.railway.app',
-  
   // API timeouts
   timeout: 10000, // 10 seconds
 };
 
+const DEFAULT_BIOSENTINEL_API =
+  (import.meta.env.VITE_BIOSENTINEL_API as string) || 'https://web-production-f898c8.up.railway.app';
+
 // Runtime API key — set via setBioSentinelApiKey() from the UI
 let _runtimeApiKey: string = '';
 export function setBioSentinelApiKey(key: string) { _runtimeApiKey = key; }
+
+// Runtime API base URL — set via settings UI when users need to switch deployments.
+let _runtimeApiBaseUrl: string = '';
+function normalizeApiBaseUrl(url: string): string {
+  return (url || '').trim().replace(/\/+$/, '');
+}
+export function setBioSentinelApiBaseUrl(url: string) {
+  _runtimeApiBaseUrl = normalizeApiBaseUrl(url);
+}
+export function getBioSentinelApiBaseUrl(): string {
+  return normalizeApiBaseUrl(_runtimeApiBaseUrl || DEFAULT_BIOSENTINEL_API);
+}
+export function setBioSentinelApiUrl(url: string) {
+  setBioSentinelApiBaseUrl(url);
+}
+export function getBioSentinelApiUrl(): string {
+  return getBioSentinelApiBaseUrl();
+}
+function buildApiUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${getBioSentinelApiBaseUrl()}${normalizedPath}`;
+}
+
 function getApiKeyHeader(): Record<string, string> {
   const key = _runtimeApiKey || (import.meta.env.VITE_BIOSENTINEL_API_KEY as string);
   return key ? { 'X-API-Key': key } : {};
@@ -34,7 +57,7 @@ export interface MLPrediction {
   primaryTrigger: string;
   recommendation: string;
   confidence: number;
-  
+
   // Extended with Bio-Sentinel data
   disease?: string;
   diseaseCode?: number;
@@ -45,6 +68,25 @@ export interface MLPrediction {
     value: number;
     impact: string;
     importance: number;
+  }>;
+  confidenceBreakdown?: {
+    topClass: string;
+    topClassProbabilityPct: number;
+    secondClass: string;
+    secondClassProbabilityPct: number;
+    marginPct: number;
+  };
+  topPredictorSnapshot?: Array<{
+    feature: string;
+    value: unknown;
+    importance: number;
+  }>;
+  factorContributions?: Array<{
+    feature: string;
+    value: unknown;
+    importance: number;
+    signedContribution: number;
+    direction: 'increases' | 'decreases';
   }>;
   timestamp?: string;
   aiRecommendations?: string;
@@ -98,17 +140,17 @@ function mapToBioSentinelFormat(
   healthData: HealthRecord[],
   lifestyle: LifestyleData
 ): BioSentinelRequest {
-  
+
   // Map raw US AQI (0-500) to the 1-6 EPA category required by the ML API.
   // weather.aqi is the 1-5 display value; weather.rawAqi is the original 0-500 value.
   const usAqi = weather.rawAqi ?? 0;
   let aqiCategory: number;
-  if (usAqi > 300)      aqiCategory = 6; // Hazardous
+  if (usAqi > 300) aqiCategory = 6; // Hazardous
   else if (usAqi > 200) aqiCategory = 5; // Very Unhealthy
   else if (usAqi > 150) aqiCategory = 4; // Unhealthy
   else if (usAqi > 100) aqiCategory = 3; // Unhealthy for Sensitive Groups
-  else if (usAqi > 50)  aqiCategory = 2; // Moderate
-  else                  aqiCategory = 1; // Good
+  else if (usAqi > 50) aqiCategory = 2; // Moderate
+  else aqiCategory = 1; // Good
 
   return {
     temp: weather.temp,
@@ -145,47 +187,47 @@ function calculateRiskScores(
   let cardio = 0;
   let neuro = 0;
   let viral = 0;
-  
+
   // Analyze health records
   healthData.forEach(record => {
     // Respiratory conditions
-    if (record.condition?.toLowerCase().includes('asthma') || 
-        record.condition?.toLowerCase().includes('copd')) {
+    if (record.condition?.toLowerCase().includes('asthma') ||
+      record.condition?.toLowerCase().includes('copd')) {
       respiratory = Math.max(respiratory, 2);
     }
-    
+
     // Cardiovascular conditions
-    if (record.condition?.toLowerCase().includes('heart') || 
-        record.condition?.toLowerCase().includes('hypertension')) {
+    if (record.condition?.toLowerCase().includes('heart') ||
+      record.condition?.toLowerCase().includes('hypertension')) {
       cardio = Math.max(cardio, 2);
     }
-    
+
     // Check vital signs if available
     if (record.heartRate && record.heartRate > 100) {
       cardio = Math.max(cardio, 1);
     }
-    
+
     if (record.temperature && record.temperature > 37.5) {
       viral = Math.max(viral, 1);
     }
   });
-  
+
   // Lifestyle factors
   if (lifestyle.lifestyle?.toLowerCase().includes('sedentary')) {
     cardio = Math.min(cardio + 1, 3);
     heatStress = Math.min(heatStress + 1, 3);
   }
-  
-  if (lifestyle.exercise?.toLowerCase().includes('none') || 
-      lifestyle.exercise?.toLowerCase().includes('minimal')) {
+
+  if (lifestyle.exercise?.toLowerCase().includes('none') ||
+    lifestyle.exercise?.toLowerCase().includes('minimal')) {
     cardio = Math.min(cardio + 1, 3);
   }
-  
+
   if (lifestyle.smoking || lifestyle.alcoholConsumption === 'heavy') {
     respiratory = Math.min(respiratory + 1, 3);
     cardio = Math.min(cardio + 1, 3);
   }
-  
+
   return {
     respiratory_risk_score: respiratory,
     heat_stress_score: heatStress,
@@ -206,11 +248,11 @@ export async function checkBioSentinelHealth(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
-    
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/health`, {
+
+    const response = await fetch(buildApiUrl('/health'), {
       signal: controller.signal
     });
-    
+
     clearTimeout(timeoutId);
     return response.ok;
   } catch (error) {
@@ -227,9 +269,9 @@ async function getBioSentinelPrediction(
 ): Promise<BioSentinelResponse> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
-  
+
   try {
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/predict`, {
+    const response = await fetch(buildApiUrl('/predict'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -238,13 +280,13 @@ async function getBioSentinelPrediction(
       body: JSON.stringify(data),
       signal: controller.signal
     });
-    
+
     clearTimeout(timeoutId);
-    
+
     if (!response.ok) {
       throw new Error(`Bio-Sentinel API error: ${response.statusText}`);
     }
-    
+
     return await response.json();
   } catch (error) {
     clearTimeout(timeoutId);
@@ -264,8 +306,8 @@ function generateBasicRecommendation(prediction: MLPrediction): string {
   const riskBadge = risk === 'HIGH' || risk === 'CRITICAL'
     ? '- **[HIGH RISK] Escalation Advisory:** Symptoms developing under current conditions warrant prompt medical evaluation. Do not delay consultation if multiple symptoms co-occur.'
     : risk === 'MODERATE'
-    ? '- **[MODERATE RISK] Watchful Protocol:** Monitor symptom trajectory closely. Escalate immediately if two or more warning triggers activate.'
-    : '- **[LOW RISK] Preventive Mode:** Conditions are manageable. Maintain vigilance and apply baseline precautions.';
+      ? '- **[MODERATE RISK] Watchful Protocol:** Monitor symptom trajectory closely. Escalate immediately if two or more warning triggers activate.'
+      : '- **[LOW RISK] Preventive Mode:** Conditions are manageable. Maintain vigilance and apply baseline precautions.';
 
   // Disease-specific recommendation blocks
   const coreAdvice: Record<string, { summary: string; immediate: string[]; adapt: string[]; monitor: string[]; escalate: string[] }> = {
@@ -430,8 +472,8 @@ function generateBasicRecommendation(prediction: MLPrediction): string {
   // Build the top contributing factors block
   const factorBlock = prediction.topFactors && prediction.topFactors.length > 0
     ? prediction.topFactors.slice(0, 3).map(f =>
-        `- **${f.feature.replace(/_/g, ' ')} (${f.value.toFixed(1)}):** ${f.impact === 'increases' ? 'Elevates' : 'Reduces'} risk — SHAP weight ${(f.importance * 100).toFixed(0)}%.`
-      ).join('\n')
+      `- **${f.feature.replace(/_/g, ' ')} (${f.value.toFixed(1)}):** ${f.impact === 'increases' ? 'Elevates' : 'Reduces'} risk — SHAP weight ${(f.importance * 100).toFixed(0)}%.`
+    ).join('\n')
     : '- Environmental telemetry composite driving risk assessment.';
 
   return `
@@ -493,53 +535,53 @@ export const predictBioRisks = async (
   healthData: HealthRecord[],
   lifestyle: LifestyleData
 ): Promise<MLPrediction> => {
-  
+
   console.log('🔬 Running Bio-Sentinel ML Inference...');
-  
+
   try {
     // Step 1: Check if API is available
     const isAvailable = await checkBioSentinelHealth();
-    
+
     if (!isAvailable) {
       console.warn('Bio-Sentinel API unavailable, using fallback');
       return getFallbackPrediction(weather, healthData, lifestyle);
     }
-    
+
     // Step 2: Map data to Bio-Sentinel format
     const requestData = mapToBioSentinelFormat(weather, healthData, lifestyle);
-    
+
     // Step 3: Get ML prediction
     const prediction = await getBioSentinelPrediction(requestData);
-    
+
     // Parse confidence from string "95.5%" to number 0.955
     const confidenceVal = parseFloat(prediction.confidence.replace('%', '')) / 100;
-    
+
     // Generate synthetic factors if API doesn't return them (for visualization)
     const topFactors = prediction.top_factors || generateSyntheticFactors(requestData);
-    
+
     // Calculate Risk Scores
     const riskScores = calculateRiskScores(healthData, lifestyle);
-    
+
     // Determine risk level based on confidence and disease severity (heuristic)
     let riskLevel: 'HIGH' | 'MODERATE' | 'LOW' | 'UNCERTAIN' = 'LOW';
-    
+
     // Severity Mapping
     const highSeverityDiseases = ['Heat Stroke', 'Severe Asthma Attack', 'Heart Attack', 'Severe Dehydration'];
     const moderateSeverityDiseases = ['Heat Exhaustion', 'Mild Asthma', 'Allergic Rhinitis', 'Migraine', 'Respiratory Illness'];
-    
+
     let severityScore = 0;
     if (highSeverityDiseases.some(d => prediction.prediction.includes(d))) severityScore = 2;
     else if (moderateSeverityDiseases.some(d => prediction.prediction.includes(d))) severityScore = 1;
-    
+
     // Combine confidence, severity, and calculated risk scores
     const maxCalculatedRisk = Math.max(...Object.values(riskScores));
-    
+
     if (confidenceVal > 0.8 || severityScore === 2 || maxCalculatedRisk >= 3) {
-        riskLevel = 'HIGH';
+      riskLevel = 'HIGH';
     } else if (confidenceVal > 0.5 || severityScore === 1 || maxCalculatedRisk >= 2) {
-        riskLevel = 'MODERATE';
+      riskLevel = 'MODERATE';
     }
-    
+
     // Construct internal prediction object
     const mlPrediction: MLPrediction = {
       riskScore: confidenceVal,
@@ -558,15 +600,15 @@ export const predictBioRisks = async (
     // not the raw BioSentinelResponse whose confidence is a "91.7%" string and
     // whose factors are in snake_case top_factors — both caused NaN% and 0 features)
     const aiRecommendations = generateBasicRecommendation(mlPrediction);
-    
+
     mlPrediction.recommendation = aiRecommendations;
     mlPrediction.aiRecommendations = aiRecommendations;
-    
+
     return mlPrediction;
-    
+
   } catch (error) {
     console.error('Bio-Sentinel ML Error:', error);
-    
+
     // Fallback to heuristic prediction
     return getFallbackPrediction(weather, healthData, lifestyle);
   }
@@ -577,14 +619,14 @@ export const predictBioRisks = async (
  */
 function generateSyntheticFactors(data: BioSentinelRequest): Array<{ feature: string; value: number; impact: string; importance: number }> {
   const factors = [];
-  
+
   if (data.temp > 30) factors.push({ feature: 'Temperature', value: data.temp, impact: 'increases', importance: (data.temp - 30) / 10 });
   if (data.humidity > 70) factors.push({ feature: 'Humidity', value: data.humidity, impact: 'increases', importance: (data.humidity - 70) / 50 });
   if (data.uv_index > 6) factors.push({ feature: 'UV Index', value: data.uv_index, impact: 'increases', importance: data.uv_index / 12 });
   if (data['air_quality_PM2.5'] > 25) factors.push({ feature: 'PM2.5', value: data['air_quality_PM2.5'], impact: 'increases', importance: data['air_quality_PM2.5'] / 100 });
   if (data.aqi > 2) factors.push({ feature: 'AQI', value: data.aqi, impact: 'increases', importance: data.aqi / 6 });
   if (data.pressure < 1000) factors.push({ feature: 'Low Pressure', value: data.pressure, impact: 'increases', importance: (1000 - data.pressure) / 50 });
-  
+
   // Add some protective factors (dummy logic)
   if (data.temp > 20 && data.temp < 25) factors.push({ feature: 'Temperature', value: data.temp, impact: 'decreases', importance: 0.3 });
   if (data.aqi === 1) factors.push({ feature: 'Good Air Quality', value: data.aqi, impact: 'decreases', importance: 0.4 });
@@ -606,41 +648,41 @@ function getFallbackPrediction(
   lifestyle: LifestyleData
 ): MLPrediction {
   console.log('⚠️ Using fallback heuristic prediction');
-  
+
   let riskScore = 0.2;
   let primaryTrigger = 'Baseline';
   let recommendation = 'Monitor your health and environmental conditions.';
-  
+
   // Weather-based risks
   if (weather.humidity > 80 && weather.temp > 30) {
     riskScore += 0.4;
     primaryTrigger = 'High Heat & Humidity';
     recommendation = 'Stay hydrated and avoid direct sunlight.';
   }
-  
+
   if (weather.advancedData?.pm2_5 && weather.advancedData.pm2_5 > 35) {
     riskScore += 0.3;
     primaryTrigger = 'Poor Air Quality';
     recommendation = 'Stay indoors and use air filtration if possible.';
   }
-  
+
   // Lifestyle factors
   if (lifestyle.lifestyle?.toLowerCase().includes('sedentary')) {
     riskScore += 0.2;
   }
-  
+
   // Health history
-  const hasRespiratoryIssues = healthData.some(record => 
+  const hasRespiratoryIssues = healthData.some(record =>
     record.condition?.toLowerCase().includes('asthma') ||
     record.condition?.toLowerCase().includes('copd')
   );
-  
+
   if (hasRespiratoryIssues && weather.advancedData?.pm2_5 && weather.advancedData.pm2_5 > 25) {
     riskScore += 0.3;
     primaryTrigger = 'Respiratory Condition + Poor Air';
     recommendation = 'Use prescribed medication and stay indoors with air filtration.';
   }
-  
+
   return {
     riskScore: Math.min(riskScore, 1.0),
     primaryTrigger,
@@ -667,13 +709,13 @@ export async function quickHealthCheck(
   immediateActionRequired: boolean;
 }> {
   const warnings: string[] = [];
-  
+
   try {
     const requestData = mapToBioSentinelFormat(weather, healthData, lifestyle);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
-    
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/quick-check`, {
+
+    const response = await fetch(buildApiUrl('/quick-check'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -682,9 +724,9 @@ export async function quickHealthCheck(
       body: JSON.stringify(requestData),
       signal: controller.signal
     });
-    
+
     clearTimeout(timeoutId);
-    
+
     if (response.ok) {
       const data = await response.json();
       // Assuming the quick-check endpoint returns warnings or status
@@ -705,19 +747,19 @@ export async function quickHealthCheck(
   if (weather.advancedData?.pm2_5 && weather.advancedData.pm2_5 > 35) {
     if (!warnings.some(w => w.includes('PM2.5'))) warnings.push('Hazardous PM2.5 levels detected');
   }
-  
+
   if (weather.temp > 38) {
     if (!warnings.some(w => w.includes('heat'))) warnings.push('Extreme heat detected');
   }
-  
+
   if (weather.advancedData?.co && weather.advancedData.co > 500) {
     if (!warnings.some(w => w.includes('CO'))) warnings.push('Dangerous CO levels');
   }
-  
+
   if (weather.uvIndex && weather.uvIndex > 10) {
     if (!warnings.some(w => w.includes('UV'))) warnings.push('Extreme UV radiation');
   }
-  
+
   return {
     requiresFullAnalysis: warnings.length > 0,
     warnings,
@@ -730,7 +772,7 @@ export async function quickHealthCheck(
  */
 export async function submitFeedback(feedback: MLFeedback): Promise<boolean> {
   try {
-    const response = await fetch(`${CONFIG.bioSentinelAPI}/feedback`, {
+    const response = await fetch(buildApiUrl('/feedback'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -752,7 +794,7 @@ export function formatExplanations(
   topFactors: MLPrediction['topFactors']
 ): string[] {
   if (!topFactors) return [];
-  
+
   return topFactors.map(factor => {
     const impact = factor.impact === 'increases' ? '↑' : '↓';
     const strength = factor.importance > 0.5 ? 'strongly' : 'moderately';
@@ -760,7 +802,7 @@ export function formatExplanations(
       .replace(/_/g, ' ')
       .replace(/celsius/i, '(°C)')
       .replace(/kph/i, '(km/h)');
-    
+
     return `${impact} ${featureName}: ${factor.value.toFixed(1)} (${strength} ${factor.impact} risk)`;
   });
 }

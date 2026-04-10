@@ -4,9 +4,9 @@
  * Architecture:
  *  1. Multi-factor algorithmic scoring engine with uncertainty reduction
  *  2. Scans future dailyForecast + advancedData to detect high-risk windows
- *  3. Auto-provisions smtp.dev sender account via REST API
- *  4. Sends richly-formatted HTML alert emails via smtpjs (browser SMTP)
- *  5. Strict deduplication so the same event never triggers twice
+ *  3. Sends emails via EmailJS (free, works in browser, any email address)
+ *     Falls back to smtp.dev/smtpjs if EmailJS is not configured
+ *  4. Strict deduplication so the same event never triggers twice
  */
 
 import { WeatherData, DailyForecastItem, EmailAlertSettings } from '../types';
@@ -22,6 +22,11 @@ declare const Email: {
     Subject: string;
     Body: string;
   }): Promise<string>;
+};
+
+declare const emailjs: {
+  init(publicKey: string): void;
+  send(serviceId: string, templateId: string, params: Record<string, string>): Promise<{ status: number; text: string }>;
 };
 
 // ─── Scored forecast candidate ─────────────────────────────────────────────────
@@ -41,9 +46,52 @@ export interface ForecastAlertCandidate {
   summary: string;              // human-readable one-liner
 }
 
-// ─── SMTP.DEV API helpers ──────────────────────────────────────────────────────
+// ─── EMAIL PROVIDER HELPERS ──────────────────────────────────────────────────
 const SMTP_API_BASE = 'https://api.smtp.dev';
 const SMTP_SEND_HOST = 'send.smtp.dev';
+
+// ─── EmailJS Integration (Primary - works with any email) ────────────────────
+let _emailJsInitialized = false;
+
+function initEmailJs(publicKey: string): boolean {
+  if (_emailJsInitialized) return true;
+  if (typeof emailjs === 'undefined') return false;
+  try {
+    emailjs.init(publicKey);
+    _emailJsInitialized = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function sendViaEmailJs(
+  to: string,
+  subject: string,
+  html: string,
+  settings: EmailAlertSettings
+): Promise<boolean> {
+  if (!settings.emailJsPublicKey || !settings.emailJsServiceId || !settings.emailJsTemplateId) {
+    return false;
+  }
+  if (typeof emailjs === 'undefined') {
+    console.warn('[ForecastEmail] EmailJS library not loaded.');
+    return false;
+  }
+  try {
+    if (!initEmailJs(settings.emailJsPublicKey)) return false;
+    const result = await emailjs.send(settings.emailJsServiceId, settings.emailJsTemplateId, {
+      to_email: to,
+      subject: subject,
+      message_html: html,
+      from_name: 'BioSentinel Health Intelligence',
+    });
+    return result.status === 200;
+  } catch (err) {
+    console.error('[ForecastEmail] EmailJS error:', err);
+    return false;
+  }
+}
 
 /** Generate a cryptographically-adequate random password */
 function randomPassword(len = 20): string {
@@ -128,12 +176,12 @@ function thermalStressScore(day: DailyForecastItem): { score: number; label: str
   if (maxT >= 42) { score = 25; label = `Extreme heat ${maxT.toFixed(0)}°C (fatal risk)`; }
   else if (maxT >= 38) { score = 20; label = `Severe heat ${maxT.toFixed(0)}°C (heat stroke risk)`; }
   else if (maxT >= 35) { score = 14; label = `High heat ${maxT.toFixed(0)}°C (heat stress)`; }
-  else if (maxT >= 32) { score = 7;  label = `Elevated heat ${maxT.toFixed(0)}°C`; }
+  else if (maxT >= 32) { score = 7; label = `Elevated heat ${maxT.toFixed(0)}°C`; }
 
   // COLD extreme
   if (minT <= -20) { score = Math.max(score, 25); label = `Extreme cold ${minT.toFixed(0)}°C (hypothermia)`; }
   else if (minT <= -10) { score = Math.max(score, 18); label = `Severe cold ${minT.toFixed(0)}°C (frostbite)`; }
-  else if (minT <= 0)   { score = Math.max(score, 10); label = `Freezing ${minT.toFixed(0)}°C (ice risk)`; }
+  else if (minT <= 0) { score = Math.max(score, 10); label = `Freezing ${minT.toFixed(0)}°C (ice risk)`; }
 
   return { score, label };
 }
@@ -159,14 +207,14 @@ function stormInstabilityScore(day: DailyForecastItem): { score: number; label: 
     // Log-scaled precipitation probability amplifier (Bayesian: both cues raise confidence)
     const popAmp = 1 + Math.log1p(pop * 5) * 0.5;  // 1.0 → ~1.9 amplifier
     score = Math.min(25, Math.round(22 * popAmp));
-    label = `Storm/convective event (${desc.slice(0,40)})`;
+    label = `Storm/convective event (${desc.slice(0, 40)})`;
   } else if (severeWeather) {
     const popAmp = 1 + Math.log1p(pop * 3) * 0.4;
     score = Math.min(25, Math.round(14 * popAmp));
-    label = `Severe weather (${desc.slice(0,40)})`;
+    label = `Severe weather (${desc.slice(0, 40)})`;
   } else if (moderateWeather && pop > 0.55) {
     score = Math.round(7 * pop);
-    label = `Moderate weather (${desc.slice(0,30)})`;
+    label = `Moderate weather (${desc.slice(0, 30)})`;
   }
 
   return { score, label };
@@ -252,8 +300,8 @@ function synergyBonus(
  * 5–7 days:  lower confidence → penalty 6–10
  */
 function uncertaintyPenalty(hoursUntil: number): number {
-  if (hoursUntil <= 48)  return Math.floor(hoursUntil / 24) * 1;   // 0–2
-  if (hoursUntil <= 96)  return 3 + Math.floor((hoursUntil - 48) / 24) * 1;  // 3–4
+  if (hoursUntil <= 48) return Math.floor(hoursUntil / 24) * 1;   // 0–2
+  if (hoursUntil <= 96) return 3 + Math.floor((hoursUntil - 48) / 24) * 1;  // 3–4
   return Math.min(10, 5 + Math.floor((hoursUntil - 96) / 24) * 1.5); // 5–7d
 }
 
@@ -277,10 +325,10 @@ export function analyseForecastWindow(
     if (hoursUntil < 1 || hoursUntil > leadTimeHours) continue;
 
     // Run all scoring domains
-    const { score: thermalScore, label: thermalLabel }  = thermalStressScore(day);
-    const { score: stormScore,  label: stormLabel }     = stormInstabilityScore(day);
-    const { score: floodScore,  label: floodLabel }     = floodRiskScore(day);
-    const { score: windScore,   label: windLabel }      = windDamageScore(day);
+    const { score: thermalScore, label: thermalLabel } = thermalStressScore(day);
+    const { score: stormScore, label: stormLabel } = stormInstabilityScore(day);
+    const { score: floodScore, label: floodLabel } = floodRiskScore(day);
+    const { score: windScore, label: windLabel } = windDamageScore(day);
     const synergy = synergyBonus(thermalScore, stormScore, floodScore, windScore);
     const uncertainty = uncertaintyPenalty(hoursUntil);
 
@@ -292,9 +340,9 @@ export function analyseForecastWindow(
     // Determine primary factor and summary
     const factors = [
       { score: thermalScore, label: thermalLabel, name: 'Thermal Stress' },
-      { score: stormScore,   label: stormLabel,   name: 'Storm Risk' },
-      { score: floodScore,   label: floodLabel,   name: 'Flood Risk' },
-      { score: windScore,    label: windLabel,     name: 'Wind Damage' },
+      { score: stormScore, label: stormLabel, name: 'Storm Risk' },
+      { score: floodScore, label: floodLabel, name: 'Flood Risk' },
+      { score: windScore, label: windLabel, name: 'Wind Damage' },
     ].filter(f => f.score > 0).sort((a, b) => b.score - a.score);
 
     const primaryFactor = factors[0]?.name ?? 'Weather Risk';
@@ -302,7 +350,7 @@ export function analyseForecastWindow(
 
     const severityLabel: ForecastAlertCandidate['severityLabel'] =
       totalScore >= 75 ? 'CRITICAL' :
-      totalScore >= 55 ? 'HIGH' : 'MODERATE';
+        totalScore >= 55 ? 'HIGH' : 'MODERATE';
 
     const alertKey = `${weather.city}|${day.date}|${primaryFactor}`;
 
@@ -335,10 +383,10 @@ function buildEmailHtml(
   const top = candidates[0];
   const severityColour =
     top.severityLabel === 'CRITICAL' ? '#dc2626' :
-    top.severityLabel === 'HIGH'     ? '#d97706' : '#0d9488';
+      top.severityLabel === 'HIGH' ? '#d97706' : '#0d9488';
   const severityBg =
     top.severityLabel === 'CRITICAL' ? '#fef2f2' :
-    top.severityLabel === 'HIGH'     ? '#fffbeb' : '#f0fdfa';
+      top.severityLabel === 'HIGH' ? '#fffbeb' : '#f0fdfa';
 
   const subject = `🚨 BioSentinel: ${top.severityLabel} Weather Alert — ${weather.city} in ~${top.hoursUntil}h`;
 
@@ -353,16 +401,16 @@ function buildEmailHtml(
         </span>
       </td>
       <td style="padding:10px 12px;font-size:13px;color:#334155;">${c.summary}</td>
-      <td style="padding:10px 12px;font-size:13px;font-weight:700;color:${c.totalScore>=75?'#dc2626':c.totalScore>=55?'#d97706':'#0d9488'};">${c.totalScore}/100</td>
+      <td style="padding:10px 12px;font-size:13px;font-weight:700;color:${c.totalScore >= 75 ? '#dc2626' : c.totalScore >= 55 ? '#d97706' : '#0d9488'};">${c.totalScore}/100</td>
     </tr>`).join('');
 
   const factorTable = (c: ForecastAlertCandidate) => `
     <table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:13px;">
       ${c.thermalScore > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;width:160px;">🌡 Thermal Stress</td><td style="padding:6px 8px;font-weight:700;">${c.thermalScore}/25</td></tr>` : ''}
-      ${c.stormScore  > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">⛈ Storm Instability</td><td style="padding:6px 8px;font-weight:700;">${c.stormScore}/25</td></tr>` : ''}
-      ${c.floodScore  > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">🌊 Flood Risk</td><td style="padding:6px 8px;font-weight:700;">${c.floodScore}/20</td></tr>` : ''}
-      ${c.windScore   > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">💨 Wind Damage</td><td style="padding:6px 8px;font-weight:700;">${c.windScore}/20</td></tr>` : ''}
-      ${c.synergy     > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">⚡ Synergy Bonus</td><td style="padding:6px 8px;font-weight:700;">+${c.synergy}</td></tr>` : ''}
+      ${c.stormScore > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">⛈ Storm Instability</td><td style="padding:6px 8px;font-weight:700;">${c.stormScore}/25</td></tr>` : ''}
+      ${c.floodScore > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">🌊 Flood Risk</td><td style="padding:6px 8px;font-weight:700;">${c.floodScore}/20</td></tr>` : ''}
+      ${c.windScore > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">💨 Wind Damage</td><td style="padding:6px 8px;font-weight:700;">${c.windScore}/20</td></tr>` : ''}
+      ${c.synergy > 0 ? `<tr><td style="padding:6px 8px;color:#64748b;">⚡ Synergy Bonus</td><td style="padding:6px 8px;font-weight:700;">+${c.synergy}</td></tr>` : ''}
       <tr style="border-top:1px solid #e2e8f0;"><td style="padding:6px 8px;color:#64748b;">📊 Uncertainty Penalty</td><td style="padding:6px 8px;font-weight:700;color:#dc2626;">-${c.uncertaintyPenalty}</td></tr>
     </table>`;
 
@@ -487,7 +535,7 @@ function buildEmailHtml(
   return { subject, html };
 }
 
-// ─── SEND EMAIL VIA SMTPJS ────────────────────────────────────────────────────
+// ─── SEND EMAIL (tries EmailJS first, then smtpjs fallback) ─────────────────
 async function sendViaSmtpJs(
   to: string,
   from: string,
@@ -517,6 +565,122 @@ async function sendViaSmtpJs(
     console.error('[ForecastEmail] smtpjs error:', err);
     return false;
   }
+}
+
+async function sendViaResend(
+  to: string,
+  subject: string,
+  html: string,
+  settings: EmailAlertSettings
+): Promise<boolean> {
+  if (!settings.resendApiKey) return false;
+
+  const from = settings.resendFromEmail || settings.senderEmail;
+  if (!from) {
+    console.warn('[ForecastEmail] Resend configured but sender email is missing.');
+    return false;
+  }
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${settings.resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+    return response.ok;
+  } catch (err) {
+    console.error('[ForecastEmail] Resend error:', err);
+    return false;
+  }
+}
+
+async function sendViaSendGrid(
+  to: string,
+  subject: string,
+  html: string,
+  settings: EmailAlertSettings
+): Promise<boolean> {
+  if (!settings.sendGridApiKey) return false;
+
+  const from = settings.sendGridFromEmail || settings.senderEmail;
+  if (!from) {
+    console.warn('[ForecastEmail] SendGrid configured but sender email is missing.');
+    return false;
+  }
+
+  try {
+    const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${settings.sendGridApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: from },
+        subject,
+        content: [{ type: 'text/html', value: html }],
+      }),
+    });
+    return response.ok;
+  } catch (err) {
+    console.error('[ForecastEmail] SendGrid error:', err);
+    return false;
+  }
+}
+
+/** Unified send with provider fallback: Resend -> SendGrid -> EmailJS -> smtpjs */
+async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+  settings: EmailAlertSettings,
+  senderEmail?: string,
+  senderPassword?: string
+): Promise<boolean> {
+  if (settings.resendApiKey) {
+    console.log('[ForecastEmail] Attempting Resend send...');
+    const resendOk = await sendViaResend(to, subject, html, settings);
+    if (resendOk) {
+      console.log('[ForecastEmail] Resend send successful.');
+      return true;
+    }
+    console.warn('[ForecastEmail] Resend failed, trying next provider...');
+  }
+
+  if (settings.sendGridApiKey) {
+    console.log('[ForecastEmail] Attempting SendGrid send...');
+    const sendGridOk = await sendViaSendGrid(to, subject, html, settings);
+    if (sendGridOk) {
+      console.log('[ForecastEmail] SendGrid send successful.');
+      return true;
+    }
+    console.warn('[ForecastEmail] SendGrid failed, trying next provider...');
+  }
+
+  // Try EmailJS first (works with any email address)
+  if (settings.emailJsPublicKey && settings.emailJsServiceId && settings.emailJsTemplateId) {
+    console.log('[ForecastEmail] Attempting EmailJS send...');
+    const emailJsOk = await sendViaEmailJs(to, subject, html, settings);
+    if (emailJsOk) {
+      console.log('[ForecastEmail] EmailJS send successful.');
+      return true;
+    }
+    console.warn('[ForecastEmail] EmailJS failed, falling back to smtpjs...');
+  }
+  // Fallback to smtpjs (only if credentials are available)
+  if (senderEmail && senderPassword) {
+    return sendViaSmtpJs(to, senderEmail, senderPassword, subject, html);
+  }
+  return false;
 }
 
 // ─── PUBLIC ENTRY POINT ────────────────────────────────────────────────────────
@@ -566,14 +730,17 @@ export async function checkAndSendForecastEmails(
     return;
   }
 
-  // --- 4. Provision sender account (if not yet done) ---
-  let senderEmail = settings.senderEmail;
-  let senderPassword = settings.senderPassword;
+  // --- 4. Check if EmailJS is configured (primary path) ---
+  const hasEmailJs = !!(settings.emailJsPublicKey && settings.emailJsServiceId && settings.emailJsTemplateId);
 
-  if (!senderEmail || !senderPassword) {
+  // --- 5. Provision smtp.dev sender only if EmailJS is NOT configured ---
+  let senderEmail: string | undefined = settings.senderEmail || undefined;
+  let senderPassword: string | undefined = settings.senderPassword || undefined;
+
+  if (!hasEmailJs && (!senderEmail || !senderPassword)) {
     const creds = await provisionSenderAccount(settings);
     if (!creds) {
-      console.error('[ForecastEmail] Could not provision sender — aborting.');
+      console.error('[ForecastEmail] No EmailJS configured and could not provision smtp.dev sender — aborting.');
       return;
     }
     senderEmail = creds.email;
@@ -581,17 +748,18 @@ export async function checkAndSendForecastEmails(
     onSettingsUpdate({ senderEmail, senderPassword });
   }
 
-  // --- 5. Build and send email ---
+  // --- 6. Build and send email ---
   const { subject, html } = buildEmailHtml(fresh, weather);
 
   console.log(`[ForecastEmail] Sending alert to ${settings.recipientEmail} — ${fresh.length} event(s), top score ${fresh[0].totalScore}`);
 
-  const sent = await sendViaSmtpJs(
+  const sent = await sendEmail(
     settings.recipientEmail,
-    senderEmail,
-    senderPassword,
     subject,
-    html
+    html,
+    settings,
+    senderEmail,
+    senderPassword
   );
 
   if (sent) {
@@ -609,15 +777,21 @@ export async function sendTestEmail(
 ): Promise<{ ok: boolean; message: string }> {
   if (!settings.recipientEmail) return { ok: false, message: 'Please enter a recipient email address.' };
 
-  // Provision sender
-  let senderEmail = settings.senderEmail;
-  let senderPassword = settings.senderPassword;
-  if (!senderEmail || !senderPassword) {
-    const creds = await provisionSenderAccount(settings);
-    if (!creds) return { ok: false, message: 'Failed to create smtp.dev sender account. Check your API key.' };
-    senderEmail = creds.email;
-    senderPassword = creds.password;
-    onSettingsUpdate({ senderEmail, senderPassword });
+  // Check if EmailJS is configured (primary send method)
+  const hasEmailJs = !!(settings.emailJsPublicKey && settings.emailJsServiceId && settings.emailJsTemplateId);
+
+  // Provision smtp.dev sender only if EmailJS is NOT configured
+  let senderEmail: string | undefined = settings.senderEmail || undefined;
+  let senderPassword: string | undefined = settings.senderPassword || undefined;
+
+  if (!hasEmailJs) {
+    if (!senderEmail || !senderPassword) {
+      const creds = await provisionSenderAccount(settings);
+      if (!creds) return { ok: false, message: 'No email provider configured. Add Resend, SendGrid, EmailJS, or smtp.dev credentials.' };
+      senderEmail = creds.email;
+      senderPassword = creds.password;
+      onSettingsUpdate({ senderEmail, senderPassword });
+    }
   }
 
   // Build test email (use real forecast if available, otherwise placeholder)
@@ -637,10 +811,10 @@ export async function sendTestEmail(
     html = testPlaceholderHtml(settings.recipientEmail);
   }
 
-  const sent = await sendViaSmtpJs(settings.recipientEmail, senderEmail, senderPassword, subject, html);
+  const sent = await sendEmail(settings.recipientEmail, subject, html, settings, senderEmail, senderPassword);
   return sent
     ? { ok: true, message: `Test email sent to ${settings.recipientEmail}! Check your inbox.` }
-    : { ok: false, message: 'SMTP send failed. Ensure the recipient is a valid smtp.dev address.' };
+    : { ok: false, message: 'Email send failed. Verify Resend/SendGrid sender identities or EmailJS/smtp.dev settings.' };
 }
 
 function testPlaceholderHtml(recipientEmail: string): string {
