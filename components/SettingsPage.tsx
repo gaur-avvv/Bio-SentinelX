@@ -525,8 +525,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             />
           </div>
         </Card>
-          </div>
-        </Card>
 
         {/* 4. Database Configuration ─────────────────────────────────── */}
         <Card icon={<Database className="w-5 h-5" />} title="Database Configuration" subtitle="Symptom surveillance storage"
@@ -651,142 +649,98 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   ))}
                 </div>
               </div>
-              {mapProvider === 'arcgis' ? (
-                <div className="animate-fade-in space-y-3">
-                  <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-blue-600 dark:text-blue-400 text-lg">🌏</span>
-                      <span className="text-xs font-black text-blue-800 dark:text-blue-300 uppercase tracking-tight">BioSentinel ArcGIS Portal</span>
-                    </div>
-                    <p className="text-[10px] font-bold text-blue-700 dark:text-blue-400 leading-relaxed mb-3">
-                      Powered by ArcGIS Maps SDK 5.0 with India Ward Boundaries and flood layers. Using a secure map from <code className="text-[9px] bg-blue-100 dark:bg-blue-900/50 px-1 py-0.5 rounded">biosentinel.maps.arcgis.com</code> requires an API Key.
-                    </p>
-                    <KeyInput
-                      label="ArcGIS Location Services API Key"
-                      value={arcGisKey}
-                      onChange={setArcGisKey}
-                      placeholder="Enter ArcGIS API Key..."
-                      getKeyUrl="https://developers.arcgis.com/dashboard/"
-                      note="Create an API key credentials item in your ArcGIS portal to access secure maps."
-                    />
-                  </div>
-                </div>
-              ) : mapProvider === 'osm' ? (
-                <div className="animate-fade-in p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-emerald-600 dark:text-emerald-400 text-lg">✅</span>
-                    <span className="text-xs font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-tight">No API Key Required</span>
-                  </div>
-                  <p className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 leading-relaxed">
-                    Uses <strong>OpenStreetMap + CartoDB Dark Matter</strong> tiles via MapLibre GL. Completely free, no account needed. Best for testing or quick use.
-                  </p>
-                </div>
-              ) : mapProvider === 'mappls' ? (
-                <div className="animate-fade-in">
-                  <KeyInput
-                    label="Mappls (MapmyIndia) API Key"
-                    value={mapplsToken}
-                    onChange={setMapplsToken}
-                    placeholder="Enter Mappls Web SDK token…"
-                    getKeyUrl="https://about.mappls.com/api/"
-                    note="Required for interactive ward-level flood maps in India. Get a free key at their portal."
-                  />
-                </div>
-              ) : mapProvider === 'maptiler' ? (
-                <div className="animate-fade-in">
-                  <KeyInput
-                    label="MapTiler API Key"
-                    value={mapTilerKey}
-                    onChange={setMapTilerKey}
-                    placeholder="Enter MapTiler API Key…"
-                    getKeyUrl="https://cloud.maptiler.com/account/keys/"
-                    note="Global vector maps & terrain data. Get a free key at MapTiler Cloud."
-                  />
-                </div>
-              ) : (
-                <div className="animate-fade-in">
-                  <KeyInput
-                    label="Mapbox Access Token"
-                    value={mapboxToken}
-                    onChange={setMapboxToken}
-                    placeholder="Enter Mapbox public token…"
-                    getKeyUrl="https://account.mapbox.com/access-tokens/"
-                    note="Industry-standard vector maps. Get a free public token at Mapbox Account."
-                  />
-                </div>
-              )}
+
+              {/* API Keys for maps */}
+              <div className="space-y-3 animate-fade-in">
+                {mapProvider === 'mappls' && (
+                  <KeyInput label="Mappls Access Token" value={mapplsToken} onChange={setMapplsToken}
+                    placeholder="Enter Mappls key/token…" getKeyUrl="https://www.mappls.com/api" />
+                )}
+                {mapProvider === 'maptiler' && (
+                  <KeyInput label="MapTiler API Key" value={mapTilerKey} onChange={setMapTilerKey}
+                    placeholder="Enter MapTiler key…" getKeyUrl="https://cloud.maptiler.com" />
+                )}
+                {mapProvider === 'mapbox' && (
+                  <KeyInput label="Mapbox Public Token" value={mapboxToken} onChange={setMapboxToken}
+                    placeholder="pk.ey..." getKeyUrl="https://account.mapbox.com" />
+                )}
+                {mapProvider === 'arcgis' && (
+                  <KeyInput label="ArcGIS API Key" value={arcGisKey} onChange={setArcGisKey}
+                    placeholder="AAPK..." getKeyUrl="https://developers.arcgis.com" />
+                )}
+              </div>
             </div>
           </div>
         </Card>
 
-        {/* 6. AI Neural Engine ───────────────────────────────────────── */}
-        <Card icon={<Brain className="w-5 h-5" />} title="AI Neural Engine" subtitle="Provider & model"
-          badge={aiProvider.charAt(0).toUpperCase() + aiProvider.slice(1)}
+        {/* 6. AI Model Configuration ─────────────────────────────────── */}
+        <Card icon={<Cpu className="w-5 h-5" />} title="Brain Architecture" subtitle="LLM Engine settings"
+          badge={AI_MODELS[aiProvider]?.find(m => m.value === aiModel)?.label || aiModel}
           accent="violet">
-          {/* Provider tabs */}
-          <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
-            {(['huggingface', 'gemini', 'groq', 'pollinations', 'openrouter', 'siliconflow', 'cerebras', 'ollama'] as AiProvider[]).map(p => (
-              <button key={p}
-                onClick={() => { setAiProvider(p); setAiModel(AI_MODELS[p][0].value); }}
-                className={`py-2 px-1 rounded-xl text-[8px] font-black uppercase tracking-wide transition-all ${aiProvider === p ? 'bg-white dark:bg-slate-700 text-violet-600 dark:text-violet-300 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
-                  }`}>
-                {p === 'pollinations' ? 'Free AI' : p === 'openrouter' ? 'Router' : p === 'siliconflow' ? 'Silicon' : p === 'cerebras' ? 'Cerebras' : p === 'ollama' ? 'Ollama' : p === 'huggingface' ? 'MedGemma' : p.charAt(0).toUpperCase() + p.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          {/* Model selector */}
-          <div className="relative">
-            <select value={aiModel} onChange={e => setAiModel(e.target.value)}
-              className="w-full pl-4 pr-8 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl outline-none text-xs font-bold text-slate-800 dark:text-slate-100 focus:border-violet-500 appearance-none cursor-pointer transition-all">
-              {AI_MODELS[aiProvider].map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl">
+              {(['gemini', 'groq', 'openrouter', 'siliconflow', 'huggingface', 'cerebras', 'ollama', 'pollinations'] as const).map(p => (
+                <button key={p}
+                  onClick={() => { setAiProvider(p); setAiModel(AI_MODELS[p][0].value); }}
+                  className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${aiProvider === p
+                    ? 'bg-white dark:bg-slate-700 text-violet-600 dark:text-violet-300 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}>
+                  {p}
+                </button>
               ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-          </div>
+            </div>
 
-          {/* Token budget */}
-          <TokenPanelBoundary aiProvider={aiProvider} aiModel={aiModel} />
-        </Card>
+            <div className="space-y-1.5">
+              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Model Architecture</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                {AI_MODELS[aiProvider]?.map(m => (
+                  <button key={m.value}
+                    onClick={() => setAiModel(m.value)}
+                    className={`px-3 py-2.5 rounded-xl border text-left transition-all ${aiModel === m.value
+                      ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 ring-1 ring-violet-500/20'
+                      : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                      }`}>
+                    <div className="flex items-center justify-between gap-2 overflow-hidden">
+                      <p className={`text-[10px] font-black uppercase truncate ${aiModel === m.value ? 'text-violet-700 dark:text-violet-300' : 'text-slate-700 dark:text-slate-300'}`}>{m.label}</p>
+                      {aiModel === m.value && <CheckCircle2 className="w-3 h-3 text-violet-500 flex-shrink-0" />}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        {/* 7. API Keys ────────────────────────────────────────────────── */}
-        <Card icon={<Lock className="w-5 h-5" />} title="API Keys" subtitle="Provider credentials"
-          badge={huggingFaceKey || geminiKey || groqKey || pollinationsKey || openrouterKey || siliconflowKey || cerebrasKey ? 'Configured' : 'Not set'}
-          accent="rose">
-          <div className="space-y-4">
-            {aiProvider === 'huggingface' && (
-              <KeyInput label="Hugging Face Token" value={huggingFaceKey} onChange={setHuggingFaceKey}
-                placeholder="hf_..." getKeyUrl="https://huggingface.co/settings/tokens"
-                note="Used for MedGemma models. This powers the MedGemma -> Gemini -> Groq fallback chain." />
-            )}
-            {aiProvider === 'pollinations' && (
-              <KeyInput label="Pollinations Auth Key" value={pollinationsKey} onChange={setPollinationsKey}
-                placeholder="sk_…" getKeyUrl="https://enter.pollinations.ai"
-                note="Optional — works without a key. Get one at enter.pollinations.ai for higher limits." />
-            )}
+            <TokenPanelBoundary aiProvider={aiProvider} aiModel={aiModel} />
+
+            {/* Provider specfic keys */}
             {aiProvider === 'gemini' && (
-              <KeyInput label="Gemini API Key" value={geminiKey} onChange={setGeminiKey}
-                placeholder="AIza…" getKeyUrl="https://ai.google.dev/gemini-api/docs/api-key" />
+              <KeyInput label="Google Gemini API Key" value={geminiKey} onChange={setGeminiKey}
+                placeholder="AIza..." getKeyUrl="https://ai.google.dev"
+                note="Required for Gemini models. Supports Pro, Flash, and Experimental versions." />
             )}
             {aiProvider === 'groq' && (
               <KeyInput label="Groq API Key" value={groqKey} onChange={setGroqKey}
-                placeholder="gsk_…" getKeyUrl="https://console.groq.com/keys"
-                note="Free tier available at console.groq.com" />
+                placeholder="gsk_..." getKeyUrl="https://console.groq.com/keys"
+                note="Ultra-low latency inference for Llama 3, Mixtral, and Gemma models." />
             )}
             {aiProvider === 'openrouter' && (
               <KeyInput label="OpenRouter API Key" value={openrouterKey} onChange={setOpenrouterKey}
-                placeholder="sk-or-…" getKeyUrl="https://openrouter.ai/keys"
-                note="Free account at openrouter.ai. Add credits to access paid models." />
+                placeholder="sk-or-..." getKeyUrl="https://openrouter.ai/keys"
+                note="Access hundreds of models through a single API. Ideal for GPT-4 and Claude 3." />
             )}
             {aiProvider === 'siliconflow' && (
               <KeyInput label="SiliconFlow API Key" value={siliconflowKey} onChange={setSiliconflowKey}
-                placeholder="sk-…" getKeyUrl="https://cloud.siliconflow.com/account/ak"
-                note="Get a free key at cloud.siliconflow.com. Affordable pay-per-use pricing with top open-source models." />
+                placeholder="sk-..." getKeyUrl="https://cloud.siliconflow.com"
+                note="Specialized for DeepSeek and high-throughput Chinese models." />
+            )}
+            {aiProvider === 'huggingface' && (
+              <KeyInput label="Hugging Face Token" value={huggingFaceKey} onChange={setHuggingFaceKey}
+                placeholder="hf_..." getKeyUrl="https://huggingface.co/settings/tokens"
+                note="Access thousands of public and private models on the Hub." />
             )}
             {aiProvider === 'cerebras' && (
               <KeyInput label="Cerebras API Key" value={cerebrasKey} onChange={setCerebrasKey}
-                placeholder="csk-…" getKeyUrl="https://cloud.cerebras.ai"
+                placeholder="csk-..." getKeyUrl="https://cloud.cerebras.ai"
                 note="Get a free API key at cloud.cerebras.ai. World's fastest inference — ~3000 tok/s with GPT OSS 120B." />
             )}
             {aiProvider === 'ollama' && (
@@ -815,7 +769,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </Card>
 
-        {/* 9. Notifications & Alerts ─────────────────────────────────&#x2F;*/}
+        {/* 9. Notifications & Alerts ───────────────────────────────── */}
         <Card icon={<Cpu className="w-5 h-5" />} title="MCP Orchestration" subtitle="Tool guardrails and budgets"
           badge={mcpSettings.enabled ? 'Enabled' : 'Disabled'}
           accent="indigo">
@@ -871,7 +825,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </Card>
 
-        {/* 8. Notifications & Alerts ─────────────────────────────────&#x2F;*/}
+        {/* 8. Notifications & Alerts ───────────────────────────────── */}
         <Card icon={<BellRing className="w-5 h-5" />} title="Notifications" subtitle="Alerts & forecast schedule"
           badge={`${Object.values(notificationSettings.alerts).filter(Boolean).length}/7 on`}
           accent="amber">

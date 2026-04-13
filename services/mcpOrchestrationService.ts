@@ -62,7 +62,6 @@ async function callMcpTool(endpoint: string, method: string, params: any, timeou
     throw err;
   }
 }
-
 export async function executeMcpOutbreakSweep(city: string, settings: McpSettings): Promise<McpExecutionResult> {
   const trace: McpExecutionTrace = {
     attempted: true,

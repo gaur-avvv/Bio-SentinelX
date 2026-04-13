@@ -559,6 +559,10 @@ export interface MLPredictionResult {
   estimated_inundation_depth_m: number;
   confidence: number;
   contributing_factors: Record<string, number>;
+  explanation?: {
+    shap_values: Record<string, number>;
+    base_value: number;
+  };
   recommendation: string;
   timestamp: string;
 }

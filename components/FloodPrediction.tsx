@@ -1986,30 +1986,71 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
                 </div>
 
                 {/* Contributing factors */}
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
-                    ML Contributing Factors (Attribution)
-                  </p>
-                  <div className="space-y-2">
-                    {Object.entries(mlPrediction.contributing_factors)
-                      .sort((a, b) => b[1] - a[1])
-                      .map(([factor, value]) => {
-                        const pct = (value * 100).toFixed(1);
-                        return (
-                          <div key={factor} className="flex items-center gap-3">
-                            <span className="text-[10px] font-black text-slate-500 dark:text-slate-300 w-36 shrink-0 capitalize">
-                              {factor.replace(/_/g, ' ')}
-                            </span>
-                            <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-violet-500 rounded-full"
-                                style={{ width: `${Math.min(value / 0.35 * 100, 100)}%` }}
-                              />
-                            </div>
-                            <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 w-10 text-right">{pct}%</span>
-                          </div>
-                        );
-                      })}
+                {/* Contributing factors — SHAP Explainability Plot */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      ML Feature Attribution (SHAP Importance)
+                    </p>
+                    <div className="flex gap-2">
+                      <span className="flex items-center gap-1 text-[8px] font-black text-slate-400 uppercase">
+                        <span className="w-1.5 h-1.5 rounded-full bg-violet-500" /> Increasing Risk
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="h-48 w-full bg-slate-50 dark:bg-slate-900/40 rounded-2xl p-4 border border-slate-100 dark:border-slate-800">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        layout="vertical"
+                        data={Object.entries(mlPrediction.explanation?.shap_values || mlPrediction.contributing_factors)
+                          .map(([name, value]) => ({ 
+                            name: name.replace(/_/g, ' ').toUpperCase(), 
+                            value: value * 100 
+                          }))
+                          .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+                          .slice(0, 6)
+                        }
+                        margin={{ left: 20, right: 30, top: 0, bottom: 0 }}
+                      >
+                        <XAxis type="number" hide />
+                        <YAxis 
+                          type="category" 
+                          dataKey="name" 
+                          width={110} 
+                          tick={{ fontSize: 9, fontWeight: 900, fill: '#64748b' }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip 
+                          cursor={{ fill: 'transparent' }}
+                          contentStyle={{ ...tooltipStyle, background: '#1e293b', color: '#fff' }}
+                        />
+                        <Bar 
+                          dataKey="value" 
+                          radius={[0, 4, 4, 0]}
+                          barSize={12}
+                        >
+                          {Object.entries(mlPrediction.explanation?.shap_values || mlPrediction.contributing_factors).map((entry, index) => (
+                            <Cell 
+                              key={`cell-${index}`} 
+                              fill={entry[1] >= 0 ? '#8b5cf6' : '#3b82f6'} 
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  
+                  <div className="p-3 bg-violet-50 dark:bg-violet-900/20 border border-violet-100 dark:border-violet-800 rounded-xl">
+                    <p className="text-[9px] font-bold text-violet-700 dark:text-violet-300 leading-relaxed">
+                      <Info className="w-3.5 h-3.5 inline mr-1.5 mb-0.5" />
+                      The model identified <span className="font-black underline">
+                        {Object.entries(mlPrediction.explanation?.shap_values || mlPrediction.contributing_factors)
+                          .sort((a, b) => b[1] - a[1])[0][0].replace(/_/g, ' ')}
+                      </span> as the primary driver of flood risk for this location. 
+                      Targeted mitigation in this area should prioritize managing these specific conditions.
+                    </p>
                   </div>
                 </div>
 
