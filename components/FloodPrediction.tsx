@@ -57,6 +57,7 @@ interface FloodPredictionProps {
   aiProvider: AiProvider;
   aiModel: string;
   aiKey?: string;
+  mlApiUrl?: string;
   mapProvider?: 'mappls' | 'maptiler' | 'mapbox' | 'osm' | 'arcgis';
   mapplsToken?: string;
   mapTilerKey?: string;
@@ -201,6 +202,7 @@ function computeGiStar(
 
 export const FloodPrediction: React.FC<FloodPredictionProps> = ({
   weather, onBack, aiProvider, aiModel, aiKey,
+  mlApiUrl: mlApiUrlProp,
   mapProvider = 'arcgis', mapplsToken, mapTilerKey, mapboxToken, arcGisKey,
 }) => {
   // ── Cache ───────────────────────────────────────────────────────────────────
@@ -219,9 +221,18 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
 
   // ── ML API config ───────────────────────────────────────────────────────────
   const [mlApiUrl, setMlApiUrl] = useState(() =>
-    localStorage.getItem('floodMlApiUrl') || (process.env.FLOOD_ML_API as string | undefined) || 'https://web-production-24253.up.railway.app');
+    mlApiUrlProp || localStorage.getItem('floodMlApiUrl') || (process.env.FLOOD_ML_API as string | undefined) || 'https://web-production-24253.up.railway.app');
   const [showApiConfig, setShowApiConfig] = useState(false);
   const [mlApiUrlInput, setMlApiUrlInput] = useState(mlApiUrl);
+
+  // Sync mlApiUrl with prop if it changes
+  useEffect(() => {
+    if (mlApiUrlProp && mlApiUrlProp !== mlApiUrl) {
+      setMlApiUrl(mlApiUrlProp);
+      setMlApiUrlInput(mlApiUrlProp);
+    }
+  }, [mlApiUrlProp]);
+
 
   // ── ML prediction state ─────────────────────────────────────────────────────
   const [mlPrediction, setMlPrediction] = useState<MLPredictionResult | null>(() => cacheValid ? floodCache.mlPrediction : null);
