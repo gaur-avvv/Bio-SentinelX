@@ -11,6 +11,20 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
     },
     plugins: [react()],
+
+    // ── Build optimisation ────────────────────────────────────────────────
+    build: {
+      // Source maps for production debugging
+      sourcemap: true,
+
+      // Use esbuild for minification (faster & smaller than terser)
+      minify: 'esbuild',
+
+      // Warn but don't fail when a chunk exceeds 1MB
+      chunkSizeWarningLimit: 1000,
+    },
+
+    // ── Environment injection ─────────────────────────────────────────────
     define: {
       'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || process.env.GEMINI_API_KEY),
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || process.env.GEMINI_API_KEY),
@@ -37,9 +51,14 @@ export default defineConfig(({ mode }) => {
       'process.env.FIREBASE_APP_ID': JSON.stringify(env.FIREBASE_APP_ID || process.env.FIREBASE_APP_ID),
       'process.env.FIREBASE_MEASUREMENT_ID': JSON.stringify(env.FIREBASE_MEASUREMENT_ID || process.env.FIREBASE_MEASUREMENT_ID),
     },
+
+    // ── Module aliases ────────────────────────────────────────────────────
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        // recharts v2 uses fast-equals which has a broken exports field;
+        // point Vite directly at the CJS build to avoid resolution errors.
+        'fast-equals': path.resolve(__dirname, 'node_modules/fast-equals/dist/cjs/index.cjs'),
       }
     }
   };

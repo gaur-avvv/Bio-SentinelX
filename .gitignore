@@ -42,3 +42,13 @@ __pycache__/
 
 # Local databases / artifacts
 *.db
+
+# Docker local overrides (never commit real secrets / personal mounts)
+docker-compose.override.yml
+
+# ML model binaries (generated at runtime, stored in Docker volume)
+saved_models/
+*.heapsnapshot
+
+# Test artifacts
+flood_ml_api/test_*.db

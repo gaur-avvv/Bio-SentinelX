@@ -8,6 +8,7 @@ import { HistoricalAnalysis } from './components/HistoricalAnalysis';
 import { SettingsPage } from './components/SettingsPage';
 import { WeatherCard } from './components/WeatherCard';
 import { AuthLanding } from './components/auth/AuthLanding';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProfileOnboardingWizard } from './components/auth/ProfileOnboardingWizard';
 import { DataCacheProvider } from './contexts/DataCacheContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -549,57 +550,66 @@ const AppInner: React.FC = () => {
             </div>
 
             {view === 'dashboard' ? (
-              <>
-                <WeatherCard data={weather} />
-                <AnalysisDashboard
+              <ErrorBoundary fallbackTitle="Dashboard failed to render">
+                <>
+                  <WeatherCard data={weather} />
+                  <AnalysisDashboard
+                    weather={weather}
+                    loadingState={loadingState}
+                    setLoadingState={setLoadingState}
+                    aiProvider={aiProvider}
+                    aiModel={aiModel}
+                    aiKey={aiKey}
+                    databaseSettings={databaseSettings}
+                    localIntelEnabled={onboardingComplete}
+                    onOpenAssistant={() => setView('assistant')}
+                  />
+                </>
+              </ErrorBoundary>
+            ) : view === 'historical' ? (
+              <ErrorBoundary fallbackTitle="Historical Analysis failed to render">
+                <HistoricalAnalysis
+                  location={location}
                   weather={weather}
-                  loadingState={loadingState}
-                  setLoadingState={setLoadingState}
+                  onBack={() => setView('dashboard')}
+                  geminiKey={geminiKey}
                   aiProvider={aiProvider}
                   aiModel={aiModel}
                   aiKey={aiKey}
-                  databaseSettings={databaseSettings}
-                  localIntelEnabled={onboardingComplete}
-                  onOpenAssistant={() => setView('assistant')}
                 />
-              </>
-            ) : view === 'historical' ? (
-              <HistoricalAnalysis
-                location={location}
-                weather={weather}
-                onBack={() => setView('dashboard')}
-                geminiKey={geminiKey}
-                aiProvider={aiProvider}
-                aiModel={aiModel}
-                aiKey={aiKey}
-              />
+              </ErrorBoundary>
             ) : view === 'flood' ? (
-              <FloodPrediction
-                weather={weather}
-                onBack={() => setView('dashboard')}
-                aiProvider={aiProvider}
-                aiModel={aiModel}
-                aiKey={aiKey}
-                mlApiUrl={floodMlApiUrl}
-                mapProvider={mapProvider}
-                mapplsToken={mapplsToken}
-                mapTilerKey={mapTilerKey}
-                mapboxToken={mapboxToken}
-                arcGisKey={arcGisKey}
-              />
+              <ErrorBoundary fallbackTitle="Flood Prediction failed to render">
+                <FloodPrediction
+                  weather={weather}
+                  onBack={() => setView('dashboard')}
+                  aiProvider={aiProvider}
+                  aiModel={aiModel}
+                  aiKey={aiKey}
+                  mlApiUrl={floodMlApiUrl}
+                  mapProvider={mapProvider}
+                  mapplsToken={mapplsToken}
+                  mapTilerKey={mapTilerKey}
+                  mapboxToken={mapboxToken}
+                  arcGisKey={arcGisKey}
+                />
+              </ErrorBoundary>
             ) : view === 'assistant' ? (
-              <BioXAssistant
-                weather={weather}
-                aiKey={aiKey}
-                aiProvider={aiProvider}
-                aiModel={aiModel}
-                geminiKey={geminiKey}
-                llamaCloudKey={llamaCloudKey}
-                mcpSettings={mcpSettings}
-                onBack={() => setView('dashboard')}
-                onAddAlerts={(a) => addAlerts(a)}
-              />
+              <ErrorBoundary fallbackTitle="BioX Assistant failed to render">
+                <BioXAssistant
+                  weather={weather}
+                  aiKey={aiKey}
+                  aiProvider={aiProvider}
+                  aiModel={aiModel}
+                  geminiKey={geminiKey}
+                  llamaCloudKey={llamaCloudKey}
+                  mcpSettings={mcpSettings}
+                  onBack={() => setView('dashboard')}
+                  onAddAlerts={(a) => addAlerts(a)}
+                />
+              </ErrorBoundary>
             ) : (
+              <ErrorBoundary fallbackTitle="Settings failed to render">
               <SettingsPage
                 location={location}
                 setLocation={setLocation}
@@ -661,6 +671,7 @@ const AppInner: React.FC = () => {
                 setEmailAlertSettings={setEmailAlertSettings}
                 weather={weather}
               />
+              </ErrorBoundary>
             )}
           </div>
         </div>

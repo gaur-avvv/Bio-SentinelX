@@ -1,0 +1,66 @@
+# Bio-SentinelX — Local Development Stack
+#
+# Usage:
+#   docker compose up                  # start everything
+#   docker compose up flood-api        # API only
+#   docker compose logs -f flood-api   # stream API logs
+#   docker compose down -v             # stop and remove volumes
+#
+# Override any value by creating a docker-compose.override.yml (gitignored).
+
+services:
+
+  # ─── Flood ML API (FastAPI) ────────────────────────────────────────────────
+  flood-api:
+    build:
+      context: ./flood_ml_api
+      dockerfile: Dockerfile
+    container_name: bsx-flood-api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///./flood_data.db
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      FLOOD_N_JOBS: "2"
+      LOG_LEVEL: "INFO"
+      PORT: "8000"
+    volumes:
+      # Persist trained ML models across container restarts
+      - ml_models:/app/saved_models
+      # Live-reload app code in dev (comment out for prod-like testing)
+      - ./flood_ml_api:/app:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+    restart: unless-stopped
+
+  # ─── Frontend (Vite dev server) ────────────────────────────────────────────
+  frontend:
+    image: node:22-alpine
+    container_name: bsx-frontend
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "3000:3000"
+    environment:
+      FLOOD_ML_API: "http://flood-api:8000"
+      VITE_MAPPLS_TOKEN: "${VITE_MAPPLS_TOKEN:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    depends_on:
+      flood-api:
+        condition: service_healthy
+
+# ─── Named volumes ─────────────────────────────────────────────────────────
+volumes:
+  ml_models:
+    driver: local
+  node_modules:
+    driver: local

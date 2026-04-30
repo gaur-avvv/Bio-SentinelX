@@ -102,38 +102,102 @@ graph TD
 
 ---
 
-## 📦 Installation & Setup
+## 📦 Quick Start
 
-### Prerequisites
-- **Node.js** (v18+)
-- **Python** (3.10+ for ML API)
-- **API Keys** (Optional but recommended): Gemini, Groq, ArcGIS.
-
-### 1. Frontend Setup
+### Option A — Docker Compose (recommended, full stack)
 ```bash
 git clone https://github.com/gaur-avvv/Bio-SentinelX.git
 cd Bio-SentinelX
-npm install
-npm run dev
+cp .env.example .env          # edit with your API keys
+cp flood_ml_api/.env.example flood_ml_api/.env
+docker compose up             # frontend → :3000 | ML API → :8000
 ```
 
-### 2. ML API Setup
+### Option B — Manual (frontend only)
+```bash
+npm install
+cp .env.example .env          # fill in keys
+npm run dev                   # http://localhost:3000
+```
+
+### Option C — Manual (ML API only)
 ```bash
 cd flood_ml_api
 pip install -r requirements.txt
-python main.py
-```
-
-### 3. Environment Variables
-Copy `.env.example` to `.env` and configure:
-```env
-VITE_GEMINI_API_KEY=your_key
-VITE_GROQ_API_KEY=your_key
-VITE_SUPABASE_URL=your_url
-VITE_SURVEILLANCE_API_URL=https://web-production-37f41.up.railway.app
+cp .env.example .env          # fill in DATABASE_URL, CORS_ORIGINS
+uvicorn main:app --reload --port 8000
 ```
 
 ---
+
+## 🔑 Environment Variables
+
+### Frontend (`.env` in project root)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GEMINI_API_KEY` | ⚠️ Recommended | Google Gemini — primary AI provider |
+| `GROQ_API_KEY` | Optional | Groq ultra-fast inference |
+| `OPENROUTER_API_KEY` | Optional | OpenRouter multi-model gateway |
+| `HF_TOKEN` | Optional | HuggingFace Inference API |
+| `OPENWEATHER_KEY` | Optional | OpenWeatherMap (fallback weather) |
+| `VITE_MAPPLS_TOKEN` | Optional | Mappls / MapMyIndia GIS API |
+| `FLOOD_ML_API` | Required | URL of the running flood_ml_api |
+| `VITE_SUPABASE_URL` | Optional | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Optional | Supabase public anon key |
+| `VITE_FIREBASE_*` | Optional | Firebase Auth config (6 vars) |
+
+See `.env.example` for the full list of all 20+ variables.
+
+### Backend (`flood_ml_api/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | SQLite | `sqlite+aiosqlite:///./flood_data.db` or `postgresql+asyncpg://...` |
+| `CORS_ORIGINS` | localhost | Comma-separated allowed frontend origins |
+| `FLOOD_N_JOBS` | `2` | ML thread count (2 for free tier, 4–8 for dedicated) |
+| `LOG_LEVEL` | `INFO` | `DEBUG \| INFO \| WARNING \| ERROR` |
+| `PORT` | `8000` | Overridden automatically by Railway |
+
+---
+
+## 🔄 CI/CD Pipeline (GitHub Actions)
+
+Two workflows run automatically:
+
+```
+Push to main
+    ├── ci.yml
+    │   ├── Frontend: TypeScript check + Vite build
+    │   ├── Backend:  pip install + pytest tests/
+    │   └── Docker:   build image + smoke-test /health
+    │
+    └── deploy-frontend.yml
+        └── vercel build --prod → production URL
+```
+
+### Required GitHub Secrets
+
+Go to **Settings → Secrets and variables → Actions** and add:
+
+| Secret | Where to get it |
+|--------|----------------|
+| `VERCEL_TOKEN` | [vercel.com/account/tokens](https://vercel.com/account/tokens) |
+| `VERCEL_ORG_ID` | Run `vercel whoami` or check project settings |
+| `VERCEL_PROJECT_ID` | Run `vercel project ls` in the repo dir |
+
+---
+
+## 🔐 Security
+
+- **CORS**: Backend only accepts origins listed in `CORS_ORIGINS` env var (no wildcard in production)
+- **Rate Limiting**: 60 req/min (predictions), 10 req/min (bulk), 5 req/min (training) — per IP via `slowapi`
+- **Security Headers**: CSP, HSTS, X-Frame-Options, X-Content-Type-Options applied by Vercel on every response
+- **Non-root container**: API runs as `flooduser` (UID 1000) in the Docker image
+- **No secrets in code**: All credentials via `.env` — never commit `.env` (it's in `.gitignore`)
+
+---
+
 
 ## 📜 License
 This project is licensed under the **MIT License**.
