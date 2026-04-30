@@ -1456,7 +1456,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
     setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setIsChatLoading(true);
     try {
-      const response = await chatWithWeatherAssistant(weather, chatMessages, userMsg, aiKey, mlPrediction, aiProvider, aiModel);
+      const response = await chatWithWeatherAssistant(weather, chatMessages, userMsg, aiProvider, aiModel, aiKey, mlPrediction);
       const clean = stripHiddenModelReasoning(response);
       setChatMessages(prev => [...prev, { role: 'model', text: clean }]);
     } catch (err: any) {
@@ -1731,10 +1731,10 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           summary,
           userFeedback,
           weatherFeedback,
-          lifestyleData,
-          undefined,
           aiProvider,
           aiModel,
+          lifestyleData,
+          undefined,
           aiKey,
           localModelPrediction
         )

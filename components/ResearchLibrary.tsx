@@ -254,22 +254,7 @@ export const ResearchLibrary: React.FC<Props> = ({ geminiKey, llamaCloudKey, onB
         </div>
       </div>
 
-      <div className="bg-violet-50 dark:bg-violet-950/30 border border-violet-100 dark:border-violet-800/50 rounded-2xl p-4 space-y-2.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 bg-violet-100 rounded-lg">
-              <Cpu className="w-3.5 h-3.5 text-violet-600" />
-            </div>
-            <span className="text-[10px] font-black text-violet-700 uppercase tracking-widest">LlamaCloud Parser</span>
-            {llamaCloudKey && <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">✓ Active</span>}
-          </div>
-          <a href="https://cloud.llamaindex.ai" target="_blank" rel="noopener noreferrer"
-            className="text-[9px] font-black text-violet-600 uppercase hover:underline">Get Key</a>
-        </div>
-        <p className="text-[9px] font-bold text-slate-400 leading-snug">
-          API keys are managed only in Settings. Add your LlamaCloud key there to enable PDF/DOC/URL parsing.
-        </p>
-      </div>
+
 
       {/* Stats bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -296,19 +281,7 @@ export const ResearchLibrary: React.FC<Props> = ({ geminiKey, llamaCloudKey, onB
         ))}
       </div>
 
-      {/* RAG info banner */}
-      <div className="flex items-start gap-3 p-4 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-800/50 rounded-2xl">
-        <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-        <p className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 leading-relaxed">
-          Documents stored here are automatically chunked and embedded. When you run any AI analysis
-          (Live Monitor, Historical Research, Flood Prediction), Bio-SentinelX retrieves the most
-          relevant passages from this library and injects them into the AI prompt — grounding the
-          output in your own research evidence.
-          {geminiKey
-            ? ' Dense Gemini embeddings are active for high-accuracy semantic retrieval.'
-            : ' No Gemini key detected — using TF-IDF keyword retrieval (still effective). Add a Gemini key in Settings for semantic embedding.'}
-        </p>
-      </div>
+
 
       {/* Add Document form */}
       {showForm && (
@@ -792,20 +765,6 @@ export const ResearchLibrary: React.FC<Props> = ({ geminiKey, llamaCloudKey, onB
         </div>
       )}
 
-      {/* Usage notes */}
-      <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-100 dark:border-slate-700 p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <CheckCircle2 className="w-4 h-4 text-teal-500" />
-          <span className="text-[10px] font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">How RAG Works in Bio-SentinelX</span>
-        </div>
-        <div className="space-y-2 text-[11px] font-semibold text-slate-500 dark:text-slate-400 leading-relaxed">
-          <p>1. <strong className="text-slate-700 dark:text-slate-200">Chunking:</strong> Uploaded text is split into ~650-character overlapping segments, preserving sentence boundaries.</p>
-          <p>2. <strong className="text-slate-700 dark:text-slate-200">Embedding:</strong> {geminiKey ? 'Gemini text-embedding-004 generates 768-dim dense vectors for each chunk.' : 'TF-IDF sparse vectors are built per chunk (Gemini key needed for dense semantic embedding).'} If Gemini quota is exceeded, TF-IDF fallback activates automatically.</p>
-          <p>3b. <strong className="text-slate-700 dark:text-slate-200">PDF Parsing (LlamaParse):</strong> {llamaCloudKey ? 'LlamaCloud API key detected. Use the PDF or URL tab to extract text from PDFs, DOCX, PPTX, or web pages before adding to the library.' : 'Enter a LlamaCloud API key in the field above to enable PDF/DOCX parsing via LlamaParse.'}</p>
-          <p>3. <strong className="text-slate-700 dark:text-slate-200">Retrieval:</strong> Before every AI call, a query is built from the current weather context + location. Top-6 most similar chunks are fetched via cosine similarity with source-diversity constraints.</p>
-          <p>4. <strong className="text-slate-700 dark:text-slate-200">Injection:</strong> Retrieved passages are prepended to the AI prompt as <em>Retrieved Research Context</em>, grounding the output in your uploaded evidence alongside Bio-SentinelX's built-in science framework.</p>
-        </div>
-      </div>
     </div>
   );
 };

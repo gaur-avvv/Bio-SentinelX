@@ -361,10 +361,10 @@ export const generateHealthRiskAssessment = async (
   datasetSummary: string,
   userFeedback: string,
   weatherFeedback: string,
-  lifestyleData?: LifestyleData,
-  reportImage?: string, // Base64 image
   aiProvider: string,
   aiModel: string,
+  lifestyleData?: LifestyleData,
+  reportImage?: string, // Base64 image
   apiKey?: string,
   mlPrediction?: any,
 ): Promise<AnalysisResponse> => {
@@ -929,10 +929,10 @@ export const chatWithWeatherAssistant = async (
   weather: WeatherData,
   history: ChatMessage[],
   message: string,
-  apiKey?: string,
-  mlPrediction?: any,
   aiProvider: string,
   aiModel: string,
+  apiKey?: string,
+  mlPrediction?: any,
   options?: {
     deepAnalysis?: boolean;
     agenticMode?: boolean;

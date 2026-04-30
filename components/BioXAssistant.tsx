@@ -141,10 +141,10 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
         weather,
         chatMessages,
         userMsg,
-        aiKey,
-        mlPrediction,
         aiProvider,
         aiModel,
+        aiKey,
+        mlPrediction,
         {
           deepAnalysis: assistantMode === 'deep',
           agenticMode: assistantMode === 'deep',
