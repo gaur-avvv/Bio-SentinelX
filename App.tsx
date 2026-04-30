@@ -8,7 +8,6 @@ import { HistoricalAnalysis } from './components/HistoricalAnalysis';
 import { SettingsPage } from './components/SettingsPage';
 import { WeatherCard } from './components/WeatherCard';
 import { AuthLanding } from './components/auth/AuthLanding';
-import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProfileOnboardingWizard } from './components/auth/ProfileOnboardingWizard';
 import { DataCacheProvider } from './contexts/DataCacheContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
@@ -46,52 +45,7 @@ import {
   type WeatherData
 } from './types';
 
-interface EBState {
-  hasError: boolean;
-  message: string;
-}
 
-export class AppErrorBoundary extends Component<{ children: ReactNode }, EBState> {
-  constructor(props: { children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false, message: '' };
-  }
-
-  static getDerivedStateFromError(error: Error): EBState {
-    return { hasError: true, message: error?.message || String(error) };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('[BioSentinel] Uncaught render error:', error, info);
-  }
-
-  render(): ReactNode {
-    if (!this.state.hasError) return this.props.children;
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-8">
-        <div className="max-w-lg w-full bg-white border border-rose-100 rounded-3xl p-8 shadow-xl">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="p-3 bg-rose-500 rounded-2xl"><AlertTriangle className="w-6 h-6 text-white" /></div>
-            <div>
-              <h2 className="text-base font-black text-slate-900 uppercase tracking-wider">BioSentinel Crashed</h2>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">React render error</p>
-            </div>
-          </div>
-          <pre className="text-xs font-mono text-rose-700 bg-rose-50 rounded-xl p-4 whitespace-pre-wrap break-all">{this.state.message}</pre>
-          <button
-            onClick={() => {
-              this.setState({ hasError: false, message: '' });
-              window.location.reload();
-            }}
-            className="mt-6 w-full py-3 bg-slate-900 text-white font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-teal-600 transition-all"
-          >
-            Reload App
-          </button>
-        </div>
-      </div>
-    );
-  }
-}
 
 const AppInner: React.FC = () => {
   const { appMode, systemPreference, useCustomColors } = useTheme();
@@ -550,66 +504,57 @@ const AppInner: React.FC = () => {
             </div>
 
             {view === 'dashboard' ? (
-              <ErrorBoundary fallbackTitle="Dashboard failed to render">
-                <>
-                  <WeatherCard data={weather} />
-                  <AnalysisDashboard
-                    weather={weather}
-                    loadingState={loadingState}
-                    setLoadingState={setLoadingState}
-                    aiProvider={aiProvider}
-                    aiModel={aiModel}
-                    aiKey={aiKey}
-                    databaseSettings={databaseSettings}
-                    localIntelEnabled={onboardingComplete}
-                    onOpenAssistant={() => setView('assistant')}
-                  />
-                </>
-              </ErrorBoundary>
+              <>
+                <WeatherCard data={weather} />
+                <AnalysisDashboard
+                  weather={weather}
+                  loadingState={loadingState}
+                  setLoadingState={setLoadingState}
+                  aiProvider={aiProvider}
+                  aiModel={aiModel}
+                  aiKey={aiKey}
+                  databaseSettings={databaseSettings}
+                  localIntelEnabled={onboardingComplete}
+                  onOpenAssistant={() => setView('assistant')}
+                />
+              </>
             ) : view === 'historical' ? (
-              <ErrorBoundary fallbackTitle="Historical Analysis failed to render">
-                <HistoricalAnalysis
-                  location={location}
-                  weather={weather}
-                  onBack={() => setView('dashboard')}
-                  geminiKey={geminiKey}
-                  aiProvider={aiProvider}
-                  aiModel={aiModel}
-                  aiKey={aiKey}
-                />
-              </ErrorBoundary>
+              <HistoricalAnalysis
+                location={location}
+                weather={weather}
+                onBack={() => setView('dashboard')}
+                geminiKey={geminiKey}
+                aiProvider={aiProvider}
+                aiModel={aiModel}
+                aiKey={aiKey}
+              />
             ) : view === 'flood' ? (
-              <ErrorBoundary fallbackTitle="Flood Prediction failed to render">
-                <FloodPrediction
-                  weather={weather}
-                  onBack={() => setView('dashboard')}
-                  aiProvider={aiProvider}
-                  aiModel={aiModel}
-                  aiKey={aiKey}
-                  mlApiUrl={floodMlApiUrl}
-                  mapProvider={mapProvider}
-                  mapplsToken={mapplsToken}
-                  mapTilerKey={mapTilerKey}
-                  mapboxToken={mapboxToken}
-                  arcGisKey={arcGisKey}
-                />
-              </ErrorBoundary>
+              <FloodPrediction
+                weather={weather}
+                onBack={() => setView('dashboard')}
+                aiProvider={aiProvider}
+                aiModel={aiModel}
+                aiKey={aiKey}
+                mlApiUrl={floodMlApiUrl}
+                mapProvider={mapProvider}
+                mapplsToken={mapplsToken}
+                mapTilerKey={mapTilerKey}
+                mapboxToken={mapboxToken}
+                arcGisKey={arcGisKey}
+              />
             ) : view === 'assistant' ? (
-              <ErrorBoundary fallbackTitle="BioX Assistant failed to render">
-                <BioXAssistant
-                  weather={weather}
-                  aiKey={aiKey}
-                  aiProvider={aiProvider}
-                  aiModel={aiModel}
-                  geminiKey={geminiKey}
-                  llamaCloudKey={llamaCloudKey}
-                  mcpSettings={mcpSettings}
-                  onBack={() => setView('dashboard')}
-                  onAddAlerts={(a) => addAlerts(a)}
-                />
-              </ErrorBoundary>
+              <BioXAssistant
+                weather={weather}
+                aiKey={aiKey}
+                aiProvider={aiProvider}
+                aiModel={aiModel}
+                geminiKey={geminiKey}
+                llamaCloudKey={llamaCloudKey}
+                mcpSettings={mcpSettings}
+                onBack={() => setView('dashboard')}
+                onAddAlerts={(a) => addAlerts(a)}
+              />
             ) : (
-              <ErrorBoundary fallbackTitle="Settings failed to render">
               <SettingsPage
                 location={location}
                 setLocation={setLocation}
@@ -671,7 +616,6 @@ const AppInner: React.FC = () => {
                 setEmailAlertSettings={setEmailAlertSettings}
                 weather={weather}
               />
-              </ErrorBoundary>
             )}
           </div>
         </div>
@@ -683,11 +627,9 @@ const AppInner: React.FC = () => {
 export default function App() {
   return (
     <ThemeProvider>
-      <AppErrorBoundary>
-        <DataCacheProvider>
-          <AppInner />
-        </DataCacheProvider>
-      </AppErrorBoundary>
+      <DataCacheProvider>
+        <AppInner />
+      </DataCacheProvider>
     </ThemeProvider>
   );
 }
