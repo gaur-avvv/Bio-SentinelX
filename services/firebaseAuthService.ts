@@ -1,33 +1,28 @@
+import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
+import {
+    getAuth,
+    Auth,
+    GoogleAuthProvider,
+    GithubAuthProvider,
+    onAuthStateChanged,
+    createUserWithEmailAndPassword,
+    signInWithEmailAndPassword,
+    sendSignInLinkToEmail,
+    signInWithEmailLink,
+    isSignInWithEmailLink,
+    signInWithPopup,
+    signOut,
+    Unsubscribe,
+} from 'firebase/auth';
+
 export interface AuthUser {
     uid: string;
     email: string | null;
     displayName: string | null;
 }
 
-type Unsubscribe = () => void;
-
-type FirebaseModules = {
-    app: {
-        initializeApp: (config: Record<string, string>) => unknown;
-    };
-    auth: {
-        getAuth: (app?: unknown) => unknown;
-        GoogleAuthProvider: new () => { setCustomParameters: (params: Record<string, string>) => void };
-        GithubAuthProvider: new () => { setCustomParameters: (params: Record<string, string>) => void };
-        isSignInWithEmailLink: (auth: unknown, href: string) => boolean;
-        onAuthStateChanged: (auth: unknown, cb: (user: unknown) => void) => Unsubscribe;
-        createUserWithEmailAndPassword: (auth: unknown, email: string, password: string) => Promise<unknown>;
-        signInWithEmailAndPassword: (auth: unknown, email: string, password: string) => Promise<unknown>;
-        sendSignInLinkToEmail: (auth: unknown, email: string, settings: Record<string, unknown>) => Promise<void>;
-        signInWithEmailLink: (auth: unknown, email: string, href: string) => Promise<unknown>;
-        signInWithPopup: (auth: unknown, provider: unknown) => Promise<unknown>;
-        signOut: (auth: unknown) => Promise<void>;
-    };
-};
-
-let modulesPromise: Promise<FirebaseModules> | null = null;
-let appInstance: unknown;
-let authInstance: unknown;
+let appInstance: FirebaseApp | null = null;
+let authInstance: Auth | null = null;
 
 function getFirebaseConfig(): Record<string, string> {
     return {
@@ -49,67 +44,48 @@ function validateFirebaseConfig(config: Record<string, string>): void {
     }
 }
 
-async function loadFirebaseModules(): Promise<FirebaseModules> {
-    if (!modulesPromise) {
-        // Use esm.sh instead of gstatic — gstatic Firebase CDN does not
-        // serve the correct CORS / content-type headers for Vite dynamic imports.
-        const appUrl = 'https://esm.sh/firebase@11.8.0/app';
-        const authUrl = 'https://esm.sh/firebase@11.8.0/auth';
-        modulesPromise = Promise.all([
-            import(/* @vite-ignore */ appUrl),
-            import(/* @vite-ignore */ authUrl),
-        ]).then(([app, auth]) => ({ app: app as FirebaseModules['app'], auth: auth as FirebaseModules['auth'] }));
-    }
-    return modulesPromise;
-}
+function getFirebaseAuth(): Auth {
+    if (authInstance) return authInstance;
 
-async function ensureFirebase(): Promise<{ auth: unknown; modules: FirebaseModules }> {
-    const modules = await loadFirebaseModules();
     const config = getFirebaseConfig();
     validateFirebaseConfig(config);
 
-    if (!appInstance) {
-        appInstance = modules.app.initializeApp(config);
-    }
-    if (!authInstance) {
-        authInstance = modules.auth.getAuth(appInstance);
-    }
-
-    return { auth: authInstance, modules };
+    // Reuse existing Firebase app if already initialized (e.g. hot reload)
+    appInstance = getApps().length > 0 ? getApp() : initializeApp(config);
+    authInstance = getAuth(appInstance);
+    return authInstance;
 }
 
-function toAuthUser(user: unknown): AuthUser | null {
-    if (!user || typeof user !== 'object') return null;
-    const u = user as Record<string, unknown>;
-    if (typeof u.uid !== 'string') return null;
+function toAuthUser(user: { uid: string; email: string | null; displayName: string | null } | null): AuthUser | null {
+    if (!user) return null;
     return {
-        uid: u.uid,
-        email: typeof u.email === 'string' ? u.email : null,
-        displayName: typeof u.displayName === 'string' ? u.displayName : null,
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName,
     };
 }
 
 export async function onAuthUserChanged(callback: (user: AuthUser | null) => void): Promise<Unsubscribe> {
-    const { auth, modules } = await ensureFirebase();
-    return modules.auth.onAuthStateChanged(auth, user => callback(toAuthUser(user)));
+    const auth = getFirebaseAuth();
+    return onAuthStateChanged(auth, user => callback(toAuthUser(user)));
 }
 
 export async function sendEmailLink(email: string): Promise<void> {
-    const { auth, modules } = await ensureFirebase();
+    const auth = getFirebaseAuth();
     const actionCodeSettings = {
         url: `${window.location.origin}${window.location.pathname}`,
         handleCodeInApp: true,
     };
-    await modules.auth.sendSignInLinkToEmail(auth, email, actionCodeSettings);
+    await sendSignInLinkToEmail(auth, email, actionCodeSettings);
     localStorage.setItem('emailForSignIn', email);
 }
 
 export async function completeEmailLinkSignIn(): Promise<boolean> {
-    const { auth, modules } = await ensureFirebase();
+    const auth = getFirebaseAuth();
     const href = window.location.href;
-    if (!modules.auth.isSignInWithEmailLink(auth, href)) return false;
+    if (!isSignInWithEmailLink(auth, href)) return false;
 
-    // Remove sensitive query params from the address bar immediately.
+    // Remove sensitive query params from the address bar immediately
     window.history.replaceState({}, '', `${window.location.pathname}`);
 
     let email = localStorage.getItem('emailForSignIn');
@@ -118,36 +94,36 @@ export async function completeEmailLinkSignIn(): Promise<boolean> {
     }
     if (!email) return false;
 
-    await modules.auth.signInWithEmailLink(auth, email, href);
+    await signInWithEmailLink(auth, email, href);
     localStorage.removeItem('emailForSignIn');
     return true;
 }
 
 export async function signInWithGoogle(): Promise<void> {
-    const { auth, modules } = await ensureFirebase();
-    const provider = new modules.auth.GoogleAuthProvider();
+    const auth = getFirebaseAuth();
+    const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
-    await modules.auth.signInWithPopup(auth, provider);
+    await signInWithPopup(auth, provider);
 }
 
 export async function signInWithGithub(): Promise<void> {
-    const { auth, modules } = await ensureFirebase();
-    const provider = new modules.auth.GithubAuthProvider();
+    const auth = getFirebaseAuth();
+    const provider = new GithubAuthProvider();
     provider.setCustomParameters({ allow_signup: 'true' });
-    await modules.auth.signInWithPopup(auth, provider);
+    await signInWithPopup(auth, provider);
 }
 
 export async function signUpWithEmailPassword(email: string, password: string): Promise<void> {
-    const { auth, modules } = await ensureFirebase();
-    await modules.auth.createUserWithEmailAndPassword(auth, email, password);
+    const auth = getFirebaseAuth();
+    await createUserWithEmailAndPassword(auth, email, password);
 }
 
 export async function signInWithEmailPassword(email: string, password: string): Promise<void> {
-    const { auth, modules } = await ensureFirebase();
-    await modules.auth.signInWithEmailAndPassword(auth, email, password);
+    const auth = getFirebaseAuth();
+    await signInWithEmailAndPassword(auth, email, password);
 }
 
 export async function signOutUser(): Promise<void> {
-    const { auth, modules } = await ensureFirebase();
-    await modules.auth.signOut(auth);
+    const auth = getFirebaseAuth();
+    await signOut(auth);
 }
