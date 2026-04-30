@@ -51,8 +51,10 @@ function validateFirebaseConfig(config: Record<string, string>): void {
 
 async function loadFirebaseModules(): Promise<FirebaseModules> {
     if (!modulesPromise) {
-        const appUrl = 'https://www.gstatic.com/firebasejs/11.8.0/firebase-app.js';
-        const authUrl = 'https://www.gstatic.com/firebasejs/11.8.0/firebase-auth.js';
+        // Use esm.sh instead of gstatic — gstatic Firebase CDN does not
+        // serve the correct CORS / content-type headers for Vite dynamic imports.
+        const appUrl = 'https://esm.sh/firebase@11.8.0/app';
+        const authUrl = 'https://esm.sh/firebase@11.8.0/auth';
         modulesPromise = Promise.all([
             import(/* @vite-ignore */ appUrl),
             import(/* @vite-ignore */ authUrl),
