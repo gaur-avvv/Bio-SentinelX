@@ -143,86 +143,129 @@ Bio-SentinelX integrates **15+ AI models**, **real-time environmental data**, an
 
 ### High-Level Component Flow
 ```mermaid
-flowchart TD
-    %% Styling
-    classDef client fill:#f8fafc,stroke:#4f46e5,stroke-width:2px,color:#0f172a
-    classDef orchestrator fill:#fffbeb,stroke:#ea580c,stroke-width:2px,color:#431407
-    classDef search fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d
-    classDef backend fill:#fef2f2,stroke:#e11d48,stroke-width:2px,color:#881337
-    classDef data fill:#f3f4f6,stroke:#475569,stroke-width:2px,color:#0f172a
+flowchart LR
+    %% ========== STYLING WITH OPAQUE BACKGROUNDS ==========
+    classDef client fill:#ffffff,stroke:#3b82f6,stroke-width:3px,color:#1e3a8a,rx:8
+    classDef security fill:#ffffff,stroke:#f97316,stroke-width:3px,color:#7c2d12,rx:8
+    classDef orchestrator fill:#ffffff,stroke:#eab308,stroke-width:3px,color:#713f12,rx:8
+    classDef search fill:#ffffff,stroke:#22c55e,stroke-width:3px,color:#14532d,rx:8
+    classDef backend fill:#ffffff,stroke:#ef4444,stroke-width:3px,color:#7f1d1d,rx:8
+    classDef data fill:#ffffff,stroke:#64748b,stroke-width:3px,color:#334155,rx:8
+    classDef observability fill:#ffffff,stroke:#a855f7,stroke-width:3px,color:#581c87,rx:8
+    classDef subgraph_bg fill:#ffffff,stroke:#1e293b,stroke-width:2px,color:#0f172a,rx:12
+    linkStyle default stroke:#334155,stroke-width:2px
 
-    subgraph Client_Layer ["🖥️ Frontend Layer (React 19)"]
-        UI["User Interface & Dashboards"]
-        AM["Memory & Context Manager"]
-        IML["In-Browser ML Engines"]
-        VDB["Local Vector DB (RAG)"]
-        RL["IP Rate Limiter"]
-        WS["Web Search & Deep Research"]
+    %% ========== LAYER 1: CLIENT ==========
+    subgraph Client ["🖥️ Frontend (React 19 + PWA)"]
+        direction TB
+        UI["🎨 Dashboard & UI"]
+        AM["🧠 Context Manager"]
+        IML["⚡ Edge ML (TF.js)"]
+        VDB["📚 Local Vector DB"]
+        OFF["📴 Offline Sync"]
     end
-    class Client_Layer client
+    class Client client
+    style Client fill:#eff6ff,stroke:#3b82f6,stroke-width:3px
 
-    subgraph Orchestration_Layer ["🧠 AI Orchestration Hub"]
-        FALL["Intelligent Fallback Engine"]
-        MCA["Multi-Model Connector"]
-        PROMPT["Prompt & LRU Cache"]
-        CoT["CoT Query Builder & Reasoning"]
+    %% ========== LAYER 2: SECURITY ==========
+    subgraph Security ["🔐 Security Gateway"]
+        direction TB
+        AUTH["🔑 OAuth 2.0 / JWT"]
+        PII["🔒 PII Redaction"]
+        POLICY["✅ HIPAA/GDPR Engine"]
     end
-    class Orchestration_Layer orchestrator
+    class Security security
+    style Security fill:#fff7ed,stroke:#f97316,stroke-width:3px
 
-    subgraph Search_Layer ["🌐 External Research APIs"]
-        PUBMED["PubMed API"]
-        OAPERS["OpenAlex Papers"]
-        TRIALS["ClinicalTrials.gov"]
-        WHO["WHO / CDC Data"]
-        WIKI["Wikipedia Knowledge"]
-        GOOGLE["Google Search"]
+    %% ========== LAYER 3: ORCHESTRATION ==========
+    subgraph Orchestrator ["🧠 AI Orchestration Hub"]
+        direction TB
+        GW["🚪 API Gateway"]
+        CoT["🔍 Clinical Reasoner"]
+        CACHE["✍️ Prompt Cache (Redis)"]
+        MCA["🔗 Multi-Model Router"]
+        GUARD["🛡️ Output Guardrails"]
     end
-    class Search_Layer search
+    class Orchestrator orchestrator
+    style Orchestrator fill:#fefce8,stroke:#eab308,stroke-width:3px
 
-    subgraph Service_Layer ["⚙️ Backend Microservices"]
-        FAST["FastAPI ML Server"]
-        SURV["Health Surveillance API"]
-        GEO["Geospatial Service"]
+    %% ========== LAYER 4: EXTERNAL SEARCH ==========
+    subgraph Search ["🌐 Research APIs"]
+        direction TB
+        PUBMED["📄 PubMed"]
+        TRIALS["🏥 ClinicalTrials"]
+        WHO["🌍 WHO/CDC"]
+        GOOGLE["🔎 Google Search"]
+        RCACHE["🗄️ API Response Cache"]
     end
-    class Service_Layer backend
+    class Search search
+    style Search fill:#f0fdf4,stroke:#22c55e,stroke-width:3px
 
-    subgraph Data_Layer ["💾 Data & Persistence"]
-        FIRE["Firebase / Supabase Auth"]
-        WEATH["Environmental APIs"]
-        SQL["SQLite / LocalStorage"]
+    %% ========== LAYER 5: BACKEND SERVICES ==========
+    subgraph Backend ["⚙️ Microservices (FastAPI)"]
+        direction TB
+        ML["🤖 Inference Server"]
+        SURV["📊 Surveillance API"]
+        GEO["🗺️ Geospatial Service"]
+        QUEUE["⏳ Async Queue (Celery)"]
     end
-    class Data_Layer data
+    class Backend backend
+    style Backend fill:#fef2f2,stroke:#ef4444,stroke-width:3px
 
-    %% --- Flow Connections ---
+    %% ========== LAYER 6: DATA & OBSERVABILITY ==========
+    subgraph Infrastructure ["💾 Data & Observability"]
+        direction TB
+        SQL["🗃️ PostgreSQL (Encrypted)"]
+        VECTOR["🧭 Cloud Vector Store"]
+        PROM["📊 Prometheus/Grafana"]
+        TRACES["🔗 Jaeger Tracing"]
+    end
+    class Infrastructure data
+    class PROM,TRACES observability
+    style Infrastructure fill:#f8fafc,stroke:#64748b,stroke-width:3px
+
+    %% ========== FLOW: REQUEST PATH ==========
+    UI -->|"1. Query + JWT"| AUTH
+    AUTH -->|"2. Validated"| PII
+    PII -->|"3. Anonymized"| GW
+    GW -->|"4. Route"| CoT
     
-    %% Client Interactions
-    UI <-->|"Context & History"| AM
-    UI -->|"Offline Analytics"| IML
-    UI <-->|"Document Retrieval"| VDB
-    UI -->|"User Query"| RL
-    
-    %% Search & Research Flow
-    RL --"Validated Request"--> WS
-    WS --"Build Medical Prompt"--> CoT
-    WS --"Parallel Scrape"--> PUBMED & OAPERS & TRIALS & WHO & WIKI & GOOGLE
-    
-    %% Orchestration Flow
-    AM --"Active Session"--> FALL
-    FALL --"Select Best Model"--> MCA
-    CoT --"Inject Clinical Context"--> PROMPT
-    PROMPT --"Execute Multi-LLM"--> MCA
-    MCA --"Synthesized Insight"--> UI
-    
-    %% Service Interactions
-    UI --"Submit Prediction"--> FAST
-    UI --"Log Symptom Alerts"--> SURV
-    UI --"Spatial Rendering"--> GEO
-    
-    %% External Data Connections
-    FAST <-->|"Live Climatology"| WEATH
-    SURV --"Persist Incidents"--> SQL
-    FAST --"Model Weights"--> SQL
-    UI --"Authentication"--> FIRE
+    %% ========== FLOW: RESEARCH & REASONING ==========
+    CoT -->|"5. Parallel Fetch"| RCACHE
+    RCACHE -->|"Cache Hit"| CoT
+    RCACHE -->|"Miss"| PUBMED & TRIALS & WHO & GOOGLE
+    PUBMED & TRIALS & WHO & GOOGLE -->|"6. Aggregate"| RCACHE
+    CoT -->|"7. Clinical Prompt"| CACHE
+    CACHE -->|"8. Execute"| MCA
+    MCA -->|"9. Raw Output"| GUARD
+    GUARD -->|"10. Verified"| UI
+
+    %% ========== FLOW: SERVICES & PERSISTENCE ==========
+    UI -->|"Prediction"| ML
+    UI -->|"Alert"| SURV
+    ML <-->|"Features"| VECTOR
+    SURV -->|"Logs"| SQL
+    ML -->|"Heavy Task"| QUEUE
+    QUEUE -.->|"Async"| ML
+
+    %% ========== FLOW: OBSERVABILITY (Cross-Cutting) ==========
+    GW & ML & MCA -->|"Metrics"| PROM
+    GW & ML & MCA -->|"Spans"| TRACES
+
+    %% ========== FLOW: OFFLINE & EDGE ==========
+    OFF -.->|"Sync When Online"| SQL
+    IML <-->|"Local Inference"| UI
+    VDB <-->|"RAG"| UI
+
+    %% ========== LEGEND WITH WHITE BACKGROUND ==========
+    subgraph Legend ["📋 Legend"]
+        direction LR
+        L1["<b>Solid Line</b>: Sync Request"]
+        L2["<b>Dashed Line</b>: Async Operation"]
+        L3["<b>Colors</b>: Domain Layer"]
+    end
+    class Legend client
+    style Legend fill:#ffffff,stroke:#1e293b,stroke-width:3px
 ```
 
 ### Detailed Architecture Overview
