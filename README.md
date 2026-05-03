@@ -143,88 +143,103 @@ Bio-SentinelX integrates **15+ AI models**, **real-time environmental data**, an
 
 ### High-Level Component Flow
 ```mermaid
-graph TD
-    subgraph Client_Layer [Frontend Layer - React 19 + Vite]
-        UI[User Interface / Dashboards]
-        AM[Memory & Context Manager]
-        IML[In-Browser ML Engines]
-        VDB[Local Vector DB / RAG]
-        WS[Web Search Module]
-    end
+flowchart TD
+    %% Styling
+    classDef client fill:#f8fafc,stroke:#4f46e5,stroke-width:2px,color:#0f172a
+    classDef orchestrator fill:#fffbeb,stroke:#ea580c,stroke-width:2px,color:#431407
+    classDef search fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d
+    classDef backend fill:#fef2f2,stroke:#e11d48,stroke-width:2px,color:#881337
+    classDef data fill:#f3f4f6,stroke:#475569,stroke-width:2px,color:#0f172a
 
-    subgraph Orchestration_Layer [AI Orchestration Hub]
-        FALL[Intelligent Fallback Engine]
-        MCA[Multi-Model Connector]
-        PROMPT[Prompt & LRU Cache]
-        CoT[Chain of Thought Reasoning]
+    subgraph Client_Layer ["🖥️ Frontend Layer (React 19)"]
+        UI["User Interface & Dashboards"]
+        AM["Memory & Context Manager"]
+        IML["In-Browser ML Engines"]
+        VDB["Local Vector DB (RAG)"]
+        RL["IP Rate Limiter"]
+        WS["Web Search & Deep Research"]
     end
+    class Client_Layer client
 
-    subgraph Search_Layer [Search & Research Layer]
-        PUBMED[PubMed API]
-        OAPERS[OpenAlex Papers]
-        TRIALS[ClinicalTrials]
-        WHO[WHO/CDC Data]
-        WIKI[Wikipedia Knowledge]
-        GOOGLE[Google Search]
+    subgraph Orchestration_Layer ["🧠 AI Orchestration Hub"]
+        FALL["Intelligent Fallback Engine"]
+        MCA["Multi-Model Connector"]
+        PROMPT["Prompt & LRU Cache"]
+        CoT["CoT Query Builder & Reasoning"]
     end
+    class Orchestration_Layer orchestrator
 
-    subgraph Service_Layer [Backend Microservices]
-        FAST[FastAPI ML Server]
-        SURV[Health Surveillance API]
-        GEO[Geospatial Service]
+    subgraph Search_Layer ["🌐 External Research APIs"]
+        PUBMED["PubMed API"]
+        OAPERS["OpenAlex Papers"]
+        TRIALS["ClinicalTrials.gov"]
+        WHO["WHO / CDC Data"]
+        WIKI["Wikipedia Knowledge"]
+        GOOGLE["Google Search"]
     end
+    class Search_Layer search
 
-    subgraph Data_Layer [Data & Persistence]
-        FIRE[Firebase / Supabase]
-        WEATH[Environmental APIs]
-        SQL[SQLite / localStore]
+    subgraph Service_Layer ["⚙️ Backend Microservices"]
+        FAST["FastAPI ML Server"]
+        SURV["Health Surveillance API"]
+        GEO["Geospatial Service"]
     end
+    class Service_Layer backend
 
-    UI --> AM
-    UI --> IML
-    UI --> VDB
-    UI --> WS
+    subgraph Data_Layer ["💾 Data & Persistence"]
+        FIRE["Firebase / Supabase Auth"]
+        WEATH["Environmental APIs"]
+        SQL["SQLite / LocalStorage"]
+    end
+    class Data_Layer data
+
+    %% --- Flow Connections ---
     
-    WS --> PUBMED
-    WS --> OAPERS
-    WS --> TRIALS
-    WS --> WHO
-    WS --> WIKI
-    WS --> GOOGLE
+    %% Client Interactions
+    UI <-->|"Context & History"| AM
+    UI -->|"Offline Analytics"| IML
+    UI <-->|"Document Retrieval"| VDB
+    UI -->|"User Query"| RL
     
-    AM --> FALL
-    FALL --> MCA
-    MCA --> PROMPT
-    MCA --> CoT
+    %% Search & Research Flow
+    RL --"Validated Request"--> WS
+    WS --"Build Medical Prompt"--> CoT
+    WS --"Parallel Scrape"--> PUBMED & OAPERS & TRIALS & WHO & WIKI & GOOGLE
     
-    PROMPT --> |Multi-LLM| MCA
+    %% Orchestration Flow
+    AM --"Active Session"--> FALL
+    FALL --"Select Best Model"--> MCA
+    CoT --"Inject Clinical Context"--> PROMPT
+    PROMPT --"Execute Multi-LLM"--> MCA
+    MCA --"Synthesized Insight"--> UI
     
-    UI --> FAST
-    UI --> SURV
+    %% Service Interactions
+    UI --"Submit Prediction"--> FAST
+    UI --"Log Symptom Alerts"--> SURV
+    UI --"Spatial Rendering"--> GEO
     
-    FAST --> WEATH
-    SURV --> SQL
-    FAST --> SQL
-    
-    UI --> FIRE
+    %% External Data Connections
+    FAST <-->|"Live Climatology"| WEATH
+    SURV --"Persist Incidents"--> SQL
+    FAST --"Model Weights"--> SQL
+    UI --"Authentication"--> FIRE
 ```
 
 ### Detailed Architecture Overview
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Client Layer                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────┐ │
-│  │   React     │  │   React     │  │   React     │  │ React │ │
-│  │  Dashboard  │  │  Assistant  │  │   Charts    │  │  ML   │ │
+│  │   React     │  │   React     │  │ Web Search  │  │ React │ │
+│  │  Dashboard  │  │  Assistant  │  │  & Deep Res │  │  ML   │ │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └───┬───┘ │
 │         │                 │                 │           │     │
 │  ┌──────┴──────┐  ┌─────┴──────┐  ┌──────┴──────┐  ┌─┴───┐ │
-│  │ React Query │  │  Context   │  │ LocalStorage│  │WebML│ │
-│  │   (State)   │  │  (Theme)   │  │   (Cache)   │  │TFLite│ │
+│  │ React Query │  │  Context   │  │IP Rate Limit│  │WebML│ │
+│  │   (State)   │  │  (Theme)   │  │ & CoT Logic │  │TFLite│ │
 │  └──────┬──────┘  └─────┬──────┘  └──────┬──────┘  └───┬───┘ │
 │         │                 │                 │           │     │
 └─────────┼─────────────────┼─────────────────┼───────────┼─────┘
-```,oldString:
           │                 │                 │           │
           ▼                 ▼                 ▼           ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -275,6 +290,8 @@ The **BioX Assistant** now integrates real-time web search capabilities to augme
   - 🎓 **Wikipedia**: World's largest general reference dataset via MediaWiki API **[No Auth]**
   - 🌍 **WHO / CDC**: Official global health guidelines and alerts **[No Auth]**
   - 🔎 **Google Custom Search**: General web results (optional API key fallback)
+- 🧠 **Contextual CoT Query Building**: Advanced Chain of Thought query construction with symptom and condition extraction heuristics for highly targeted medical searches.
+- 🛡️ **IP-Based Rate Limiting**: Robust client-side rate limiting using IP tracking to prevent API abuse and manage request volume.
 
 #### **Deep Research Mode**
 - Activates in the **Deep Analysis** tab

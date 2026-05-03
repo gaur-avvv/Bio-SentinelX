@@ -228,6 +228,78 @@ async function searchClinicalTrials(query: string): Promise<SearchResult[]> {
   }
 }
 
+// ─── Client Rate Limiter & CoT Query Builder ─────────────────────────────────
+
+const RATE_LIMIT_KEY = 'biosentinel_search_ratelimit';
+const MAX_REQUESTS_PER_MINUTE = 15;
+
+let cachedIp: string | null = null;
+async function getClientIp(): Promise<string> {
+  if (cachedIp) return cachedIp;
+  try {
+    const res = await fetch('https://api.ipify.org?format=json');
+    if (!res.ok) throw new Error('Failed to fetch IP');
+    const data = await res.json();
+    cachedIp = data.ip;
+    return cachedIp;
+  } catch (e) {
+    console.warn('[WebSearch] Could not fetch client IP, falling back to unknown_ip');
+    return 'unknown_ip';
+  }
+}
+
+/**
+ * Validates request limits per minute to prevent API abuse and IP bans.
+ * Returns true if allowed, false if rate limited.
+ */
+export async function checkRateLimit(): Promise<boolean> {
+  try {
+    const ip = await getClientIp();
+    const rateLimitKey = `${RATE_LIMIT_KEY}_${ip}`;
+    const now = Date.now();
+    const record = localStorage.getItem(rateLimitKey);
+    let history: number[] = record ? JSON.parse(record) : [];
+    
+    // Keep only timestamps from the last 60 seconds
+    history = history.filter(t => now - t < 60000);
+    
+    if (history.length >= MAX_REQUESTS_PER_MINUTE) {
+      console.warn(`[WebSearch] Rate limit exceeded for IP ${ip}. Maximum ${MAX_REQUESTS_PER_MINUTE} req/min allowed.`);
+      return false;
+    }
+    
+    history.push(now);
+    localStorage.setItem(rateLimitKey, JSON.stringify(history));
+    return true;
+  } catch (e) {
+    return true; // Fail open if localStorage is disabled
+  }
+}
+
+/**
+ * Implements a Chain of Thought (CoT) approach to build highly contextual
+ * queries capturing area, local conditions, user symptoms, and diseases.
+ */
+export function buildContextualCoTQuery(userMessage: string, context?: { city?: string; climate?: string; desc?: string }): string {
+  const locationContext = context?.city ? `in ${context.city}` : '';
+  const climateContext = context?.climate || context?.desc ? `(${context.desc})` : '';
+  
+  // Chain of Thought extraction heuristic to focus on medical terms
+  const symptomKeywords = ['pain', 'fever', 'cough', 'ache', 'rash', 'nausea', 'fatigue', 'symptom', 'disease', 'condition', 'outbreak', 'virus', 'infection'];
+  const words = userMessage.toLowerCase().split(/\W+/);
+  const extractedTerms = words.filter(w => symptomKeywords.some(k => w.includes(k) || k.includes(w)) && w.length > 2);
+  
+  const extractedContext = extractedTerms.length > 0 
+    ? `(Focus: ${[...new Set(extractedTerms)].join(', ')})` 
+    : "epidemiology symptoms disease";
+  
+  // Create a hyper-specific CoT query blending user questions with local reality and extracted medical concepts
+  const query = `${userMessage} ${locationContext} ${climateContext} ${extractedContext}`.trim();
+  
+  // Extended length to accommodate richer contextual data
+  return query.length > 150 ? query.substring(0, 150) : query;
+}
+
 // ─── Main Web Search Function ──────────────────────────────────────────────────
 
 export async function performWebSearch(
@@ -235,6 +307,11 @@ export async function performWebSearch(
   googleApiKey?: string,
   options?: { includeMedical?: boolean; includeGov?: boolean; includeTrials?: boolean; includeEncyclopedia?: boolean }
 ): Promise<SearchResult[]> {
+  const isAllowed = await checkRateLimit();
+  if (!isAllowed) {
+    throw new Error(`Rate limit exceeded: You've reached the search limit (${MAX_REQUESTS_PER_MINUTE}/min). Please wait a moment.`);
+  }
+
   const { includeMedical = true, includeGov = true, includeTrials = true, includeEncyclopedia = true } = options || {};
 
   const allResults: SearchResult[] = [];

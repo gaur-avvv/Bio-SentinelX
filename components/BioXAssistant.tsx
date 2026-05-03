@@ -7,7 +7,7 @@ import { chatWithWeatherAssistant } from '../services/geminiService';
 import { MLPrediction, submitFeedback } from '../services/mlService';
 import { maybeCreateSymptomAlertFromText } from '../services/symptomService';
 import { ResearchLibrary } from './ResearchLibrary';
-import { performWebSearch, performDeepResearch, getCachedSearch, setCachedSearch, type SearchResult } from '../services/webSearchService';
+import { performDeepResearch, buildContextualCoTQuery, type SearchResult } from '../services/webSearchService';
 import {
   getCurrentSessionMessages,
   appendMessages,
@@ -162,13 +162,42 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
     } catch { /* ignore symptom parsing errors */ }
 
     setChatError(null);
-    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setIsChatLoading(true);
+
+    let finalPrompt = userMsg;
+
+    // Chain of Thought Tool Calling: Web Search Integration
+    if (useWebSearch) {
+      setIsSearching(true);
+      try {
+        const contextualQuery = buildContextualCoTQuery(userMsg, {
+          city: weather.city,
+          climate: weather.climate,
+          desc: weather.description,
+        });
+
+        const deepResearch = await performDeepResearch(contextualQuery, geminiKey || aiKey);
+
+        const internetContext = `[SEARCH TOOL CHAIN OF THOUGHT]\nSystem performed background search for condition/disease context in ${weather.city}:\nResearch Summary: ${deepResearch.summary}\nKey Findings: ${deepResearch.keyFindings.join('; ')}\nPlease integrate these authoritative findings directly into your clinical or environmental answer.\n[/SEARCH TOOL]`;
+
+        finalPrompt = `${userMsg}\n\n${internetContext}`;
+      } catch (err: any) {
+        // If rate limited, we gracefully display the error but still proceed without internet context or block the request. Let's show as error and block to enforce rate limiting.
+        setChatError(err.message || 'Web search limit exceeded.');
+        setIsSearching(false);
+        setIsChatLoading(false);
+        return;
+      }
+      setIsSearching(false);
+    }
+
+    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+
     try {
       const rawResponse = await chatWithWeatherAssistant(
         weather,
         chatMessages,
-        userMsg,
+        finalPrompt,
         aiProvider,
         aiModel,
         aiKey,
