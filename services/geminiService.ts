@@ -1121,6 +1121,11 @@ export const chatWithWeatherAssistant = async (
 
       Always be concise, clinical yet empathetic. Do NOT provide definitive medical diagnoses. Focus on documentation, risk awareness, and preventative measures.
 
+  WEB SEARCH & GROUNDING:
+  - You have access to real-time web search capabilities (Google Search) for Gemini models.
+  - If you receive a [SEARCH TOOL CHAIN OF THOUGHT] block, it means the system performed a specialized medical search (PubMed, WHO, CDC). You MUST prioritize and integrate these authoritative findings.
+  - If the user asks for the latest information and you don't have it, you can state that you are performing a search or use the provided search context.
+
   OUTPUT RULES (PRIVACY + UX):
   - Do NOT output chain-of-thought, hidden reasoning, or meta commentary (e.g. "Since you asked...", "Let's think...", "We will...", step-by-step calculations).
   - Do NOT output <think>, <thinking>, or <analysis> tags (or their escaped forms). If you need to reason, do it silently.
@@ -1150,6 +1155,7 @@ export const chatWithWeatherAssistant = async (
       [PREDICTION: Potential Risk Name | CONFIDENCE: XX% | SUMMARY: A brief summary of findings and next steps.]
       4. When you provide a [PREDICTION], do NOT provide [OPTIONS].`
   );
+
   // Dynamic context is appended AFTER the static prefix so the prefix remains
   // identical across requests and qualifies for server-side prompt caching.
   const systemInstruction = `${_staticRole}
@@ -1159,11 +1165,11 @@ export const chatWithWeatherAssistant = async (
       ${memoryContext}
       ${lifestyleContext}
       ${docsCatalogContext}
-      ${deepAnalysis ? `\nDEEP ANALYSIS MODE: ACTIVE${options?.agenticMode ? ' (AGENTIC ORCHESTRATION ENABLED)' : ''}${options?.useMcpTools ? ' (MCP TOOLS ENABLED)' : ''}${options?.llamaCloudEnabled ? ' (LLAMAINDEX PARSER READY)' : ''}` : ''}
-      ${_chatRagContext ? `\nRESEARCH LIBRARY CONTEXT (use to ground your response in user-uploaded evidence):\n${_chatRagContext}` : ''}`;
+      ${deepAnalysis ? \`\nDEEP ANALYSIS MODE: ACTIVE\${options?.agenticMode ? ' (AGENTIC ORCHESTRATION ENABLED)' : ''}\${options?.useMcpTools ? ' (MCP TOOLS ENABLED)' : ''}\${options?.llamaCloudEnabled ? ' (LLAMAINDEX PARSER READY)' : ''}\` : ''}
+      \${_chatRagContext ? \`\nRESEARCH LIBRARY CONTEXT (use to ground your response in user-uploaded evidence):\n\${_chatRagContext}\` : ''}`;
 
   const userMessage = deepAnalysis
-    ? `${message}\n\n${kgContext}${mcpContext}\n\nRespond with sections: 1) Causal Pathway 2) Evidence Summary 3) Actions.`
+    ? \`\${message}\n\n\${kgContext}\${mcpContext}\n\nRespond with sections: 1) Causal Pathway 2) Evidence Summary 3) Actions.\`
     : message;
 
   // ---- Build OpenAI-format messages (shared by Groq & Pollinations) ----
@@ -1193,12 +1199,12 @@ export const chatWithWeatherAssistant = async (
     if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': \`Bearer \${apiKey}\`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: aiModel, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({})) as any;
-      const msg = err?.error?.message || `Groq API error ${res.status}`;
+      const msg = err?.error?.message || \`Groq API error \${res.status}\`;
       if (res.status === 429) throw new Error('Groq rate limit exceeded. Please wait a moment.');
       if (res.status === 401) throw new Error('Invalid Groq API key. Please check the sidebar.');
       throw new Error(msg);
@@ -1211,7 +1217,7 @@ export const chatWithWeatherAssistant = async (
   // ---- Pollinations ----
   if (routeProvider === 'pollinations') {
     const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (apiKey) pollinationsHeaders['Authorization'] = `Bearer ${apiKey}`;
+    if (apiKey) pollinationsHeaders['Authorization'] = \`Bearer \${apiKey}\`;
     const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
       method: 'POST',
       headers: pollinationsHeaders,
@@ -1219,11 +1225,11 @@ export const chatWithWeatherAssistant = async (
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({})) as any;
-      const msg = err?.error?.message || `Pollinations AI error ${res.status}`;
+      const msg = err?.error?.message || \`Pollinations AI error \${res.status}\`;
       if (res.status === 401) throw new Error('Invalid or missing Pollinations API key. Please check the sidebar.');
       if (res.status === 402) throw new Error('Pollinations pollen balance exhausted. Please top up at enter.pollinations.ai');
       if (res.status === 429) throw new Error('Pollinations rate limit exceeded. Please wait a moment.');
-      throw new Error(`${msg}. Try a different model.`);
+      throw new Error(\`\${msg}. Try a different model.\`);
     }
     const data = await res.json() as any;
     promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
@@ -1236,7 +1242,7 @@ export const chatWithWeatherAssistant = async (
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': \`Bearer \${apiKey}\`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://bio-sentinelx.app',
         'X-Title': 'Bio-SentinelX',
@@ -1245,7 +1251,7 @@ export const chatWithWeatherAssistant = async (
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({})) as any;
-      const msg = err?.error?.message || `OpenRouter API error ${res.status}`;
+      const msg = err?.error?.message || \`OpenRouter API error \${res.status}\`;
       if (res.status === 429) throw new Error('OpenRouter rate limit exceeded. Please wait a moment.');
       if (res.status === 401) throw new Error('Invalid OpenRouter API key. Please check the sidebar.');
       if (res.status === 402) throw new Error('OpenRouter credits exhausted. Top up at openrouter.ai/credits');
@@ -1303,7 +1309,13 @@ export const chatWithWeatherAssistant = async (
   const chat = ai.chats.create({
     model: aiModel,
     history: chatHistory,
-    config: { systemInstruction },
+    config: { 
+      systemInstruction,
+      tools: [{ googleSearch: {} }],
+      toolConfig: {
+        retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+      }
+    },
   });
   try {
     const response = await chat.sendMessage({ message: userMessage });
