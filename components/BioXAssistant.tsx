@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, memo } from 'react';
-import { Bot, Send, RefreshCcw, ChevronLeft, Copy, CheckCircle, XCircle, AlertCircle, ShieldAlert, ChevronRight, Database, Clock, Sparkles } from 'lucide-react';
+import { Bot, Send, RefreshCcw, ChevronLeft, Copy, CheckCircle, XCircle, AlertCircle, ShieldAlert, ChevronRight, Database, Clock, Sparkles, Globe, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { WeatherData, ChatMessage, HealthAlert, McpSettings, AiProvider } from '../types';
@@ -7,6 +7,7 @@ import { chatWithWeatherAssistant } from '../services/geminiService';
 import { MLPrediction, submitFeedback } from '../services/mlService';
 import { maybeCreateSymptomAlertFromText } from '../services/symptomService';
 import { ResearchLibrary } from './ResearchLibrary';
+import { performWebSearch, performDeepResearch, getCachedSearch, setCachedSearch, type SearchResult } from '../services/webSearchService';
 import {
   getCurrentSessionMessages,
   appendMessages,
@@ -31,7 +32,7 @@ interface BioXAssistantProps {
 }
 
 // ── Isolated chat input ────────────────────────────────────────────────────────
-const ChatInputForm = memo(({ onSubmit, disabled }: { onSubmit: (msg: string) => void; disabled: boolean }) => {
+const ChatInputForm = memo(({ onSubmit, disabled, useWebSearch, onToggleWebSearch, isSearching }: { onSubmit: (msg: string) => void; disabled: boolean; useWebSearch: boolean; onToggleWebSearch: (val: boolean) => void; isSearching: boolean }) => {
   const [value, setValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -46,27 +47,51 @@ const ChatInputForm = memo(({ onSubmit, disabled }: { onSubmit: (msg: string) =>
   return (
     <form
       onSubmit={handleSubmit}
-      className="p-4 sm:p-6 bg-slate-900 border-t border-slate-800 flex gap-3"
+      className="p-4 sm:p-6 bg-slate-900 border-t border-slate-800 flex flex-col gap-3"
       style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
     >
-      <input
-        ref={inputRef}
-        type="text"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="Ask Bio-Assistant anything..."
-        disabled={disabled}
-        className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10 transition-all placeholder:text-slate-400 disabled:opacity-50"
-        aria-label="Chat message input"
-      />
-      <button
-        type="submit"
-        disabled={disabled || !value.trim()}
-        className="p-3 bg-teal-600 text-white rounded-xl hover:bg-teal-500 shadow-xl shadow-teal-900/20 transition-all active:scale-95 shrink-0 disabled:opacity-40"
-        aria-label="Send message"
-      >
-        <Send className="w-5 h-5" />
-      </button>
+      <div className="flex gap-2 items-center">
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Ask Bio-Assistant anything..."
+          disabled={disabled}
+          className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/10 transition-all placeholder:text-slate-400 disabled:opacity-50"
+          aria-label="Chat message input"
+        />
+        <button
+          type="submit"
+          disabled={disabled || !value.trim()}
+          className="p-3 bg-teal-600 text-white rounded-xl hover:bg-teal-500 shadow-xl shadow-teal-900/20 transition-all active:scale-95 shrink-0 disabled:opacity-40"
+          aria-label="Send message"
+        >
+          <Send className="w-5 h-5" />
+        </button>
+      </div>
+      <div className="flex gap-2 items-center">
+        <button
+          type="button"
+          onClick={() => onToggleWebSearch(!useWebSearch)}
+          className={`px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+            useWebSearch
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20'
+              : 'bg-slate-800 text-slate-400 border border-slate-700 hover:border-slate-600'
+          } ${isSearching ? 'opacity-50 cursor-not-allowed' : ''}`}
+          disabled={isSearching}
+          aria-label="Toggle web search"
+        >
+          <Globe className="w-4 h-4" />
+          Web Search
+        </button>
+        {isSearching && (
+          <div className="flex items-center gap-1 text-xs text-blue-400">
+            <Sparkles className="w-4 h-4 animate-spin" />
+            Searching...
+          </div>
+        )}
+      </div>
     </form>
   );
 });
@@ -104,6 +129,9 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
   const [useMcpTools, setUseMcpTools] = useState(false);
   const [showKnowledgeLibrary, setShowKnowledgeLibrary] = useState(false);
   const [orchestrationTrace, setOrchestrationTrace] = useState<Record<string, any> | null>(null);
+  const [useWebSearch, setUseWebSearch] = useState(false);
+  const [webSearchResults, setWebSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Stable ref so sendMessage never changes identity during typing
@@ -673,7 +701,15 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
       )}
 
       {/* ── Input ────────────────────────────────────────────────────────── */}
-      {!showKnowledgeLibrary && <ChatInputForm onSubmit={sendMessage} disabled={isChatLoading || !weather} />}
+      {!showKnowledgeLibrary && (
+        <ChatInputForm
+          onSubmit={sendMessage}
+          disabled={isChatLoading || !weather}
+          useWebSearch={useWebSearch}
+          onToggleWebSearch={setUseWebSearch}
+          isSearching={isSearching}
+        />
+      )}
 
       {/* ── Session History Drawer ────────────────────────────────────────── */}
       {showSessionHistory && (() => {
