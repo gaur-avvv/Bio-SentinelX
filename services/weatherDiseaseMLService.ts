@@ -1,6 +1,6 @@
 import * as tf from '@tensorflow/tfjs';
 import { WeatherData } from '../types';
-import { MLPrediction } from './realtimeMLService';
+import { MLPrediction } from './mlService';
 
 // Embedded representative subset of the dataset
 const trainingData = [
@@ -89,11 +89,25 @@ export const predictDisease = async (weather: WeatherData): Promise<MLPrediction
       { feature: 'Humidity', value: inputHum, impact: inputHum > 0.7 ? 'increases' : 'decreases', importance: 0.3 },
       { feature: 'AQI', value: inputAqi, impact: inputAqi > 100 ? 'increases' : 'decreases', importance: 0.3 }
     ],
-    confidenceBreakdown: {
-      dataQuality: 0.9,
-      historicalMatch: maxProb,
-      sensorReliability: 0.85
-    },
+    confidenceBreakdown: (() => {
+      let first = { class: '', prob: -1 };
+      let second = { class: '', prob: -1 };
+      for (const [cls, prob] of Object.entries(allProbs)) {
+        if (prob > first.prob) {
+          second = { ...first };
+          first = { class: cls, prob };
+        } else if (prob > second.prob) {
+          second = { class: cls, prob };
+        }
+      }
+      return {
+        topClass: first.class,
+        topClassProbabilityPct: first.prob * 100,
+        secondClass: second.class || 'None',
+        secondClassProbabilityPct: Math.max(0, second.prob) * 100,
+        marginPct: (first.prob - Math.max(0, second.prob)) * 100
+      };
+    })(),
     allProbabilities: allProbs,
     recommendation: `Based on a local TensorFlow.js inference using historical correlation data, there is a ${Math.round(maxProb * 100)}% likelihood of **${disease}** risk given the current environmental conditions (Temp: ${inputTemp.toFixed(1)}°C, AQI: ${inputAqi}). Please take appropriate precautions.`
   };

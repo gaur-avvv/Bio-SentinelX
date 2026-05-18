@@ -637,7 +637,34 @@ async function sendViaSendGrid(
   }
 }
 
-/** Unified send with provider fallback: Resend -> SendGrid -> EmailJS -> smtpjs */
+async function sendViaNotificationService(
+  to: string,
+  subject: string,
+  html: string,
+  tenantId: string = 'tenantA'
+): Promise<boolean> {
+  try {
+    const response = await fetch('http://localhost:4000/api/notifications', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tenantId,
+        type: 'email',
+        recipient: to,
+        subject,
+        body: html,
+      }),
+    });
+    return response.ok;
+  } catch (err) {
+    console.error('[ForecastEmail] Notification service error:', err);
+    return false;
+  }
+}
+
+/** Unified send with provider fallback: NotificationService -> Resend -> SendGrid -> EmailJS -> smtpjs */
 async function sendEmail(
   to: string,
   subject: string,
@@ -646,6 +673,15 @@ async function sendEmail(
   senderEmail?: string,
   senderPassword?: string
 ): Promise<boolean> {
+  // 1. Try Notification Microservice (Kafka + Redis idempotency)
+  console.log('[ForecastEmail] Attempting Notification Service send...');
+  const notifyServiceOk = await sendViaNotificationService(to, subject, html);
+  if (notifyServiceOk) {
+    console.log('[ForecastEmail] Notification Service send successfully queued.');
+    return true;
+  }
+  console.warn('[ForecastEmail] Notification Service failed, falling back to direct providers...');
+
   if (settings.resendApiKey) {
     console.log('[ForecastEmail] Attempting Resend send...');
     const resendOk = await sendViaResend(to, subject, html, settings);
