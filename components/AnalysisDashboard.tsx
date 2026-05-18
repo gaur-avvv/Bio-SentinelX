@@ -18,6 +18,7 @@ import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 import { checkCloudEarlyWarning, getActiveOutbreakAlerts, getOutbreakPredictionStats, type CloudEarlyWarning, type OutbreakAlert } from '../services/outbreakPredictionService';
 
 import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo, getTrainedModelPerformanceMetrics, trainModel, DEFAULT_TRAINING_CONFIG, autoDetectFeaturesAndLabel } from '../services/realtimeMLService';
+import { predictDisease } from '../services/weatherDiseaseMLService';
 
 interface AnalysisDashboardProps {
   weather: WeatherData | null;
@@ -1725,7 +1726,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             factorContributions: localModelPrediction.factorContributions,
             timestamp: new Date().toISOString(),
           } as MLPrediction)
-          : predictBioRisks(weather, [], lifestyleData),
+          : predictDisease(weather).then(res => res || predictBioRisks(weather, [], lifestyleData)),
         generateHealthRiskAssessment(
           weather,
           summary,
