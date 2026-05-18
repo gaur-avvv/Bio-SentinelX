@@ -521,30 +521,6 @@ VITE_FLOOD_ML_API=http://localhost:8000
 
 ---
 
-## 🌟 Why This Project Matters to Recruiters
-
-This project demonstrates **senior-level engineering** across the entire modern healthcare AI stack:
-
-### 🚀 Full-Stack Mastery
-- **Frontend Excellence**: React 19 concurrent features, TypeScript strict mode, high-performance data visualization with Recharts.
-- **Backend Sophistication**: High-concurrency FastAPI (async Python) with SQLAlchemy and background task scheduling.
-- **Hybrid Infrastructure**: Seamless integration of Docker, cloud services (Railway/Vercel), and various database types (Supabase/Firebase/SQLite).
-
-### 🤖 AI/ML Engineering Excellence
-- **Multi-Model Orchestration**: Sophisticated middleware that manages 10+ AI providers with dynamic fallback and cost-performance optimization.
-- **Advanced Reasoning**: Full support for **Chain-of-Thought (CoT)** reasoning, enabling models to "think" through complex epidemiological scenarios before responding.
-- **Efficiency Layer**: Implements **Prompt Caching** and **LRU Client-Side Caching** to achieve sub-100ms response times for repeat queries.
-- **No-Auth Web Search Integration**: Real-time independent research across OpenAlex, ClinicalTrials.gov, PubMed, WHO, CDC, and Wikipedia providing 250M+ data points completely free of API constraints.
-- **Deep Research Mode**: Synthesizes findings from multiple authoritative sources for clinically validated recommendations.
-- **In-Browser ML**: Implementation of custom XGBoost and Neural Networks purely in the browser—eliminating server latency and costs.
-- **RAG Implementation**: Advanced Retrieval-Augmented Generation with local vector storage and intelligent chunking.
-
-### 🛡️ Production-Grade Quality
-- **Security-First**: Enterprise-level security with CORS, rate limiting, and encrypted local storage.
-- **Mobile-Ready**: Cross-platform deployment via Capacitor to Android and iOS.
-- **Observability**: Comprehensive CI/CD, structured logging, and automated health monitoring.
-
----
 
 ## 🏆 Awards & Recognition
 
@@ -562,8 +538,7 @@ Distributed under the **MIT License**. See `LICENSE` for more information.
 
 ## 📞 Contact
 
-**Project Lead**: Gaurav Singh  
-**LinkedIn**: [linkedin.com/in/gaurav-singh](https://linkedin.com/in/gaur-avvv)  
+**Project Lead**: Gaurav Singh   
 **GitHub**: [github.com/gaur-avvv](https://github.com/gaur-avvv)
 **Website**: [biosentinelx.com](https://bio-sentinel-x.vercel.app)
 
