@@ -137,6 +137,9 @@ Bio-SentinelX integrates **15+ AI models**, **real-time environmental data**, an
 | Technology | Purpose | Details |
 |------------|---------|---------|
 | **FastAPI** | ML API Server | Python 3.x async |
+| **Node.js** | Notification Engine | Fault-tolerant delivery |
+| **Kafka** | Message Queue | At-least-once guarantee |
+| **Redis** | Idempotency Store | Duplicate prevention |
 | **SQLite** | Database | + aiosqlite |
 | **scikit-learn** | ML Algorithms | XGBoost, RF, NN |
 | **TensorFlow** | Deep Learning | Keras backend |
@@ -235,9 +238,10 @@ flowchart LR
     style Search fill:#f0fdf4,stroke:#22c55e,stroke-width:3px
 
     %% ========== LAYER 5: BACKEND SERVICES ==========
-    subgraph Backend ["⚙️ Microservices (FastAPI)"]
+    subgraph Backend ["⚙️ Microservices"]
         direction TB
-        ML["🤖 Inference Server"]
+        ML["🤖 Inference Server (FastAPI)"]
+        NOTIFY["📧 Notification Engine (Kafka/Redis)"]
         SURV["📊 Surveillance API"]
         GEO["🗺️ Geospatial Service"]
         QUEUE["⏳ Async Queue (Celery)"]
@@ -276,6 +280,7 @@ flowchart LR
     %% ========== FLOW: SERVICES & PERSISTENCE ==========
     UI -->|"Prediction"| ML
     UI -->|"Alert"| SURV
+    UI -.->|"Queue Email/SMS"| NOTIFY
     ML <-->|"Features"| VECTOR
     SURV -->|"Logs"| SQL
     ML -->|"Heavy Task"| QUEUE
@@ -482,6 +487,22 @@ $ docker compose logs -f flood-api
 
 # Stop and cleanup
 $ docker compose down -v
+```
+
+### Notification Microservice Setup
+
+The new fault-tolerant notification microservice runs independently of the frontend container stack, utilizing Kafka and Redis for reliable delivery.
+
+```bash
+# Start Kafka and Redis infrastructure
+# (User provides their own or uses a separate docker-compose for infra)
+$ docker run -d -p 6379:6379 redis
+$ docker run -d -p 9092:9092 apache/kafka
+
+# Start the notification service
+$ cd notification-service
+$ npm install
+$ KAFKA_BROKERS=localhost:9092 REDIS_URL=redis://localhost:6379 npm run dev
 ```
 
 ### Environment Configuration
