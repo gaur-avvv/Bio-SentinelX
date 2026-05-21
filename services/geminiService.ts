@@ -557,7 +557,7 @@ export const generateHealthRiskAssessment = async (
   `;
 
   // ============================================================
-  // ROUTE TO PROVIDER
+  // ROUTE TO PROVIDER WITH SELF-HEALING MULTI-PROVIDER FALLBACKS
   // ============================================================
 
   // MedGemma is always attempted first for report generation when HF token is configured.
@@ -568,118 +568,178 @@ export const generateHealthRiskAssessment = async (
 
   const routeProvider = aiProvider === 'huggingface' ? 'gemini' : aiProvider;
 
-  if (routeProvider === 'groq') {
-    if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
-    try {
-      const text = await generateWithGroq(systemInstruction, userPrompt, aiModel, apiKey);
-      return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
-    } catch (error: any) {
-      throw new Error(error?.message || 'Groq generation failed.');
+  const PROVIDER_BACKUP_MODELS: Record<string, string[]> = {
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+    groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'deepseek-r1-distill-llama-70b'],
+    openrouter: ['google/gemini-2.5-flash', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemini-2.0-flash-exp:free'],
+    siliconflow: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-72B-Instruct', 'Qwen/Qwen2.5-7B-Instruct'],
+    cerebras: ['llama3.1-8b', 'llama3.1-70b'],
+    pollinations: ['openai', 'mistral'],
+    ollama: ['llama3.2-3b', 'qwen2.5-3b']
+  };
+
+  const getProviderKey = (prov: string): string | undefined => {
+    if (prov === 'gemini') {
+      return localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (routeProvider === 'gemini' ? apiKey : undefined);
+    }
+    if (prov === 'groq') {
+      return localStorage.getItem('biosentinel_groq_key') || (routeProvider === 'groq' ? apiKey : undefined);
+    }
+    if (prov === 'openrouter') {
+      return localStorage.getItem('biosentinel_openrouter_key') || (routeProvider === 'openrouter' ? apiKey : undefined);
+    }
+    if (prov === 'siliconflow') {
+      return localStorage.getItem('biosentinel_siliconflow_key') || (routeProvider === 'siliconflow' ? apiKey : undefined);
+    }
+    if (prov === 'cerebras') {
+      return localStorage.getItem('biosentinel_cerebras_key') || (routeProvider === 'cerebras' ? apiKey : undefined);
+    }
+    return undefined;
+  };
+
+  interface GenerationAttempt {
+    provider: string;
+    model: string;
+    key?: string;
+    isFallback: boolean;
+  }
+
+  const attempts: GenerationAttempt[] = [];
+
+  // 1. Primary Attempt: Selected model and provider
+  attempts.push({
+    provider: routeProvider,
+    model: aiModel,
+    key: routeProvider === 'gemini' && aiProvider === 'huggingface'
+      ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+      : apiKey,
+    isFallback: false
+  });
+
+  // 2. Backup models of same provider
+  const sameBackups = PROVIDER_BACKUP_MODELS[routeProvider] || [];
+  for (const backup of sameBackups) {
+    if (backup !== aiModel) {
+      attempts.push({
+        provider: routeProvider,
+        model: backup,
+        key: routeProvider === 'gemini' && aiProvider === 'huggingface'
+          ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+          : apiKey,
+        isFallback: true
+      });
     }
   }
 
-  if (routeProvider === 'pollinations') {
-    try {
-      const text = await generateWithPollinations(systemInstruction, userPrompt, aiModel, apiKey);
-      return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
-    } catch (error: any) {
-      throw new Error(error?.message || 'Pollinations AI generation failed.');
-    }
-  }
-
-  if (routeProvider === 'openrouter') {
-    if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
-    try {
-      const text = await generateWithOpenRouter(systemInstruction, userPrompt, aiModel, apiKey);
-      return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
-    } catch (error: any) {
-      throw new Error(error?.message || 'OpenRouter generation failed.');
-    }
-  }
-
-  if (routeProvider === 'siliconflow') {
-    if (!apiKey) throw new Error('SiliconFlow API key is missing. Please add it in the sidebar.');
-    try {
-      const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey!));
-      return { markdown: stripThinkingBlocks(text) || 'Analysis unavailable.', groundingChunks: [] };
-    } catch (error: any) {
-      const m = error?.message || 'SiliconFlow generation failed.';
-      throw new Error(m.includes('500') || m.includes('503') ? 'SiliconFlow is temporarily unavailable (server overload). Please retry in a few seconds or switch to another provider.' : m);
-    }
-  }
-
-  // ---- Ollama (Small Models) ----
-  if (routeProvider === 'ollama') {
-    try {
-      const { runSmallModelPipeline } = await import('./smallModelService');
-      const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Generate health risk assessment', '', 'health_assessment', 1024, systemInstruction);
-      return { markdown: stripThinkingBlocks(result) || 'Analysis unavailable.', groundingChunks: [] };
-    } catch (error: any) {
-      throw new Error(error?.message || 'Ollama small model generation failed.');
-    }
-  }
-
-  // ---- Gemini (default) ----
-  const geminiKey = routeProvider === 'gemini' && aiProvider === 'huggingface'
-    ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
-    : (apiKey || process.env.API_KEY);
-  if (!geminiKey) {
-    throw new Error('Gemini API Key is missing. Please configure it in the sidebar.');
-  }
-  const ai = new GoogleGenAI({ apiKey: geminiKey });
-
-  const promptParts: any[] = [{ text: userPrompt }];
-  if (reportImage) {
-    promptParts.push({ inlineData: { mimeType: 'image/jpeg', data: reportImage.split(',')[1] } });
-  }
-
-  try {
-    const response = await ai.models.generateContent({
-      model: aiModel,
-      contents: { parts: promptParts },
-      config: {
-        systemInstruction,
-        tools: [{ googleMaps: {} }, { googleSearch: {} }],
-        toolConfig: {
-          retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+  // 3. Other configured providers
+  const providersOrder = ['gemini', 'groq', 'openrouter', 'siliconflow', 'cerebras'];
+  for (const prov of providersOrder) {
+    if (prov !== routeProvider) {
+      const provKey = getProviderKey(prov);
+      if (provKey) {
+        const provModels = PROVIDER_BACKUP_MODELS[prov] || [];
+        for (const provModel of provModels) {
+          attempts.push({
+            provider: prov,
+            model: provModel,
+            key: provKey,
+            isFallback: true
+          });
         }
       }
-    });
-
-    const text = stripThinkingBlocks(response.text || 'Analysis unavailable.');
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-    return { markdown: text, groundingChunks };
-
-  } catch (error: any) {
-    try {
-      const groqFallbackKey = localStorage.getItem('biosentinel_groq_key') || '';
-      if (groqFallbackKey) {
-        const groqText = await generateWithGroq(systemInstruction, userPrompt, 'llama-3.1-8b-instant', groqFallbackKey);
-        return { markdown: stripThinkingBlocks(groqText) || 'Analysis unavailable.', groundingChunks: [] };
-      }
-    } catch {
-      // Continue to mapped error below.
     }
-
-    console.error('Gemini API Error:', error);
-    let userMessage = 'Neural core computation error.';
-    if (error?.message?.includes('API_KEY_INVALID') || error?.status === 'INVALID_ARGUMENT') {
-      userMessage = 'Invalid Gemini API Key. Please ensure you have configured a valid key in your environment.';
-    } else if (error?.message?.includes('SAFETY')) {
-      userMessage = 'Analysis blocked by safety filters. Please try with different input data.';
-    } else if (error?.message?.includes('429') || error?.message?.includes('quota') || error?.status === 429) {
-      userMessage = 'Gemini API rate limit exceeded. Please wait a moment and try again.';
-    } else if (error?.message?.includes('fetch') || error?.message?.includes('Network') || error?.message?.includes('Failed to fetch') || error instanceof TypeError) {
-      userMessage = 'Network connection failure. Please check your internet connection and try again.';
-    } else if (error?.message?.includes('timeout')) {
-      userMessage = 'Request timeout. Please try again.';
-    } else if (error?.status === 500 || error?.status === 503) {
-      userMessage = 'Gemini API is temporarily unavailable. Please try again in a few moments.';
-    } else if (error?.message) {
-      userMessage = `Analysis error: ${error.message}`;
-    }
-    throw new Error(userMessage);
   }
+
+  // 4. Free keyless Pollinations backup (guarantees a response as a final fail-safe)
+  if (routeProvider !== 'pollinations') {
+    attempts.push({
+      provider: 'pollinations',
+      model: 'openai',
+      key: undefined,
+      isFallback: true
+    });
+    attempts.push({
+      provider: 'pollinations',
+      model: 'mistral',
+      key: undefined,
+      isFallback: true
+    });
+  }
+
+  let lastError: any = null;
+  for (let idx = 0; idx < attempts.length; idx++) {
+    const attempt = attempts[idx];
+    try {
+      let text = '';
+      let groundingChunks: any[] = [];
+
+      if (attempt.provider === 'groq') {
+        const keyToUse = attempt.key || getProviderKey('groq');
+        if (!keyToUse) throw new Error('Groq key is missing');
+        text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
+      } 
+      else if (attempt.provider === 'pollinations') {
+        text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
+      } 
+      else if (attempt.provider === 'openrouter') {
+        const keyToUse = attempt.key || getProviderKey('openrouter');
+        if (!keyToUse) throw new Error('OpenRouter key is missing');
+        text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
+      } 
+      else if (attempt.provider === 'siliconflow') {
+        const keyToUse = attempt.key || getProviderKey('siliconflow');
+        if (!keyToUse) throw new Error('SiliconFlow key is missing');
+        text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
+      } 
+      else if (attempt.provider === 'cerebras') {
+        const keyToUse = attempt.key || getProviderKey('cerebras');
+        if (!keyToUse) throw new Error('Cerebras key is missing');
+        text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+      }
+      else if (attempt.provider === 'ollama') {
+        const { runSmallModelPipeline } = await import('./smallModelService');
+        const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Generate health risk assessment', '', 'health_assessment', 1024, systemInstruction);
+        text = result;
+      } 
+      else {
+        // Gemini
+        const keyToUse = attempt.key || getProviderKey('gemini');
+        if (!keyToUse) throw new Error('Gemini key is missing');
+        const ai = new GoogleGenAI({ apiKey: keyToUse });
+
+        const promptParts: any[] = [{ text: userPrompt }];
+        if (reportImage) {
+          promptParts.push({ inlineData: { mimeType: 'image/jpeg', data: reportImage.split(',')[1] } });
+        }
+
+        const response = await ai.models.generateContent({
+          model: attempt.model,
+          contents: { parts: promptParts },
+          config: {
+            systemInstruction,
+            tools: [{ googleMaps: {} }, { googleSearch: {} }],
+            toolConfig: {
+              retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+            }
+          }
+        });
+        text = response.text || '';
+        groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      }
+
+      if (text) {
+        return {
+          markdown: stripThinkingBlocks(text) || 'Analysis unavailable.',
+          groundingChunks
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[Assessment Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("All assessment generation attempts failed.");
 };
 
 // ============================================================
@@ -854,75 +914,168 @@ RESEARCH TASKS:
 10. VULNERABLE POPULATIONS: Identify which groups (elderly >65, children, low-income, pregnant women, outdoor workers, Indigenous peoples) face heightened risk given the specific observed conditions.
 11. Produce a fully structured research report following the system-defined output format. Present all findings as direct factual statements with no inline citations.`;
 
-  // ---- Groq ----
-  if (aiProvider === 'groq') {
-    if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
-    const text = await generateWithGroq(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text) || 'Research analysis unavailable.';
-  }
+  // ---- Self-Healing Multi-Provider Candidates Loop ----
+  const routeProvider = aiProvider === 'huggingface' ? 'gemini' : aiProvider;
 
-  // ---- Pollinations ----
-  if (aiProvider === 'pollinations') {
-    const text = await generateWithPollinations(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text) || 'Research analysis unavailable.';
-  }
+  const PROVIDER_BACKUP_MODELS: Record<string, string[]> = {
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+    groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'deepseek-r1-distill-llama-70b'],
+    openrouter: ['google/gemini-2.5-flash', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemini-2.0-flash-exp:free'],
+    siliconflow: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-72B-Instruct', 'Qwen/Qwen2.5-7B-Instruct'],
+    cerebras: ['llama3.1-8b', 'llama3.1-70b'],
+    pollinations: ['openai', 'mistral'],
+    ollama: ['llama3.2-3b', 'qwen2.5-3b']
+  };
 
-  // ---- OpenRouter ----
-  if (aiProvider === 'openrouter') {
-    if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
-    const text = await generateWithOpenRouter(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text) || 'Research analysis unavailable.';
-  }
-
-  // ---- SiliconFlow ----
-  if (aiProvider === 'siliconflow') {
-    const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey || ''));
-    return stripThinkingBlocks(text) || 'Research analysis unavailable.';
-  }
-
-  // ---- Cerebras ----
-  if (aiProvider === 'cerebras') {
-    if (!apiKey) throw new Error('Cerebras API key is missing. Please add it in the sidebar.');
-    const text = await generateWithCerebras(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text) || 'Research analysis unavailable.';
-  }
-
-  // ---- Ollama (Small Models) ----
-  if (aiProvider === 'ollama') {
-    const { runSmallModelPipeline } = await import('./smallModelService');
-    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze historical climate health data', '', 'historical_research', 1024, systemInstruction);
-    return stripThinkingBlocks(result) || 'Research analysis unavailable.';
-  }
-
-  // ---- Gemini (default, with Google Search grounding) ----
-  const key = apiKey || process.env.API_KEY;
-  if (!key) throw new Error('Gemini API Key missing. Please configure it in the sidebar.');
-  const ai = new GoogleGenAI({ apiKey: key });
-
-  try {
-    const response = await ai.models.generateContent({
-      model: aiModel,
-      contents: [{ parts: [{ text: userPrompt }] }],
-      config: {
-        systemInstruction,
-        tools: [{ googleSearch: {} }],
-      }
-    });
-    return stripThinkingBlocks(response.text || 'Research analysis unavailable.');
-  } catch (error: any) {
-    console.error('Gemini Research API Error:', error);
-    let userMessage = 'Research engine computation error.';
-    if (error?.message?.includes('API_KEY_INVALID') || error?.status === 'INVALID_ARGUMENT') {
-      userMessage = 'Invalid Gemini API Key. Please ensure you have configured a valid key in the sidebar.';
-    } else if (error?.message?.includes('429') || error?.message?.includes('quota')) {
-      userMessage = 'Gemini API rate limit exceeded. Please wait a moment and try again.';
-    } else if (error?.message?.includes('fetch') || error instanceof TypeError) {
-      userMessage = 'Network connection failure. Please check your internet connection and try again.';
-    } else if (error?.message) {
-      userMessage = `Research error: ${error.message}`;
+  const getProviderKey = (prov: string): string | undefined => {
+    if (prov === 'gemini') {
+      return localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (routeProvider === 'gemini' ? apiKey : undefined);
     }
-    throw new Error(userMessage);
+    if (prov === 'groq') {
+      return localStorage.getItem('biosentinel_groq_key') || (routeProvider === 'groq' ? apiKey : undefined);
+    }
+    if (prov === 'openrouter') {
+      return localStorage.getItem('biosentinel_openrouter_key') || (routeProvider === 'openrouter' ? apiKey : undefined);
+    }
+    if (prov === 'siliconflow') {
+      return localStorage.getItem('biosentinel_siliconflow_key') || (routeProvider === 'siliconflow' ? apiKey : undefined);
+    }
+    if (prov === 'cerebras') {
+      return localStorage.getItem('biosentinel_cerebras_key') || (routeProvider === 'cerebras' ? apiKey : undefined);
+    }
+    return undefined;
+  };
+
+  interface GenerationAttempt {
+    provider: string;
+    model: string;
+    key?: string;
+    isFallback: boolean;
   }
+
+  const attempts: GenerationAttempt[] = [];
+
+  // 1. Primary Attempt: Selected model and provider
+  attempts.push({
+    provider: routeProvider,
+    model: aiModel,
+    key: routeProvider === 'gemini' && aiProvider === 'huggingface'
+      ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+      : apiKey,
+    isFallback: false
+  });
+
+  // 2. Backup models of same provider
+  const sameBackups = PROVIDER_BACKUP_MODELS[routeProvider] || [];
+  for (const backup of sameBackups) {
+    if (backup !== aiModel) {
+      attempts.push({
+        provider: routeProvider,
+        model: backup,
+        key: routeProvider === 'gemini' && aiProvider === 'huggingface'
+          ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+          : apiKey,
+        isFallback: true
+      });
+    }
+  }
+
+  // 3. Other configured providers
+  const providersOrder = ['gemini', 'groq', 'openrouter', 'siliconflow', 'cerebras'];
+  for (const prov of providersOrder) {
+    if (prov !== routeProvider) {
+      const provKey = getProviderKey(prov);
+      if (provKey) {
+        const provModels = PROVIDER_BACKUP_MODELS[prov] || [];
+        for (const provModel of provModels) {
+          attempts.push({
+            provider: prov,
+            model: provModel,
+            key: provKey,
+            isFallback: true
+          });
+        }
+      }
+    }
+  }
+
+  // 4. Free keyless Pollinations backup (guarantees a response as a final fail-safe)
+  if (routeProvider !== 'pollinations') {
+    attempts.push({
+      provider: 'pollinations',
+      model: 'openai',
+      key: undefined,
+      isFallback: true
+    });
+    attempts.push({
+      provider: 'pollinations',
+      model: 'mistral',
+      key: undefined,
+      isFallback: true
+    });
+  }
+
+  let lastError: any = null;
+  for (let idx = 0; idx < attempts.length; idx++) {
+    const attempt = attempts[idx];
+    try {
+      let text = '';
+
+      if (attempt.provider === 'groq') {
+        const keyToUse = attempt.key || getProviderKey('groq');
+        if (!keyToUse) throw new Error('Groq key is missing');
+        text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
+      } 
+      else if (attempt.provider === 'pollinations') {
+        text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
+      } 
+      else if (attempt.provider === 'openrouter') {
+        const keyToUse = attempt.key || getProviderKey('openrouter');
+        if (!keyToUse) throw new Error('OpenRouter key is missing');
+        text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
+      } 
+      else if (attempt.provider === 'siliconflow') {
+        const keyToUse = attempt.key || getProviderKey('siliconflow');
+        if (!keyToUse) throw new Error('SiliconFlow key is missing');
+        text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
+      } 
+      else if (attempt.provider === 'cerebras') {
+        const keyToUse = attempt.key || getProviderKey('cerebras');
+        if (!keyToUse) throw new Error('Cerebras key is missing');
+        text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+      }
+      else if (attempt.provider === 'ollama') {
+        const { runSmallModelPipeline } = await import('./smallModelService');
+        const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Analyze historical climate health data', '', 'historical_research', 1024, systemInstruction);
+        text = result;
+      } 
+      else {
+        // Gemini
+        const keyToUse = attempt.key || getProviderKey('gemini');
+        if (!keyToUse) throw new Error('Gemini key is missing');
+        const ai = new GoogleGenAI({ apiKey: keyToUse });
+
+        const response = await ai.models.generateContent({
+          model: attempt.model,
+          contents: [{ parts: [{ text: userPrompt }] }],
+          config: {
+            systemInstruction,
+            tools: [{ googleSearch: {} }],
+          }
+        });
+        text = response.text || '';
+      }
+
+      if (text) {
+        return stripThinkingBlocks(text) || 'Research analysis unavailable.';
+      }
+    } catch (err: any) {
+      console.warn(`[Historical Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("All historical research generation attempts failed.");
 };
 
 export const chatWithWeatherAssistant = async (
@@ -1698,48 +1851,157 @@ Probability and expected timing for: **7-day window** · **30-day window** · **
 ## ${hasMl ? 9 : 7}. Monitoring Triggers
 List 5 specific numerical thresholds that should trigger escalated response (e.g., "Activate Emergency Operations if discharge exceeds X m³/s or ML probability exceeds Y%").`;
 
-  // ---- Groq ----
-  if (aiProvider === 'groq') {
-    if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
-    const text = await generateWithGroq(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text);
+  const routeProvider = aiProvider;
+
+  const PROVIDER_BACKUP_MODELS: Record<string, string[]> = {
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+    groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'deepseek-r1-distill-llama-70b'],
+    openrouter: ['google/gemini-2.5-flash', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemini-2.0-flash-exp:free'],
+    siliconflow: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-72B-Instruct', 'Qwen/Qwen2.5-7B-Instruct'],
+    cerebras: ['llama3.1-8b', 'llama3.1-70b'],
+    pollinations: ['openai', 'mistral'],
+    ollama: ['llama3.2-3b', 'qwen2.5-3b']
+  };
+
+  const getProviderKey = (prov: string): string | undefined => {
+    if (prov === 'gemini') {
+      return localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (routeProvider === 'gemini' ? apiKey : undefined);
+    }
+    if (prov === 'groq') {
+      return localStorage.getItem('biosentinel_groq_key') || (routeProvider === 'groq' ? apiKey : undefined);
+    }
+    if (prov === 'openrouter') {
+      return localStorage.getItem('biosentinel_openrouter_key') || (routeProvider === 'openrouter' ? apiKey : undefined);
+    }
+    if (prov === 'siliconflow') {
+      return localStorage.getItem('biosentinel_siliconflow_key') || (routeProvider === 'siliconflow' ? apiKey : undefined);
+    }
+    if (prov === 'cerebras') {
+      return localStorage.getItem('biosentinel_cerebras_key') || (routeProvider === 'cerebras' ? apiKey : undefined);
+    }
+    return undefined;
+  };
+
+  interface GenerationAttempt {
+    provider: string;
+    model: string;
+    key?: string;
+    isFallback: boolean;
   }
-  // ---- Pollinations ----
-  if (aiProvider === 'pollinations') {
-    const text = await generateWithPollinations(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text);
-  }
-  // ---- OpenRouter ----
-  if (aiProvider === 'openrouter') {
-    if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
-    const text = await generateWithOpenRouter(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text);
-  }
-  // ---- Cerebras ----
-  if (aiProvider === 'cerebras') {
-    if (!apiKey) throw new Error('Cerebras API key is missing. Please add it in the sidebar.');
-    const text = await generateWithCerebras(systemInstruction, userPrompt, aiModel, apiKey);
-    return stripThinkingBlocks(text);
-  }
-  // ---- SiliconFlow ----
-  if (aiProvider === 'siliconflow') {
-    const text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, aiModel, apiKey || ''));
-    return stripThinkingBlocks(text);
-  }
-  // ---- Ollama (Small Models) ----
-  if (aiProvider === 'ollama') {
-    const { runSmallModelPipeline } = await import('./smallModelService');
-    const { result } = await runSmallModelPipeline(aiModel, userPrompt, 'Analyze flood risk', '', 'flood_analysis', 1024, systemInstruction);
-    return stripThinkingBlocks(result) || 'Unable to generate flood analysis.';
-  }
-  // ---- Gemini (default) ----
-  const key = apiKey || process.env.API_KEY;
-  if (!key) throw new Error('Gemini API Key missing. Please configure it in the sidebar.');
-  const ai = new GoogleGenAI({ apiKey: key });
-  const response = await ai.models.generateContent({
+
+  const attempts: GenerationAttempt[] = [];
+
+  // 1. Primary Attempt: Selected model and provider
+  attempts.push({
+    provider: routeProvider,
     model: aiModel,
-    contents: userPrompt,
-    config: { systemInstruction },
+    key: apiKey,
+    isFallback: false
   });
-  return stripThinkingBlocks(response.text || 'Unable to generate flood analysis.');
+
+  // 2. Backup models of same provider
+  const sameBackups = PROVIDER_BACKUP_MODELS[routeProvider] || [];
+  for (const backup of sameBackups) {
+    if (backup !== aiModel) {
+      attempts.push({
+        provider: routeProvider,
+        model: backup,
+        key: apiKey,
+        isFallback: true
+      });
+    }
+  }
+
+  // 3. Other configured providers
+  const providersOrder = ['gemini', 'groq', 'openrouter', 'siliconflow', 'cerebras'];
+  for (const prov of providersOrder) {
+    if (prov !== routeProvider) {
+      const provKey = getProviderKey(prov);
+      if (provKey) {
+        const provModels = PROVIDER_BACKUP_MODELS[prov] || [];
+        for (const provModel of provModels) {
+          attempts.push({
+            provider: prov,
+            model: provModel,
+            key: provKey,
+            isFallback: true
+          });
+        }
+      }
+    }
+  }
+
+  // 4. Free keyless Pollinations backup (guarantees a response as a final fail-safe)
+  if (routeProvider !== 'pollinations') {
+    attempts.push({
+      provider: 'pollinations',
+      model: 'openai',
+      key: undefined,
+      isFallback: true
+    });
+    attempts.push({
+      provider: 'pollinations',
+      model: 'mistral',
+      key: undefined,
+      isFallback: true
+    });
+  }
+
+  let lastError: any = null;
+  for (let idx = 0; idx < attempts.length; idx++) {
+    const attempt = attempts[idx];
+    try {
+      let text = '';
+
+      if (attempt.provider === 'groq') {
+        const keyToUse = attempt.key || getProviderKey('groq');
+        if (!keyToUse) throw new Error('Groq key is missing');
+        text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
+      } 
+      else if (attempt.provider === 'pollinations') {
+        text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
+      } 
+      else if (attempt.provider === 'openrouter') {
+        const keyToUse = attempt.key || getProviderKey('openrouter');
+        if (!keyToUse) throw new Error('OpenRouter key is missing');
+        text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
+      } 
+      else if (attempt.provider === 'siliconflow') {
+        const keyToUse = attempt.key || getProviderKey('siliconflow');
+        if (!keyToUse) throw new Error('SiliconFlow key is missing');
+        text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
+      } 
+      else if (attempt.provider === 'cerebras') {
+        const keyToUse = attempt.key || getProviderKey('cerebras');
+        if (!keyToUse) throw new Error('Cerebras key is missing');
+        text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+      }
+      else if (attempt.provider === 'ollama') {
+        const { runSmallModelPipeline } = await import('./smallModelService');
+        const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Analyze flood risk', '', 'flood_analysis', 1024, systemInstruction);
+        text = result;
+      } 
+      else {
+        // Gemini
+        const keyToUse = attempt.key || getProviderKey('gemini');
+        if (!keyToUse) throw new Error('Gemini key is missing');
+        const ai = new GoogleGenAI({ apiKey: keyToUse });
+        const response = await ai.models.generateContent({
+          model: attempt.model,
+          contents: userPrompt,
+          config: { systemInstruction },
+        });
+        text = response.text || '';
+      }
+
+      if (text) {
+        return stripThinkingBlocks(text);
+      }
+    } catch (err: any) {
+      console.warn(`[Flood Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("All flood analysis generation attempts failed.");
 };

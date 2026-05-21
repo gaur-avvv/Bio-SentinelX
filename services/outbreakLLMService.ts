@@ -195,6 +195,8 @@ async function executeLLMRequest(
     endpoint = 'https://api.cerebras.ai/v1/chat/completions';
   } else if (normalizedProvider === 'ollama') {
     endpoint = 'http://localhost:11434/v1/chat/completions';
+  } else if (normalizedProvider === 'pollinations') {
+    endpoint = 'https://gen.pollinations.ai/v1/chat/completions';
   } else {
     // Default fallback to OpenRouter
     endpoint = 'https://openrouter.ai/api/v1/chat/completions';
@@ -366,101 +368,210 @@ ${lifestyleContext}
 
 Please execute the vector-similarity analysis, evaluate the epidemiological threat, and output the structured JSON outbreak assessment.`;
 
-  // 5. Query the LLM
-  try {
-    const rawResult = await executeLLMRequest(systemPrompt, userPrompt, aiProvider, aiModel, aiKey);
-    
-    // Clean response to handle potential markdown wrappers
-    let cleanJson = rawResult.trim();
-    if (cleanJson.startsWith('```')) {
-      const match = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-      if (match && match[1]) {
-        cleanJson = match[1].trim();
+  // 5. Query the LLM with Self-Healing Multi-Provider Fallbacks
+  const routeProvider = aiProvider.toLowerCase();
+
+  const PROVIDER_BACKUP_MODELS: Record<string, string[]> = {
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'],
+    groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'deepseek-r1-distill-llama-70b'],
+    openrouter: ['google/gemini-2.5-flash', 'meta-llama/llama-3.3-70b-instruct:free', 'google/gemini-2.0-flash-exp:free'],
+    siliconflow: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-72B-Instruct', 'Qwen/Qwen2.5-7B-Instruct'],
+    cerebras: ['llama3.1-8b', 'llama3.1-70b'],
+    pollinations: ['openai', 'mistral'],
+    ollama: ['llama3.2-3b', 'qwen2.5-3b']
+  };
+
+  const getProviderKey = (prov: string): string | undefined => {
+    if (prov === 'gemini') {
+      return localStorage.getItem('biosentinel_gemini_key') || (routeProvider === 'gemini' ? aiKey : undefined);
+    }
+    if (prov === 'groq') {
+      return localStorage.getItem('biosentinel_groq_key') || (routeProvider === 'groq' ? aiKey : undefined);
+    }
+    if (prov === 'openrouter') {
+      return localStorage.getItem('biosentinel_openrouter_key') || (routeProvider === 'openrouter' ? aiKey : undefined);
+    }
+    if (prov === 'siliconflow') {
+      return localStorage.getItem('biosentinel_siliconflow_key') || (routeProvider === 'siliconflow' ? aiKey : undefined);
+    }
+    if (prov === 'cerebras') {
+      return localStorage.getItem('biosentinel_cerebras_key') || (routeProvider === 'cerebras' ? aiKey : undefined);
+    }
+    return undefined;
+  };
+
+  interface GenerationAttempt {
+    provider: string;
+    model: string;
+    key?: string;
+    isFallback: boolean;
+  }
+
+  const attempts: GenerationAttempt[] = [];
+
+  // 1. Primary Attempt: Selected model and provider
+  attempts.push({
+    provider: routeProvider,
+    model: aiModel,
+    key: aiKey,
+    isFallback: false
+  });
+
+  // 2. Backup models of same provider
+  const sameBackups = PROVIDER_BACKUP_MODELS[routeProvider] || [];
+  for (const backup of sameBackups) {
+    if (backup !== aiModel) {
+      attempts.push({
+        provider: routeProvider,
+        model: backup,
+        key: aiKey,
+        isFallback: true
+      });
+    }
+  }
+
+  // 3. Other configured providers
+  const providersOrder = ['gemini', 'groq', 'openrouter', 'siliconflow', 'cerebras'];
+  for (const prov of providersOrder) {
+    if (prov !== routeProvider) {
+      const provKey = getProviderKey(prov);
+      if (provKey) {
+        const provModels = PROVIDER_BACKUP_MODELS[prov] || [];
+        for (const provModel of provModels) {
+          attempts.push({
+            provider: prov,
+            model: provModel,
+            key: provKey,
+            isFallback: true
+          });
+        }
       }
     }
-
-    const parsed = JSON.parse(cleanJson);
-    
-    // Construct valid OutbreakPrediction object
-    const prediction: OutbreakPrediction = {
-      id: `prediction-${Date.now()}`,
-      timestamp: Date.now(),
-      overallRisk: parsed.overallRisk || 'LOW',
-      confidence: parsed.confidence || 50,
-      predictedDiseases: parsed.predictedDiseases || [],
-      diseaseClusters: (parsed.diseaseClusters || []).map((c: any) => ({
-        ...c,
-        firstReported: c.firstReported || Date.now() - 7 * 24 * 3600 * 1000,
-        lastReported: c.lastReported || Date.now(),
-      })),
-      environmentalFactors: {
-        temperature: parsed.environmentalFactors?.temperature ?? weather.temp,
-        humidity: parsed.environmentalFactors?.humidity ?? weather.humidity,
-        aqi: parsed.environmentalFactors?.aqi ?? weather.aqi,
-        riskMultiplier: parsed.environmentalFactors?.riskMultiplier ?? 1.0,
-        seasonalContext: parsed.environmentalFactors?.seasonalContext || 'Standard baseline risk conditions.',
-      },
-      geographicSpread: {
-        epicenter: parsed.geographicSpread?.epicenter || weather.city,
-        affectedAreas: parsed.geographicSpread?.affectedAreas || [weather.city],
-        spreadDirection: parsed.geographicSpread?.spreadDirection || 'Local containment',
-      },
-      recommendations: parsed.recommendations || ['Maintain standard clinical hygiene.', 'Monitor local disease surveillance portals.'],
-      rawAnalysis: parsed.rawAnalysis || rawResult,
-      aiProvider,
-      aiModel,
-    };
-
-    savePredictionToHistory(prediction);
-    return prediction;
-
-  } catch (err) {
-    console.error('[OutbreakLLM] Outbreak prediction failed:', err);
-    
-    // Return a structured fallback object in case of error
-    const fallbackPrediction: OutbreakPrediction = {
-      id: `prediction-fallback-${Date.now()}`,
-      timestamp: Date.now(),
-      overallRisk: totalCases > 20 ? 'HIGH' : totalCases > 5 ? 'MODERATE' : 'LOW',
-      confidence: 30,
-      predictedDiseases: Object.entries(diseaseBreakdown).map(([disease, count]) => ({
-        disease,
-        probability: Math.min(0.9, count / 20),
-        estimatedCases: `${count} active reports`,
-        peakWindow: 'Next 7 days',
-      })),
-      diseaseClusters: Object.entries(diseaseBreakdown).map(([disease, count]) => ({
-        disease,
-        locations: [weather.city],
-        totalCases: count,
-        trend: 'stable',
-        riskLevel: count > 10 ? 'HIGH' : 'MODERATE',
-        firstReported: Date.now() - 5 * 24 * 3600 * 1000,
-        lastReported: Date.now(),
-      })),
-      environmentalFactors: {
-        temperature: weather.temp,
-        humidity: weather.humidity,
-        aqi: weather.aqi,
-        riskMultiplier: weather.temp > 28 && weather.humidity > 70 ? 1.4 : 1.0,
-        seasonalContext: 'Calculated from live atmospheric reports.',
-      },
-      geographicSpread: {
-        epicenter: weather.city,
-        affectedAreas: [weather.city],
-        spreadDirection: 'Undetermined (limited RAG logs)',
-      },
-      recommendations: [
-        'Ensure hospital syndromic logs are updated frequently.',
-        'Review standard vector control practices if hot/humid.',
-        'Advise patients with active symptoms to seek clinical verification.'
-      ],
-      rawAnalysis: `Automated rule-based backup report triggered. Local active case count stands at ${totalCases} patients across ${Object.keys(diseaseBreakdown).length || 1} syndromes. Environmental markers (Temp: ${weather.temp}°C, Humidity: ${weather.humidity}%) suggest standard baseline vectors. Details: ${err instanceof Error ? err.message : 'AI model response parsing exception.'}`,
-      aiProvider,
-      aiModel,
-    };
-
-    savePredictionToHistory(fallbackPrediction);
-    return fallbackPrediction;
   }
+
+  // 4. Free keyless Pollinations backup (guarantees a response as a final fail-safe)
+  if (routeProvider !== 'pollinations') {
+    attempts.push({
+      provider: 'pollinations',
+      model: 'openai',
+      key: undefined,
+      isFallback: true
+    });
+    attempts.push({
+      provider: 'pollinations',
+      model: 'mistral',
+      key: undefined,
+      isFallback: true
+    });
+  }
+
+  let lastError: any = null;
+  for (let idx = 0; idx < attempts.length; idx++) {
+    const attempt = attempts[idx];
+    try {
+      const rawResult = await executeLLMRequest(systemPrompt, userPrompt, attempt.provider, attempt.model, attempt.key || '');
+      
+      // Clean response to handle potential markdown wrappers or conversational filler
+      let cleanJson = rawResult.trim();
+      if (cleanJson.includes('{')) {
+        const firstBrace = cleanJson.indexOf('{');
+        const lastBrace = cleanJson.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+        }
+      } else if (cleanJson.startsWith('```')) {
+        const match = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (match && match[1]) {
+          cleanJson = match[1].trim();
+        }
+      }
+
+      const parsed = JSON.parse(cleanJson);
+      
+      // Construct valid OutbreakPrediction object
+      const prediction: OutbreakPrediction = {
+        id: `prediction-${Date.now()}`,
+        timestamp: Date.now(),
+        overallRisk: parsed.overallRisk || 'LOW',
+        confidence: parsed.confidence || 50,
+        predictedDiseases: parsed.predictedDiseases || [],
+        diseaseClusters: (parsed.diseaseClusters || []).map((c: any) => ({
+          ...c,
+          firstReported: c.firstReported || Date.now() - 7 * 24 * 3600 * 1000,
+          lastReported: c.lastReported || Date.now(),
+        })),
+        environmentalFactors: {
+          temperature: parsed.environmentalFactors?.temperature ?? weather.temp,
+          humidity: parsed.environmentalFactors?.humidity ?? weather.humidity,
+          aqi: parsed.environmentalFactors?.aqi ?? weather.aqi,
+          riskMultiplier: parsed.environmentalFactors?.riskMultiplier ?? 1.0,
+          seasonalContext: parsed.environmentalFactors?.seasonalContext || 'Standard baseline risk conditions.',
+        },
+        geographicSpread: {
+          epicenter: parsed.geographicSpread?.epicenter || weather.city,
+          affectedAreas: parsed.geographicSpread?.affectedAreas || [weather.city],
+          spreadDirection: parsed.geographicSpread?.spreadDirection || 'Local containment',
+        },
+        recommendations: parsed.recommendations || ['Maintain standard clinical hygiene.', 'Monitor local disease surveillance portals.'],
+        rawAnalysis: parsed.rawAnalysis || rawResult,
+        aiProvider: attempt.provider,
+        aiModel: attempt.model,
+      };
+
+      savePredictionToHistory(prediction);
+      return prediction;
+
+    } catch (err: any) {
+      console.warn(`[Outbreak Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+      lastError = err;
+    }
+  }
+
+  // If all attempts fail, we proceed to rule-based fallback
+  console.error('[OutbreakLLM] All outbreak prediction attempts failed, returning rule-based fallback:', lastError);
+  
+  const fallbackPrediction: OutbreakPrediction = {
+    id: `prediction-fallback-${Date.now()}`,
+    timestamp: Date.now(),
+    overallRisk: totalCases > 20 ? 'HIGH' : totalCases > 5 ? 'MODERATE' : 'LOW',
+    confidence: 30,
+    predictedDiseases: Object.entries(diseaseBreakdown).map(([disease, count]) => ({
+      disease,
+      probability: Math.min(0.9, count / 20),
+      estimatedCases: `${count} active reports`,
+      peakWindow: 'Next 7 days',
+    })),
+    diseaseClusters: Object.entries(diseaseBreakdown).map(([disease, count]) => ({
+      disease,
+      locations: [weather.city],
+      totalCases: count,
+      trend: 'stable',
+      riskLevel: count > 10 ? 'HIGH' : 'MODERATE',
+      firstReported: Date.now() - 5 * 24 * 3600 * 1000,
+      lastReported: Date.now(),
+    })),
+    environmentalFactors: {
+      temperature: weather.temp,
+      humidity: weather.humidity,
+      aqi: weather.aqi,
+      riskMultiplier: weather.temp > 28 && weather.humidity > 70 ? 1.4 : 1.0,
+      seasonalContext: 'Calculated from live atmospheric reports.',
+    },
+    geographicSpread: {
+      epicenter: weather.city,
+      affectedAreas: [weather.city],
+      spreadDirection: 'Undetermined (limited RAG logs)',
+    },
+    recommendations: [
+      'Ensure hospital syndromic logs are updated frequently.',
+      'Review standard vector control practices if hot/humid.',
+      'Advise patients with active symptoms to seek clinical verification.'
+    ],
+    rawAnalysis: `Automated rule-based backup report triggered. Local active case count stands at ${totalCases} patients across ${Object.keys(diseaseBreakdown).length || 1} syndromes. Environmental markers (Temp: ${weather.temp}°C, Humidity: ${weather.humidity}%) suggest standard baseline vectors. Details: ${lastError instanceof Error ? lastError.message : 'AI model response parsing exception.'}`,
+    aiProvider,
+    aiModel,
+  };
+
+  savePredictionToHistory(fallbackPrediction);
+  return fallbackPrediction;
 }
