@@ -463,3 +463,67 @@ export const DEFAULT_MCP_SETTINGS: McpSettings = {
     },
   ],
 };
+
+// ─── Outbreak Intelligence Hub ──────────────────────────────────────────────
+export type OutbreakRiskLevel = 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL' | 'EPIDEMIC';
+
+export interface HospitalCaseReport {
+  id: string;
+  reporterName: string;
+  facilityName: string;
+  city: string;
+  district: string;
+  state: string;
+  disease: string;
+  syndromeId?: string;
+  patientCount: number;
+  ageRange: string;
+  genderDistribution: string;
+  symptoms: string;
+  dateRangeStart: string;
+  dateRangeEnd: string;
+  additionalNotes: string;
+  timestamp: number;
+  syncedToCloud: boolean;
+  embedding?: number[];
+}
+
+export interface DiseaseCluster {
+  disease: string;
+  locations: string[];
+  totalCases: number;
+  trend: 'rising' | 'stable' | 'declining';
+  riskLevel: OutbreakRiskLevel;
+  firstReported: number;
+  lastReported: number;
+}
+
+export interface OutbreakPrediction {
+  id: string;
+  timestamp: number;
+  overallRisk: OutbreakRiskLevel;
+  confidence: number;
+  predictedDiseases: Array<{
+    disease: string;
+    probability: number;
+    estimatedCases: string;
+    peakWindow: string;
+  }>;
+  diseaseClusters: DiseaseCluster[];
+  environmentalFactors: {
+    temperature: number;
+    humidity: number;
+    aqi: number;
+    riskMultiplier: number;
+    seasonalContext: string;
+  };
+  geographicSpread: {
+    epicenter: string;
+    affectedAreas: string[];
+    spreadDirection: string;
+  };
+  recommendations: string[];
+  rawAnalysis: string;
+  aiProvider: string;
+  aiModel: string;
+}

@@ -2,6 +2,7 @@ import React, { Component, type ErrorInfo, type ReactNode, useCallback, useEffec
 import { AlertTriangle, Crosshair, Loader2, LogOut, MapPin, RefreshCw, Settings, XCircle } from 'lucide-react';
 import { AlertNotificationPanel } from './components/AlertNotificationPanel';
 import { AnalysisDashboard } from './components/AnalysisDashboard';
+import { OutbreakIntelligenceHub } from './components/OutbreakIntelligenceHub';
 import { BioXAssistant } from './components/BioXAssistant';
 import { FloodPrediction } from './components/FloodPrediction';
 import { HistoricalAnalysis } from './components/HistoricalAnalysis';
@@ -67,7 +68,7 @@ const AppInner: React.FC = () => {
   });
   const [loadingState, setLoadingState] = useState<LoadingState>(LoadingState.IDLE);
   const [error, setError] = useState('');
-  const [view, setView] = useState<'dashboard' | 'historical' | 'flood' | 'assistant' | 'settings'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'historical' | 'flood' | 'outbreak' | 'assistant' | 'settings'>('dashboard');
 
   const [geminiKey, setGeminiKey] = useState<string>(() => localStorage.getItem('biosentinel_gemini_key') || '');
   const [groqKey, setGroqKey] = useState<string>(() => localStorage.getItem('biosentinel_groq_key') || '');
@@ -489,6 +490,12 @@ const AppInner: React.FC = () => {
                 Flood
               </button>
               <button
+                onClick={() => setView('outbreak')}
+                className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] ${view === 'outbreak' ? 'bg-white dark:bg-slate-600 text-teal-600 dark:text-teal-300 shadow-sm' : 'text-slate-500 dark:text-slate-300'}`}
+              >
+                Outbreak Intel
+              </button>
+              <button
                 onClick={() => setView('assistant')}
                 className={`px-4 sm:px-5 py-2.5 rounded-xl font-black uppercase tracking-widest text-[10px] ${view === 'assistant' ? 'bg-teal-600 text-white shadow-lg' : 'bg-teal-500/10 text-teal-600 border border-teal-200'}`}
               >
@@ -516,6 +523,7 @@ const AppInner: React.FC = () => {
                   databaseSettings={databaseSettings}
                   localIntelEnabled={onboardingComplete}
                   onOpenAssistant={() => setView('assistant')}
+                  onOpenOutbreak={() => setView('outbreak')}
                 />
               </>
             ) : view === 'historical' ? (
@@ -541,6 +549,14 @@ const AppInner: React.FC = () => {
                 mapTilerKey={mapTilerKey}
                 mapboxToken={mapboxToken}
                 arcGisKey={arcGisKey}
+              />
+            ) : view === 'outbreak' ? (
+              <OutbreakIntelligenceHub
+                weather={weather}
+                aiProvider={aiProvider}
+                aiModel={aiModel}
+                aiKey={aiKey}
+                databaseSettings={databaseSettings}
               />
             ) : view === 'assistant' ? (
               <BioXAssistant

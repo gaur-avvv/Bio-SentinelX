@@ -7,6 +7,7 @@
 
 import { AnonymizedSignal } from './privacyService';
 import { OutbreakAlert } from './outbreakPredictionService';
+import type { HospitalCaseReport } from '../types';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -201,3 +202,185 @@ export async function fetchRegionalData(state: string): Promise<Record<string, n
     return {};
   }
 }
+
+/**
+ * Upsert a hospital case report to Supabase (including embedding if pgvector is enabled).
+ */
+export async function storeCaseReport(report: HospitalCaseReport): Promise<{ success: boolean; error?: string }> {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return { success: false, error: 'Supabase not configured' };
+  }
+
+  try {
+    const formatted = {
+      id: report.id,
+      reporter_name: report.reporterName,
+      facility_name: report.facilityName,
+      city: report.city,
+      district: report.district,
+      state: report.state,
+      disease: report.disease,
+      syndrome_id: report.syndromeId || null,
+      patient_count: report.patientCount,
+      age_range: report.ageRange,
+      gender_distribution: report.genderDistribution,
+      symptoms: report.symptoms,
+      date_range_start: report.dateRangeStart,
+      date_range_end: report.dateRangeEnd,
+      additional_notes: report.additionalNotes,
+      timestamp: new Date(report.timestamp).toISOString(),
+      synced_to_cloud: true,
+      embedding: report.embedding || null,
+    };
+
+    // Postgrest upsert uses POST with Prefer: resolution=merge-duplicates
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/hospital_case_reports`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify(formatted),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.message || `HTTP ${res.status}`);
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error('[SupabaseSync] Store case report failed:', err);
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}
+
+// Alias for storeCaseReport to maintain compatibility with different subagent designs
+export const storeCaseVector = storeCaseReport;
+
+/**
+ * Fetch all hospital case reports from the cloud.
+ */
+export async function fetchCaseReports(limit = 100): Promise<HospitalCaseReport[]> {
+  if (!SUPABASE_URL || !SUPABASE_KEY) return [];
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/hospital_case_reports?select=*&order=timestamp.desc&limit=${limit}`, {
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+      },
+    });
+
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    return data.map((d: any) => ({
+      id: d.id,
+      reporterName: d.reporter_name,
+      facilityName: d.facility_name,
+      city: d.city,
+      district: d.district,
+      state: d.state,
+      disease: d.disease,
+      syndromeId: d.syndrome_id || undefined,
+      patientCount: d.patient_count,
+      ageRange: d.age_range,
+      genderDistribution: d.gender_distribution,
+      symptoms: d.symptoms,
+      dateRangeStart: d.date_range_start,
+      dateRangeEnd: d.date_range_end,
+      additionalNotes: d.additional_notes || '',
+      timestamp: new Date(d.timestamp).getTime(),
+      syncedToCloud: true,
+      embedding: d.embedding || undefined,
+    }));
+  } catch (err) {
+    console.error('[SupabaseSync] Fetch case reports failed:', err);
+    return [];
+  }
+}
+
+/**
+ * Search similar cases via pgvector cosine similarity function.
+ * Falls back to basic case report fetching and filtering if RPC fails or is missing.
+ */
+export async function searchSimilarCases(embedding: number[], matchCount = 5): Promise<HospitalCaseReport[]> {
+  if (!SUPABASE_URL || !SUPABASE_KEY || !embedding || embedding.length === 0) {
+    return [];
+  }
+
+  try {
+    // Call the pgvector match function via RPC
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/match_case_reports`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query_embedding: embedding,
+        match_threshold: 0.5,
+        match_count: matchCount,
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn('[SupabaseSync] similarity search RPC failed, falling back to recent cases...');
+      return fetchCaseReports(matchCount);
+    }
+
+    const data = await res.json();
+    return data.map((d: any) => ({
+      id: d.id,
+      reporterName: d.reporter_name,
+      facilityName: d.facility_name,
+      city: d.city,
+      district: d.district,
+      state: d.state,
+      disease: d.disease,
+      syndromeId: d.syndrome_id || undefined,
+      patientCount: d.patient_count,
+      ageRange: d.age_range,
+      genderDistribution: d.gender_distribution,
+      symptoms: d.symptoms,
+      dateRangeStart: d.date_range_start,
+      dateRangeEnd: d.date_range_end,
+      additionalNotes: d.additional_notes || '',
+      timestamp: new Date(d.timestamp).getTime(),
+      syncedToCloud: true,
+      embedding: d.embedding || undefined,
+    }));
+  } catch (err) {
+    console.error('[SupabaseSync] Vector search failed:', err);
+    return fetchCaseReports(matchCount);
+  }
+}
+
+/**
+ * Fetch case counts grouped by disease for epidemiological thresholds.
+ */
+export async function getCaseCountsByDisease(): Promise<Record<string, number>> {
+  const reports = await fetchCaseReports(500);
+  const counts: Record<string, number> = {};
+  reports.forEach(r => {
+    counts[r.disease] = (counts[r.disease] || 0) + r.patientCount;
+  });
+  return counts;
+}
+
+/**
+ * Fetch recent case reports grouped by district/city.
+ */
+export async function fetchRecentCasesByRegion(region: string): Promise<HospitalCaseReport[]> {
+  const reports = await fetchCaseReports(200);
+  return reports.filter(r => 
+    r.city?.toLowerCase().includes(region.toLowerCase()) || 
+    r.district?.toLowerCase().includes(region.toLowerCase()) || 
+    r.state?.toLowerCase().includes(region.toLowerCase())
+  );
+}
+

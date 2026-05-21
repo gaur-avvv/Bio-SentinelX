@@ -16,6 +16,7 @@ import { SurveillanceIntegrationHub } from './surveillance/SurveillanceIntegrati
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 
 import { checkCloudEarlyWarning, getActiveOutbreakAlerts, getOutbreakPredictionStats, type CloudEarlyWarning, type OutbreakAlert } from '../services/outbreakPredictionService';
+import { getPredictionHistory } from '../services/outbreakLLMService';
 
 import { isModelTrained, predictWithTrainedModel, getTrainedModelInfo, getTrainedModelPerformanceMetrics, trainModel, DEFAULT_TRAINING_CONFIG, autoDetectFeaturesAndLabel } from '../services/realtimeMLService';
 import { predictDisease } from '../services/weatherDiseaseMLService';
@@ -28,6 +29,7 @@ interface AnalysisDashboardProps {
   aiModel: string;
   aiKey?: string;
   onOpenAssistant?: () => void;
+  onOpenOutbreak?: () => void;
   databaseSettings?: DatabaseSettings;
   localIntelEnabled?: boolean;
 }
@@ -756,6 +758,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   aiModel,
   aiKey,
   onOpenAssistant,
+  onOpenOutbreak,
   localIntelEnabled = true,
 }) => {
   const [userFeedback, setUserFeedback] = useState<string>(() => {
@@ -779,6 +782,19 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [dashboardFeedbackSubmitted, setDashboardFeedbackSubmitted] = useState(false);
   const [dashboardFeedback, setDashboardFeedback] = useState<'helpful' | 'not-helpful' | null>(null);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  const [latestPrediction, setLatestPrediction] = useState<any>(null);
+
+  useEffect(() => {
+    try {
+      const history = getPredictionHistory();
+      if (history.length > 0) {
+        setLatestPrediction(history[0]);
+      }
+    } catch (err) {
+      console.warn('Failed to load outbreak prediction history:', err);
+    }
+  }, []);
 
   const toggleSection = (title: string) => {
     setExpandedSections(prev => ({ ...prev, [title]: !prev[title] }));
@@ -1987,6 +2003,64 @@ ${analysis.replace(/### (\d+)\./g, '<h3>$1.').replace(/### /g, '<h3>').replace(/
           <button onClick={() => setError("")} className="p-2 hover:bg-rose-100 rounded-lg text-rose-400 transition-all"><XCircle className="w-5 h-5" /></button>
         </div>
       )}
+
+      {/* Outbreak Intelligence Quick-Access Card */}
+      <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 p-6 sm:p-8 shadow-xl">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-teal-500/5 rounded-full blur-3xl pointer-events-none" />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+          <div className="flex items-center gap-4">
+            <div className={`p-3 rounded-2xl ${
+              latestPrediction?.overallRisk === 'EPIDEMIC' ? 'bg-red-500/20 text-red-500 animate-pulse' :
+              latestPrediction?.overallRisk === 'CRITICAL' ? 'bg-purple-500/20 text-purple-400' :
+              latestPrediction?.overallRisk === 'HIGH' ? 'bg-rose-500/20 text-rose-400' :
+              latestPrediction?.overallRisk === 'MODERATE' ? 'bg-amber-500/20 text-amber-400' :
+              latestPrediction?.overallRisk === 'LOW' ? 'bg-emerald-500/20 text-emerald-400' :
+              'bg-slate-850 text-slate-400 border border-slate-700'
+            }`}>
+              <Bug className="w-6 h-6 shrink-0" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 bg-teal-500/10 rounded-md text-[8px] font-black text-teal-400 uppercase tracking-widest">
+                  Outbreak Intelligence
+                </span>
+                {latestPrediction && (
+                  <span className="text-[9px] text-slate-400 font-bold">
+                    Last computed: {new Date(latestPrediction.timestamp).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+              <h3 className="text-lg font-black text-white uppercase mt-1">
+                {latestPrediction ? (
+                  <>Current Risk: <span className={
+                    latestPrediction.overallRisk === 'EPIDEMIC' ? 'text-red-500' :
+                    latestPrediction.overallRisk === 'CRITICAL' ? 'text-purple-400' :
+                    latestPrediction.overallRisk === 'HIGH' ? 'text-rose-400' :
+                    latestPrediction.overallRisk === 'MODERATE' ? 'text-amber-400' :
+                    'text-emerald-400'
+                  }>{latestPrediction.overallRisk}</span> ({latestPrediction.confidence}% Confidence)</>
+                ) : (
+                  "Outbreak Prediction Pending"
+                )}
+              </h3>
+              <p className="text-xs text-slate-400 max-w-xl mt-1 leading-relaxed">
+                {latestPrediction ? (
+                  latestPrediction.rawAnalysis.substring(0, 140) + "..."
+                ) : (
+                  "Hospital syndromic reports, atmospheric multipliers, and localized vector metrics have not been computed yet. Trigger early warning prediction in the Outbreak Intelligence Hub."
+                )}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onOpenOutbreak}
+            className="flex items-center gap-2 px-5 py-3 bg-teal-600 hover:bg-teal-500 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-xl shadow-teal-900/30 whitespace-nowrap"
+          >
+            Launch Outbreak Intel Hub
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-12 space-y-8">
