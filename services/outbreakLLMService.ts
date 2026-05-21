@@ -292,9 +292,9 @@ Evapotranspiration: ${weather.advancedData?.evapotranspiration ?? 'N/A'} mm
 User Demographics & Health Profile:
 - Age: ${lifestyle.age || 'N/A'}
 - Gender: ${lifestyle.gender || 'N/A'}
-- City: ${lifestyle.city || 'N/A'}, State: ${lifestyle.state || 'N/A'}
-- Chronic Conditions: ${lifestyle.chronicConditions?.join(', ') || 'None'}
-- Allergies: ${lifestyle.allergies?.join(', ') || 'None'}
+- City Type: ${lifestyle.cityType || 'N/A'}
+- Chronic Conditions: ${lifestyle.chronicConditions || 'None'}
+- Allergies: ${lifestyle.allergies || 'None'}
 ` : 'No specific user health profile provided.';
 
   // 4. Formulate the Prompts

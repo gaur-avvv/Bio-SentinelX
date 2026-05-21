@@ -182,13 +182,12 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
 
         finalPrompt = `${userMsg}\n\n${internetContext}`;
       } catch (err: any) {
-        // If rate limited, we gracefully display the error but still proceed without internet context or block the request. Let's show as error and block to enforce rate limiting.
-        setChatError(err.message || 'Web search limit exceeded.');
+        console.error("Deep search error occurred, failing open gracefully:", err);
+        setChatError("Web search is temporarily unavailable. Analyzing using offline clinical models...");
+        finalPrompt = userMsg;
+      } finally {
         setIsSearching(false);
-        setIsChatLoading(false);
-        return;
       }
-      setIsSearching(false);
     }
 
     setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);

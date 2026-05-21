@@ -448,7 +448,7 @@ export interface McpSettings {
 
 export const DEFAULT_MCP_SETTINGS: McpSettings = {
   enabled: false,
-  allowlistedTools: ['outbreak_sweep', 'kg_expand', 'protocol_draft'],
+  allowlistedTools: ['outbreak_sweep', 'kg_expand', 'protocol_draft', 'wiki_search', 'wiki_summary'],
   defaultTimeoutMs: 5000,
   defaultRetryCount: 1,
   servers: [
@@ -458,6 +458,15 @@ export const DEFAULT_MCP_SETTINGS: McpSettings = {
       endpoint: 'https://web-production-37f41.up.railway.app',
       enabled: true,
       allowedTools: ['outbreak_sweep'],
+      timeoutMs: 5000,
+      retryCount: 1,
+    },
+    {
+      id: 'deep-wiki-mcp',
+      name: 'Deep Wiki Search MCP',
+      endpoint: 'internal-wiki',
+      enabled: true,
+      allowedTools: ['wiki_search', 'wiki_summary'],
       timeoutMs: 5000,
       retryCount: 1,
     },

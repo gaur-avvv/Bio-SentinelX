@@ -6,7 +6,7 @@ import { promptCache } from './promptCacheService';
 import { stripHiddenModelReasoning } from '../utils/aiTextSanitizer';
 import { analyzeEnvironmentalImpact, initializeKnowledgeGraph } from './knowledgeGraphService';
 import { MEDGEMMA_MODELS, chatCompletion, checkModelAvailability, getHFToken } from './huggingFaceService';
-import { executeMcpOutbreakSweep } from './mcpOrchestrationService';
+import { executeMcpOutbreakSweep, executeMcpWikiSearch } from './mcpOrchestrationService';
 import { McpSettings, DEFAULT_MCP_SETTINGS } from '../types';
 
 // ============================================================
@@ -1076,6 +1076,23 @@ export const chatWithWeatherAssistant = async (
       } catch {
         mcpContext = '\nMCP TOOL SIGNALS: regional sweep unavailable.';
       }
+
+      // Check disease terms or keywords to trigger Deep Wiki MCP search
+      const diseaseKeywords = ["research", "wiki", "what is", "disease", "outbreak", "virus", "bacteria", "infection", "epidemic", "pandemic", "symptom", "treatment", "pathogen", "flu", "covid", "dengue", "malaria", "cholera", "typhoid", "influenza"];
+      const lowerMessage = message.toLowerCase();
+      const needsWikiSearch = diseaseKeywords.some(keyword => lowerMessage.includes(keyword));
+      
+      if (needsWikiSearch) {
+        try {
+          const wikiRes = await executeMcpWikiSearch(message, options?.mcpSettings || DEFAULT_MCP_SETTINGS);
+          if (wikiRes && wikiRes.context) {
+            mcpContext += `\n\nDEEP WIKI MCP RESEARCH:\n${wikiRes.context}`;
+            trace.mcpSignals += wikiRes.trace?.signals || 1;
+          }
+        } catch (wikiErr) {
+          console.warn("Deep Wiki MCP Search failed:", wikiErr);
+        }
+      }
     }
   }
 
@@ -1194,142 +1211,229 @@ export const chatWithWeatherAssistant = async (
 
   const routeProvider = aiProvider === 'huggingface' ? 'gemini' : aiProvider;
 
-  // ---- Groq ----
-  if (routeProvider === 'groq') {
-    if (!apiKey) throw new Error('Groq API key is missing. Please add it in the sidebar.');
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: aiModel, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as any;
-      const msg = err?.error?.message || `Groq API error ${res.status}`;
-      if (res.status === 429) throw new Error('Groq rate limit exceeded. Please wait a moment.');
-      if (res.status === 401) throw new Error('Invalid Groq API key. Please check the sidebar.');
-      throw new Error(msg);
+  const PROVIDER_BACKUP_MODELS: Record<string, string[]> = {
+    gemini: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'],
+    groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+    openrouter: ['google/gemini-2.5-flash:free', 'meta-llama/llama-3-8b-instruct:free', 'mistralai/mistral-7b-instruct:free'],
+    siliconflow: ['deepseek-ai/DeepSeek-V3', 'Qwen/Qwen2.5-7B-Instruct'],
+    cerebras: ['llama3.1-8b', 'llama3.1-70b'],
+    pollinations: ['openai', 'mistral'],
+    ollama: ['llama3', 'mistral']
+  };
+
+  const getProviderKey = (prov: string): string | undefined => {
+    if (prov === 'gemini') {
+      return localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (routeProvider === 'gemini' ? apiKey : undefined);
     }
-    const data = await res.json() as any;
-    promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-    return finish(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'groq', aiModel);
-  }
-
-  // ---- Pollinations ----
-  if (routeProvider === 'pollinations') {
-    const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (apiKey) pollinationsHeaders['Authorization'] = `Bearer ${apiKey}`;
-    const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: pollinationsHeaders,
-      body: JSON.stringify({ model: aiModel, messages: oaiMessages }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as any;
-      const msg = err?.error?.message || `Pollinations AI error ${res.status}`;
-      if (res.status === 401) throw new Error('Invalid or missing Pollinations API key. Please check the sidebar.');
-      if (res.status === 402) throw new Error('Pollinations pollen balance exhausted. Please top up at enter.pollinations.ai');
-      if (res.status === 429) throw new Error('Pollinations rate limit exceeded. Please wait a moment.');
-      throw new Error(`${msg}. Try a different model.`);
+    if (prov === 'groq') {
+      return localStorage.getItem('biosentinel_groq_key') || (routeProvider === 'groq' ? apiKey : undefined);
     }
-    const data = await res.json() as any;
-    promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-    return finish(data.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'pollinations', aiModel);
-  }
-
-  // ---- OpenRouter ----
-  if (routeProvider === 'openrouter') {
-    if (!apiKey) throw new Error('OpenRouter API key is missing. Please add it in the sidebar.');
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://bio-sentinelx.app',
-        'X-Title': 'Bio-SentinelX',
-      },
-      body: JSON.stringify({ model: aiModel, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as any;
-      const msg = err?.error?.message || `OpenRouter API error ${res.status}`;
-      if (res.status === 429) throw new Error('OpenRouter rate limit exceeded. Please wait a moment.');
-      if (res.status === 401) throw new Error('Invalid OpenRouter API key. Please check the sidebar.');
-      if (res.status === 402) throw new Error('OpenRouter credits exhausted. Top up at openrouter.ai/credits');
-      throw new Error(msg);
+    if (prov === 'openrouter') {
+      return localStorage.getItem('biosentinel_openrouter_key') || (routeProvider === 'openrouter' ? apiKey : undefined);
     }
-    const orData = await res.json() as any;
-    promptCache.recordServerCacheHit(promptCache.extractCachedTokens(orData));
-    return finish(orData.choices?.[0]?.message?.content || "I'm sorry, I couldn't process that request.", 'openrouter', aiModel);
+    if (prov === 'siliconflow') {
+      return localStorage.getItem('biosentinel_siliconflow_key') || (routeProvider === 'siliconflow' ? apiKey : undefined);
+    }
+    if (prov === 'cerebras') {
+      return localStorage.getItem('biosentinel_cerebras_key') || (routeProvider === 'cerebras' ? apiKey : undefined);
+    }
+    return undefined;
+  };
+
+  interface GenerationAttempt {
+    provider: string;
+    model: string;
+    key?: string;
+    isFallback: boolean;
   }
 
-  // ---- SiliconFlow ----
-  if (routeProvider === 'siliconflow') {
-    const text = await withRetry(() => chatWithSiliconFlow(
-      oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-      aiModel,
-      apiKey || ''
-    ));
-    return finish(text, 'siliconflow', aiModel);
-  }
+  const attempts: GenerationAttempt[] = [];
 
-  // ---- Cerebras ----
-  if (routeProvider === 'cerebras') {
-    const text = await chatWithCerebras(
-      oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-      aiModel,
-      apiKey || ''
-    );
-    return finish(text, 'cerebras', aiModel);
-  }
-
-  // ---- Ollama (Small Models) ----
-  if (routeProvider === 'ollama') {
-    const { chatWithOllama } = await import('./smallModelService');
-    const text = await chatWithOllama(
-      oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-      aiModel,
-      1024
-    );
-    return finish(text, 'ollama', aiModel);
-  }
-
-  // ---- Gemini (default) ----
-  const key = routeProvider === 'gemini' && aiProvider === 'huggingface'
-    ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
-    : (apiKey || process.env.API_KEY);
-  if (!key) throw new Error('Gemini API Key missing. Please configure it in the sidebar.');
-  const ai = new GoogleGenAI({ apiKey: key });
-
-  // Map history to Gemini format
-  const chatHistory = history.map(msg => ({
-    role: msg.role === 'user' ? 'user' : 'model',
-    parts: [{ text: msg.text }]
-  }));
-
-  const chat = ai.chats.create({
+  // 1. Primary Attempt: Selected model and provider
+  attempts.push({
+    provider: routeProvider,
     model: aiModel,
-    history: chatHistory,
-    config: { 
-      systemInstruction,
-      tools: [{ googleSearch: {} }],
-      toolConfig: {
-        retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
-      }
-    },
+    key: routeProvider === 'gemini' && aiProvider === 'huggingface'
+      ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+      : apiKey,
+    isFallback: false
   });
-  try {
-    const response = await chat.sendMessage({ message: userMessage });
-    return finish(response.text || "I'm sorry, I couldn't process that request.", 'gemini', aiModel);
-  } catch (error: any) {
-    const groqFallbackKey = localStorage.getItem('biosentinel_groq_key') || '';
-    if (groqFallbackKey) {
-      trace.fallbackUsed = true;
-      trace.fallbackProvider = 'groq';
-      const groqText = await generateWithGroq(systemInstruction, userMessage, 'llama-3.1-8b-instant', groqFallbackKey);
-      return finish(groqText || "I'm sorry, I couldn't process that request.", 'groq', 'llama-3.1-8b-instant');
+
+  // 2. Backup models of same provider
+  const sameBackups = PROVIDER_BACKUP_MODELS[routeProvider] || [];
+  for (const backup of sameBackups) {
+    if (backup !== aiModel) {
+      attempts.push({
+        provider: routeProvider,
+        model: backup,
+        key: routeProvider === 'gemini' && aiProvider === 'huggingface'
+          ? (localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY)
+          : apiKey,
+        isFallback: true
+      });
     }
-    throw error;
   }
+
+  // 3. Other configured providers
+  const providersOrder = ['gemini', 'groq', 'openrouter', 'siliconflow', 'cerebras'];
+  for (const prov of providersOrder) {
+    if (prov !== routeProvider) {
+      const provKey = getProviderKey(prov);
+      if (provKey) {
+        const provModels = PROVIDER_BACKUP_MODELS[prov] || [];
+        for (const provModel of provModels) {
+          attempts.push({
+            provider: prov,
+            model: provModel,
+            key: provKey,
+            isFallback: true
+          });
+        }
+      }
+    }
+  }
+
+  // 4. Free keyless Pollinations backup (guarantees a response as a final fail-safe)
+  if (routeProvider !== 'pollinations') {
+    attempts.push({
+      provider: 'pollinations',
+      model: 'openai',
+      key: undefined,
+      isFallback: true
+    });
+    attempts.push({
+      provider: 'pollinations',
+      model: 'mistral',
+      key: undefined,
+      isFallback: true
+    });
+  }
+
+  let lastError: any = null;
+  for (let idx = 0; idx < attempts.length; idx++) {
+    const attempt = attempts[idx];
+    try {
+      if (attempt.isFallback) {
+        trace.fallbackUsed = true;
+        trace.fallbackProvider = `${attempt.provider}:${attempt.model}`;
+      }
+
+      let text = '';
+
+      if (attempt.provider === 'groq') {
+        const keyToUse = attempt.key || getProviderKey('groq');
+        if (!keyToUse) throw new Error('Groq key is missing');
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({})) as any;
+          throw new Error(err?.error?.message || `Groq error ${res.status}`);
+        }
+        const data = await res.json() as any;
+        promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
+        text = data.choices?.[0]?.message?.content || '';
+      } 
+      else if (attempt.provider === 'pollinations') {
+        const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        const keyToUse = attempt.key || localStorage.getItem('biosentinel_pollinations_key') || undefined;
+        if (keyToUse) pollinationsHeaders['Authorization'] = `Bearer ${keyToUse}`;
+        const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: pollinationsHeaders,
+          body: JSON.stringify({ model: attempt.model, messages: oaiMessages }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({})) as any;
+          throw new Error(err?.error?.message || `Pollinations error ${res.status}`);
+        }
+        const data = await res.json() as any;
+        promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
+        text = data.choices?.[0]?.message?.content || '';
+      } 
+      else if (attempt.provider === 'openrouter') {
+        const keyToUse = attempt.key || getProviderKey('openrouter');
+        if (!keyToUse) throw new Error('OpenRouter key is missing');
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${keyToUse}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://bio-sentinelx.app',
+            'X-Title': 'Bio-SentinelX',
+          },
+          body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({})) as any;
+          throw new Error(err?.error?.message || `OpenRouter error ${res.status}`);
+        }
+        const orData = await res.json() as any;
+        promptCache.recordServerCacheHit(promptCache.extractCachedTokens(orData));
+        text = orData.choices?.[0]?.message?.content || '';
+      } 
+      else if (attempt.provider === 'siliconflow') {
+        const keyToUse = attempt.key || getProviderKey('siliconflow');
+        if (!keyToUse) throw new Error('SiliconFlow key is missing');
+        text = await withRetry(() => chatWithSiliconFlow(
+          oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+          attempt.model,
+          keyToUse
+        ));
+      } 
+      else if (attempt.provider === 'cerebras') {
+        const keyToUse = attempt.key || getProviderKey('cerebras');
+        if (!keyToUse) throw new Error('Cerebras key is missing');
+        text = await chatWithCerebras(
+          oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+          attempt.model,
+          keyToUse
+        );
+      } 
+      else if (attempt.provider === 'ollama') {
+        const { chatWithOllama } = await import('./smallModelService');
+        text = await chatWithOllama(
+          oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+          attempt.model,
+          1024
+        );
+      } 
+      else {
+        // Gemini
+        const keyToUse = attempt.key || getProviderKey('gemini');
+        if (!keyToUse) throw new Error('Gemini key is missing');
+        const ai = new GoogleGenAI({ apiKey: keyToUse });
+        const chatHistory = history.map(msg => ({
+          role: msg.role === 'user' ? 'user' : 'model',
+          parts: [{ text: msg.text }]
+        }));
+        const chat = ai.chats.create({
+          model: attempt.model,
+          history: chatHistory,
+          config: {
+            systemInstruction,
+            tools: [{ googleSearch: {} }],
+            toolConfig: {
+              retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+            }
+          },
+        });
+        const response = await chat.sendMessage({ message: userMessage });
+        text = response.text || '';
+      }
+
+      if (text) {
+        return finish(text, attempt.provider, attempt.model);
+      }
+    } catch (err: any) {
+      console.warn(`[Self-Healing Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("All model/provider generation attempts failed.");
 };
 
 // ============================================================
