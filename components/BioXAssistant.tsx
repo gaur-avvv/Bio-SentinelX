@@ -190,7 +190,9 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
       }
     }
 
-    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }, { role: 'model', text: '' }]);
+
+    let accumulatedResponse = '';
 
     try {
       const rawResponse = await chatWithWeatherAssistant(
@@ -208,6 +210,19 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
           llamaCloudEnabled: Boolean(llamaCloudKey),
           includeTrace: assistantMode === 'deep',
           mcpSettings,
+          onToken: (token: string) => {
+            accumulatedResponse += token;
+            setChatMessages(prev => {
+              const updated = [...prev];
+              if (updated.length > 0) {
+                updated[updated.length - 1] = {
+                  role: 'model',
+                  text: stripHiddenModelReasoning(accumulatedResponse)
+                };
+              }
+              return updated;
+            });
+          }
         }
       );
       let responseBody = rawResponse;
@@ -221,9 +236,16 @@ export const BioXAssistant: React.FC<BioXAssistantProps> = ({
         }
       }
       const response = stripHiddenModelReasoning(responseBody);
-      setChatMessages(prev => [...prev, { role: 'model', text: response }]);
+      setChatMessages(prev => {
+        const updated = [...prev];
+        if (updated.length > 0) {
+          updated[updated.length - 1] = { role: 'model', text: response };
+        }
+        return updated;
+      });
     } catch (err: any) {
       setChatError(err?.message || 'Bio-Assistant link interrupted. Check your network or API key.');
+      setChatMessages(prev => prev.slice(0, -1));
     } finally {
       setIsChatLoading(false);
     }

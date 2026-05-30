@@ -768,7 +768,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const { analysis: analysisCache, setAnalysis: setAnalysisCache } = useDataCache();
   const cacheValid = isCacheValid(analysisCache.lastFetched, analysisCache.lastLocation, weather?.city ?? '');
   const [analysis, setAnalysis] = useState<string>(() => cacheValid ? analysisCache.report : "");
-  const [mlPrediction, setMlPrediction] = useState<MLPrediction | null>(() => cacheValid ? analysisCache.mlPrediction : null);
+  const [mlPrediction, setMlPrediction] = useState<MLPrediction | null>(() => cacheValid ? (analysisCache.mlPrediction as any) : null);
   const [mlWarnings, setMlWarnings] = useState<string[]>([]);
   const [groundingChunks, setGroundingChunks] = useState<GroundingChunk[]>([]);
   const [error, setError] = useState<string>("");
@@ -1753,7 +1753,12 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           lifestyleData,
           undefined,
           aiKey,
-          localModelPrediction
+          localModelPrediction,
+          {
+            onToken: (token: string) => {
+              setAnalysis(prev => prev + token);
+            }
+          }
         )
       ]);
 
@@ -1764,7 +1769,7 @@ export const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
       if (mlResult.status === 'fulfilled') {
         prediction = mlResult.value;
         setMlPrediction(prediction);
-        setAnalysisCache({ mlPrediction: prediction, lastLocation: weather?.city ?? '', lastFetched: Date.now() });
+        setAnalysisCache({ mlPrediction: prediction as any, lastLocation: weather?.city ?? '', lastFetched: Date.now() });
         console.log("AI Risk Prediction:", prediction);
       } else {
         console.error("ML Prediction failed:", mlResult.reason);

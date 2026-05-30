@@ -10,6 +10,16 @@
  * Max storage caps prevent quota exhaustion.
  */
 
+import {
+  tokenize,
+  buildTFIDF,
+  cosineSparse,
+  cosineDense,
+  hybridSearch,
+  embedWithGemini,
+  type SearchChunk
+} from './vectorSearchEngine';
+
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
 const KEYS = {
   REPORTS:        'biosentinel_report_history_v2',
@@ -49,6 +59,7 @@ export interface ReportSection {
   sectionTitle: string;                 // e.g. "Weather-Health Correlation"
   text: string;                         // full section text
   tfidf: Record<string, number>;        // TF-IDF vector for retrieval
+  embedding?: number[];                 // Dense embedding for semantic hybrid search
 }
 
 export interface ChatMessage {
@@ -64,6 +75,7 @@ export interface ChatSession {
   city?: string;
   messages: ChatMessage[];
   summary?: string;           // Compressed 2-3 sentence summary for cross-session memory
+  embedding?: number[];       // Dense embedding of the summary for semantic retrieval
   messageCount: number;
 }
 
@@ -147,7 +159,6 @@ function loadSymptomLog(): SymptomEntry[] {
 }
 
 function saveSymptomLog(entries: SymptomEntry[]): void {
-  // Keep last 60 entries to avoid quota issues.
   safeSet(KEYS.SYMPTOM_LOG, entries.slice(-60));
 }
 
@@ -172,37 +183,6 @@ export function getRecentSymptoms(limit = 20): SymptomEntry[] {
 
 export function clearSymptomLog(): void {
   localStorage.removeItem(KEYS.SYMPTOM_LOG);
-}
-
-// ─── TF-IDF (inline, no external dep) ────────────────────────────────────────
-
-const STOP_WORDS = new Set([
-  'the','a','an','is','are','was','were','be','been','being','have','has','had',
-  'do','does','did','will','would','could','should','may','might','shall','can',
-  'to','of','in','for','on','with','at','by','from','as','this','that','these',
-  'those','it','its','or','and','but','not','no','so','if','then','than','more',
-  'also','such','which','they','their','there','into','about','after','before',
-]);
-
-function buildTFIDF(text: string): Record<string, number> {
-  const tokens = text.toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 2 && !STOP_WORDS.has(t));
-  const freq: Record<string, number> = {};
-  tokens.forEach(t => { freq[t] = (freq[t] || 0) + 1; });
-  const total = tokens.length || 1;
-  const tfidf: Record<string, number> = {};
-  Object.entries(freq).forEach(([term, count]) => { tfidf[term] = count / total; });
-  return tfidf;
-}
-
-function cosineTFIDF(a: Record<string, number>, b: Record<string, number>): number {
-  let dot = 0, magA = 0, magB = 0;
-  Object.entries(a).forEach(([t, va]) => { dot += va * (b[t] || 0); magA += va * va; });
-  Object.values(b).forEach(vb => { magB += vb * vb; });
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
 }
 
 // ─── Section parser ───────────────────────────────────────────────────────────
@@ -301,20 +281,51 @@ export function reconstructReportContent(report: StoredReport): string {
 }
 
 /**
- * TF-IDF search across all stored report section chunks.
- * Returns top-k chunks sorted by similarity, optionally filtered by city.
+ * Hybrid search across all stored report section chunks.
+ * Leverages dense search if embeddings and geminiKey are present, otherwise falls back to TF-IDF.
  */
-export function searchReportChunks(
+export async function searchReportChunks(
   query: string,
   topK = 5,
-  city?: string
-): ReportSection[] {
-  const queryVec = buildTFIDF(query);
-  let chunks = loadReportChunks();
-  if (city) chunks = chunks.filter(c => c.city === city);
+  city?: string,
+  geminiKey?: string
+): Promise<ReportSection[]> {
+  const chunks = loadReportChunks();
+  let filtered = city ? chunks.filter(c => c.city === city) : chunks;
+  if (filtered.length === 0) return [];
 
-  return chunks
-    .map(c => ({ chunk: c, score: cosineTFIDF(queryVec, c.tfidf) }))
+  // If geminiKey and any chunk has dense embedding, use hybridSearch from vectorSearchEngine
+  const hasDense = filtered.some(c => !!c.embedding);
+  if (geminiKey && hasDense) {
+    try {
+      const searchChunks: SearchChunk[] = filtered.map(c => ({
+        id: c.id,
+        text: c.text,
+        embedding: c.embedding,
+        tfidf: c.tfidf,
+        docId: c.reportId,
+        docTitle: c.sectionTitle
+      }));
+      const results = await hybridSearch(query, searchChunks, {
+        topK,
+        geminiKey,
+        useDense: true,
+        useSparse: true,
+        rerank: false
+      });
+      // Map results back to ReportSections
+      return results
+        .map(r => filtered.find(c => c.id === r.chunkId)!)
+        .filter(Boolean);
+    } catch (e) {
+      console.warn('[MemoryService] Hybrid chunk search failed, falling back to TF-IDF:', e);
+    }
+  }
+
+  // Fallback to TF-IDF search
+  const queryVec = buildTFIDF(query);
+  return filtered
+    .map(c => ({ chunk: c, score: cosineSparse(queryVec, c.tfidf) }))
     .filter(x => x.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
@@ -385,7 +396,6 @@ export function saveReport(params: {
     city,
     title: `Health Risk Assessment — ${city}`,
     summary: extractSummary(content),
-    // content NOT stored on the report — lives in chunks below
     riskScore,
     primaryRisk,
     provider,
@@ -415,7 +425,6 @@ export function saveReport(params: {
 
 export function getReports(): StoredReport[] {
   const reports = safeGet<StoredReport[]>(KEYS.REPORTS, []);
-  // Also migrate legacy reports
   migrateLegacyReports();
   return safeGet<StoredReport[]>(KEYS.REPORTS, reports).sort((a, b) => b.timestamp - a.timestamp);
 }
@@ -434,16 +443,12 @@ export function clearAllReports(): void {
 
 // ─── Chat Session API ─────────────────────────────────────────────────────────
 
-/** Returns the active session id (today's session, or most recent) */
 let _activeSessionId: string | null = null;
 
 export function getOrCreateSession(city?: string): ChatSession {
   const sessions = safeGet<ChatSession[]>(KEYS.CHAT_SESSIONS, []);
-
-  // Migrate legacy chat
   migrateLegacyChat(city);
 
-  // Check if we have an active session started today
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   let session = sessions.find(s =>
@@ -461,17 +466,18 @@ export function getOrCreateSession(city?: string): ChatSession {
       messageCount: 0,
     };
     sessions.push(session);
-    safeSet(KEYS.CHAT_SESSIONS, sessions.slice(-10)); // keep last 10 sessions
+    safeSet(KEYS.CHAT_SESSIONS, sessions.slice(-10));
   }
 
   _activeSessionId = session.id;
   return session;
 }
 
-export function appendMessages(messages: ChatMessage[], city?: string): void {
+export function appendMessages(messages: ChatMessage[], city?: string, geminiKey?: string): void {
   const sessions = safeGet<ChatSession[]>(KEYS.CHAT_SESSIONS, []);
   const session = getOrCreateSession(city);
   const idx = sessions.findIndex(s => s.id === session.id);
+  
   const updated: ChatSession = {
     ...session,
     messages,
@@ -482,7 +488,25 @@ export function appendMessages(messages: ChatMessage[], city?: string): void {
 
   // Build summary once conversation gets substantial
   if (messages.length >= 4 && messages.length % 4 === 0) {
-    updated.summary = buildSessionSummary(messages);
+    const summaryText = buildSessionSummary(messages);
+    updated.summary = summaryText;
+
+    // Generate dense embedding for summary if key is available
+    if (geminiKey && summaryText) {
+      embedWithGemini(summaryText, geminiKey, 'RETRIEVAL_DOCUMENT')
+        .then(emb => {
+          updated.embedding = emb;
+          const currentSessions = safeGet<ChatSession[]>(KEYS.CHAT_SESSIONS, []);
+          const uIdx = currentSessions.findIndex(s => s.id === updated.id);
+          if (uIdx >= 0) {
+            currentSessions[uIdx] = updated;
+            safeSet(KEYS.CHAT_SESSIONS, currentSessions);
+          }
+        })
+        .catch(err => {
+          console.warn('[Memory] Failed to generate chat summary embedding:', err);
+        });
+    }
   }
 
   if (idx >= 0) sessions[idx] = updated;
@@ -505,7 +529,6 @@ export function clearCurrentSession(): void {
   const session = getOrCreateSession();
   const idx = sessions.findIndex(s => s.id === session.id);
   if (idx >= 0) {
-    // Summarise before clearing
     if (sessions[idx].messages.length > 0) {
       sessions[idx].summary = buildSessionSummary(sessions[idx].messages);
     }
@@ -529,18 +552,15 @@ function _updateMemorySummary(report: StoredReport | null, messages: ChatMessage
   });
 
   if (report) {
-    // Add city
     if (report.city && !mem.recentCities.includes(report.city)) {
       mem.recentCities = [report.city, ...mem.recentCities].slice(0, 5);
     }
-    // Extract insights from raw content (passed in at save time) or reconstruct from chunks
     const content = rawContent ?? reconstructReportContent(report);
     const newInsights = extractKeyInsights(content);
     mem.keyHealthInsights = [...new Set([...mem.keyHealthInsights, ...newInsights])].slice(0, 15);
   }
 
   if (messages.length > 0) {
-    // Extract concerns from user messages
     const concerns: string[] = [];
     for (const m of messages) {
       if (m.role !== 'user') continue;
@@ -572,9 +592,9 @@ export function getMemorySummary(): MemorySummary {
 
 /**
  * Build a compact memory context string to inject at the start of a chat prompt.
- * Uses TF-IDF chunk search to surface the most relevant past report sections.
+ * Uses hybrid / TF-IDF chunk search to surface the most relevant past report sections.
  */
-export function buildMemoryContext(city?: string): string {
+export async function buildMemoryContext(city?: string, geminiKey?: string): Promise<string> {
   const mem = getMemorySummary();
   const sessions = getAllSessions().filter(s => s.summary);
   const recentReports = getReports().slice(0, 5);
@@ -597,16 +617,15 @@ export function buildMemoryContext(city?: string): string {
     parts.push(`Past chat session summaries:\n${sessionSummaries.join('\n')}`);
   }
 
-  // Surface relevant report sections via TF-IDF search
+  // Surface relevant report sections via TF-IDF or dense hybrid search
   const queryTerms = [city, 'risk alert warning health recommendation'].filter(Boolean).join(' ');
-  const relevantChunks = searchReportChunks(queryTerms, 6, city);
+  const relevantChunks = await searchReportChunks(queryTerms, 6, city, geminiKey);
   if (relevantChunks.length > 0) {
     const chunkText = relevantChunks.map(c =>
       `[${new Date(c.date).toLocaleDateString()} — ${c.city} | ${c.sectionTitle}]:\n${c.text.slice(0, 350)}`
     ).join('\n\n');
     parts.push(`Relevant sections from past reports (retrieved by context):\n${chunkText}`);
   } else if (recentReports.length > 0) {
-    // Fallback: just show summaries
     const reportPreviews = recentReports.map(r =>
       `[${new Date(r.timestamp).toLocaleDateString()} — ${r.city}]: ${r.summary.slice(0, 200)}`
     );
@@ -648,7 +667,6 @@ function migrateLegacyReports(): void {
         title: r.type || 'Health Risk Assessment',
         summary: extractSummary(content),
         sectionCount,
-        // no `content` field — lives in chunks
       };
     });
     safeSet(KEYS.REPORTS, migrated);

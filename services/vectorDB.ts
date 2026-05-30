@@ -2,38 +2,24 @@
  * Bio-SentinelX Vector Database Service
  * In-browser RAG (Retrieval-Augmented Generation) engine.
  *
- * Architecture:
- *   1. User uploads research text → chunked into ~600-char segments with overlap.
- *   2. Each chunk is embedded via Gemini text-embedding-004 API (if key present),
- *      or falls back to a TF-IDF bag-of-words vector (no API required).
- *   3. Embeddings + documents are persisted to localStorage.
- *   4. At analysis time, a query vector is built from the current context
- *      and the top-k most similar chunks are retrieved via cosine similarity.
- *   5. Retrieved chunks are injected into the AI prompt as additional context.
+ * Modified to integrate with the new vectorSearchEngine and IndexedDB.
  */
 
-// ─── Storage keys ────────────────────────────────────────────────────────────
-const DOCS_KEY   = 'biosentinel_rag_docs';
-const CHUNKS_KEY = 'biosentinel_rag_chunks';
+import {
+  vectorStore,
+  tokenize,
+  buildTFIDF,
+  cosineDense,
+  embedWithGemini,
+  semanticChunk,
+  fixedChunk,
+  hybridSearch,
+  type StoredVectorDocument as ResearchDocument,
+  type StoredVectorChunk as ResearchChunk,
+  type SearchChunk
+} from './vectorSearchEngine';
 
-// ─── Types (internal) ────────────────────────────────────────────────────────
-export interface ResearchDocument {
-  id: string;
-  title: string;
-  source: string;
-  addedAt: number;
-  chunkIds: string[];
-  charCount: number;
-}
-
-export interface ResearchChunk {
-  id: string;
-  docId: string;
-  docTitle: string;
-  text: string;
-  embedding?: number[];               // Dense embedding from Gemini
-  tfidf?: Record<string, number>;     // Sparse TF-IDF fallback
-}
+export { type ResearchDocument, type ResearchChunk };
 
 export interface EmbeddingStats {
   totalDocs: number;
@@ -43,158 +29,34 @@ export interface EmbeddingStats {
 }
 
 // ─── Persistence helpers ──────────────────────────────────────────────────────
-function loadDocs(): ResearchDocument[] {
-  try { return JSON.parse(localStorage.getItem(DOCS_KEY) || '[]'); } catch { return []; }
-}
-function saveDocs(docs: ResearchDocument[]): void {
-  localStorage.setItem(DOCS_KEY, JSON.stringify(docs));
-}
-function loadChunks(): ResearchChunk[] {
-  try { return JSON.parse(localStorage.getItem(CHUNKS_KEY) || '[]'); } catch { return []; }
-}
-function saveChunks(chunks: ResearchChunk[]): void {
-  // Strip dense embeddings if the payload would exceed localStorage quota (~4.5 MB cap).
-  // We keep TF-IDF vectors, which are compact, and silently downgrade dense-only chunks.
-  const tryStore = (payload: ResearchChunk[]) => {
-    localStorage.setItem(CHUNKS_KEY, JSON.stringify(payload));
-  };
+
+// Cache in-memory for synchronous lookups in UI methods,
+// but all vectorStore calls are asynchronous. So we keep a local cache
+// that we keep in sync with IndexedDB!
+let cacheDocs: ResearchDocument[] = [];
+let cacheChunks: ResearchChunk[] = [];
+let cacheInitialized = false;
+
+async function ensureCache(): Promise<void> {
+  if (cacheInitialized) return;
   try {
-    tryStore(chunks);
-  } catch {
-    // Quota exceeded with dense embeddings — strip them and retry with TF-IDF only
-    console.warn('[VectorDB] localStorage quota exceeded. Stripping dense embeddings to save space.');
-    try {
-      tryStore(chunks.map(c => ({ ...c, embedding: undefined })));
-    } catch {
-      console.error('[VectorDB] localStorage quota exceeded even without embeddings. Clearing chunk store.');
-      localStorage.removeItem(CHUNKS_KEY);
-    }
+    cacheDocs = await vectorStore.loadDocuments();
+    cacheChunks = await vectorStore.loadChunks();
+    cacheInitialized = true;
+  } catch (e) {
+    console.error('[VectorDB] Failed to initialize in-memory cache from IndexedDB:', e);
   }
 }
 
-// ─── Chunking ─────────────────────────────────────────────────────────────────
-const CHUNK_SIZE = 650;   // characters
-const CHUNK_OVERLAP = 120; // characters of overlap between consecutive chunks
-
-function chunkText(text: string): string[] {
-  const normalized = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < normalized.length) {
-    let end = Math.min(start + CHUNK_SIZE, normalized.length);
-    // Snap end to nearest sentence boundary within 80 chars to avoid mid-word cuts
-    if (end < normalized.length) {
-      const boundary = normalized.lastIndexOf('.', end);
-      if (boundary > start + CHUNK_SIZE - 80) end = boundary + 1;
-    }
-    const chunk = normalized.slice(start, end).trim();
-    if (chunk.length > 20) chunks.push(chunk);
-    // Stop when we've consumed to (or past) the end of the document
-    if (end >= normalized.length) break;
-    start = end - CHUNK_OVERLAP;
-  }
-  return chunks;
-}
-
-// ─── TF-IDF Fallback ──────────────────────────────────────────────────────────
-const STOP_WORDS = new Set([
-  'the','a','an','is','are','was','were','be','been','being','have','has','had',
-  'do','does','did','will','would','could','should','may','might','shall','can',
-  'to','of','in','for','on','with','at','by','from','as','this','that','these',
-  'those','it','its','or','and','but','not','no','so','if','then','than','more',
-  'also','such','which','they','their','there','into','about','after','before',
-  'when','where','how','what','who','all','each','any','some','one','two','three',
-]);
-
-function tokenize(text: string): string[] {
-  return text.toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length > 2 && !STOP_WORDS.has(t));
-}
-
-function buildTFIDF(text: string): Record<string, number> {
-  const tokens = tokenize(text);
-  const freq: Record<string, number> = {};
-  tokens.forEach(t => { freq[t] = (freq[t] || 0) + 1; });
-  const total = tokens.length || 1;
-  const tfidf: Record<string, number> = {};
-  Object.entries(freq).forEach(([term, count]) => {
-    tfidf[term] = count / total; // TF only (IDF approximated as uniform for retrieval)
-  });
-  return tfidf;
-}
-
-function cosineTFIDF(a: Record<string, number>, b: Record<string, number>): number {
-  let dot = 0, magA = 0, magB = 0;
-  Object.entries(a).forEach(([term, va]) => {
-    dot += va * (b[term] || 0);
-    magA += va * va;
-  });
-  Object.values(b).forEach(vb => { magB += vb * vb; });
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
-// ─── Dense embedding (Gemini text-embedding-004) ──────────────────────────────
-async function embedWithGemini(text: string, apiKey: string): Promise<number[]> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'models/text-embedding-004',
-      content: { parts: [{ text }] },
-      taskType: 'RETRIEVAL_DOCUMENT',
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as any;
-    throw new Error(err?.error?.message || `Gemini Embedding API error ${res.status}`);
-  }
-  const data = await res.json() as any;
-  return data.embedding?.values as number[];
-}
-
-async function embedQueryWithGemini(text: string, apiKey: string): Promise<number[]> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'models/text-embedding-004',
-      content: { parts: [{ text }] },
-      taskType: 'RETRIEVAL_QUERY',
-    }),
-  });
-  if (!res.ok) throw new Error(`Embedding query failed: ${res.status}`);
-  const data = await res.json() as any;
-  return data.embedding?.values as number[];
-}
-
-function cosineDense(a: number[], b: number[]): number {
-  if (!a || !b || a.length !== b.length) return 0;
-  let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  const denom = Math.sqrt(magA) * Math.sqrt(magB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
-// ─── UID ─────────────────────────────────────────────────────────────────────
-function uid(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
+// Kick off initialization
+ensureCache();
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Add a research document to the vector DB.
- * Chunks the text, builds TF-IDF vectors immediately, and attempts to
- * generate dense Gemini embeddings if an API key is provided.
+ * Chunks the text using semantic chunking, builds TF-IDF vectors,
+ * and attempts to generate dense Gemini embeddings.
  *
  * @param title    Human-readable title for the document
  * @param source   Source reference (journal, URL, etc.)
@@ -209,15 +71,17 @@ export async function addDocument(
   geminiKey?: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<ResearchDocument> {
-  const docs = loadDocs();
-  const chunks = loadChunks();
+  await ensureCache();
 
-  const docId = uid();
-  const textChunks = chunkText(content);
+  const docId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  
+  // Use semantic chunking by default (it snaps to boundaries beautifully!)
+  const textChunks = semanticChunk(content, { maxChunkSize: 600, overlapSize: 100 });
   const chunkIds: string[] = [];
+  const newChunks: ResearchChunk[] = [];
 
   for (let i = 0; i < textChunks.length; i++) {
-    const chunkId = uid();
+    const chunkId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const chunk: ResearchChunk = {
       id: chunkId,
       docId,
@@ -229,14 +93,13 @@ export async function addDocument(
     // Attempt dense embedding
     if (geminiKey) {
       try {
-        chunk.embedding = await embedWithGemini(textChunks[i], geminiKey);
+        chunk.embedding = await embedWithGemini(textChunks[i], geminiKey, 'RETRIEVAL_DOCUMENT');
       } catch (e) {
-        // Non-fatal: TF-IDF fallback will be used
         console.warn(`[VectorDB] Embedding failed for chunk ${i}:`, e);
       }
     }
 
-    chunks.push(chunk);
+    newChunks.push(chunk);
     chunkIds.push(chunkId);
     onProgress?.(i + 1, textChunks.length);
   }
@@ -250,9 +113,12 @@ export async function addDocument(
     charCount: content.length,
   };
 
-  docs.push(doc);
-  saveDocs(docs);
-  saveChunks(chunks);
+  cacheDocs.push(doc);
+  cacheChunks.push(...newChunks);
+
+  await vectorStore.saveDocuments(cacheDocs);
+  await vectorStore.saveChunks(cacheChunks);
+
   return doc;
 }
 
@@ -264,69 +130,72 @@ export async function reEmbedDocument(
   geminiKey: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> {
-  const chunks = loadChunks();
-  const docChunks = chunks.filter(c => c.docId === docId);
+  await ensureCache();
+  
+  const docChunks = cacheChunks.filter(c => c.docId === docId);
   for (let i = 0; i < docChunks.length; i++) {
     try {
-      docChunks[i].embedding = await embedWithGemini(docChunks[i].text, geminiKey);
+      docChunks[i].embedding = await embedWithGemini(docChunks[i].text, geminiKey, 'RETRIEVAL_DOCUMENT');
     } catch (e) {
       console.warn(`[VectorDB] Re-embed failed for chunk ${i}`, e);
     }
     onProgress?.(i + 1, docChunks.length);
   }
-  // Merge back
-  const updated = chunks.map(c => {
+
+  // Update in-memory chunks cache
+  cacheChunks = cacheChunks.map(c => {
     const found = docChunks.find(d => d.id === c.id);
     return found ?? c;
   });
-  saveChunks(updated);
+
+  await vectorStore.saveChunks(cacheChunks);
 }
 
 /**
  * Remove a document and all its chunks from the store.
  */
-export function removeDocument(docId: string): void {
-  const docs = loadDocs().filter(d => d.id !== docId);
-  const chunks = loadChunks().filter(c => c.docId !== docId);
-  saveDocs(docs);
-  saveChunks(chunks);
+export async function removeDocument(docId: string): Promise<void> {
+  await ensureCache();
+  cacheDocs = cacheDocs.filter(d => d.id !== docId);
+  cacheChunks = cacheChunks.filter(c => c.docId !== docId);
+  await vectorStore.saveDocuments(cacheDocs);
+  await vectorStore.saveChunks(cacheChunks);
 }
 
 /** Return all stored documents (metadata only, no chunks). */
 export function getAllDocuments(): ResearchDocument[] {
-  return loadDocs();
+  return cacheDocs;
 }
 
-/** Return the chunks belonging to a specific document (text + embedding status only, no raw vectors). */
+/** Return the chunks belonging to a specific document (text + embedding status only). */
 export function getDocumentChunks(docId: string): Array<{ id: string; text: string; hasDense: boolean }> {
-  return loadChunks()
+  return cacheChunks
     .filter(c => c.docId === docId)
     .map(c => ({ id: c.id, text: c.text, hasDense: !!c.embedding }));
 }
 
 /** Return embedding coverage stats. */
 export function getEmbeddingStats(): EmbeddingStats {
-  const docs = loadDocs();
-  const chunks = loadChunks();
   return {
-    totalDocs: docs.length,
-    totalChunks: chunks.length,
-    embeddedChunks: chunks.filter(c => !!c.embedding).length,
-    tfidfChunks: chunks.filter(c => !c.embedding && !!c.tfidf).length,
+    totalDocs: cacheDocs.length,
+    totalChunks: cacheChunks.length,
+    embeddedChunks: cacheChunks.filter(c => !!c.embedding).length,
+    tfidfChunks: cacheChunks.filter(c => !c.embedding && !!c.tfidf).length,
   };
 }
 
 /** Clear all documents and chunks. */
-export function clearAllDocuments(): void {
-  saveDocs([]);
-  saveChunks([]);
+export async function clearAllDocuments(): Promise<void> {
+  cacheDocs = [];
+  cacheChunks = [];
+  await vectorStore.clear();
 }
 
 /**
  * Retrieve the top-k most relevant chunks for a given query string.
- * Uses dense cosine similarity if available, otherwise TF-IDF.
+ * Leverages the high-performance hybridSearch (dense + sparse + RRF) under the hood.
  *
- * @param query     Natural-language query (derived from weather/location context)
+ * @param query     Natural-language query
  * @param topK      Number of chunks to return (default 6)
  * @param geminiKey Optional Gemini API key to embed the query densely
  * @returns Formatted string ready for injection into the AI prompt
@@ -336,60 +205,56 @@ export async function retrieveRelevant(
   topK = 6,
   geminiKey?: string,
 ): Promise<string> {
-  const chunks = loadChunks();
-  if (chunks.length === 0) return '';
+  await ensureCache();
+  if (cacheChunks.length === 0) return '';
 
-  // Try dense query embedding
-  let queryEmbedding: number[] | null = null;
-  if (geminiKey && chunks.some(c => !!c.embedding)) {
-    try {
-      queryEmbedding = await embedQueryWithGemini(query, geminiKey);
-    } catch (e) {
-      console.warn('[VectorDB] Query embedding failed, falling back to TF-IDF', e);
-    }
+  try {
+    const allSearchChunks: SearchChunk[] = cacheChunks.map(c => ({
+      id: c.id,
+      text: c.text,
+      embedding: c.embedding,
+      tfidf: c.tfidf,
+      docId: c.docId,
+      docTitle: c.docTitle
+    }));
+
+    const results = await hybridSearch(query, allSearchChunks, {
+      topK,
+      geminiKey,
+      useDense: !!geminiKey && cacheChunks.some(c => !!c.embedding),
+      useSparse: true,
+      rerank: false, // Default to false for retrieval performance
+      maxPerDoc: 3
+    });
+
+    if (results.length === 0) return '';
+
+    // Format into a structured injection block
+    const lines: string[] = [
+      '### Retrieved Research Context (from user-uploaded literature)',
+      '_The following excerpts were automatically retrieved from the Research Library based on relevance to the current analysis. Use this evidence to ground and enrich the report output._',
+      '',
+    ];
+
+    results.forEach((item, idx) => {
+      const displayScore = item.denseScore > 0 
+        ? item.denseScore 
+        : item.sparseScore;
+      lines.push(`**[${idx + 1}] ${item.docTitle}** _(relevance: ${(displayScore * 100).toFixed(0)}%)_`);
+      lines.push(item.text);
+      lines.push('');
+    });
+
+    return lines.join('\n');
+  } catch (err) {
+    console.error('[VectorDB] retrieveRelevant failed:', err);
+    return '';
   }
-
-  const queryTFIDF = buildTFIDF(query);
-
-  // Score each chunk
-  const scored = chunks.map(chunk => {
-    let score = 0;
-    if (queryEmbedding && chunk.embedding) {
-      score = cosineDense(queryEmbedding, chunk.embedding);
-    } else if (chunk.tfidf) {
-      score = cosineTFIDF(queryTFIDF, chunk.tfidf);
-    }
-    return { chunk, score };
-  });
-
-  // Sort descending, deduplicate by docId to favour diversity
-  scored.sort((a, b) => b.score - a.score);
-
-  const selected: typeof scored = [];
-  const seenDocs: Record<string, number> = {};
-  for (const item of scored) {
-    if (item.score < 0.01) break;   // below relevance floor
-    const docCount = seenDocs[item.chunk.docId] || 0;
-    if (docCount >= 3) continue;    // max 3 chunks per same doc
-    selected.push(item);
-    seenDocs[item.chunk.docId] = docCount + 1;
-    if (selected.length >= topK) break;
-  }
-
-  if (selected.length === 0) return '';
-
-  // Format into a structured injection block
-  const lines: string[] = [
-    '### Retrieved Research Context (from user-uploaded literature)',
-    '_The following excerpts were automatically retrieved from the Research Library based on relevance to the current analysis. Use this evidence to ground and enrich the report output._',
-    '',
-  ];
-
-  selected.forEach((item, idx) => {
-    lines.push(`**[${idx + 1}] ${item.chunk.docTitle}** _(relevance: ${(item.score * 100).toFixed(0)}%)_`);
-    lines.push(item.chunk.text);
-    lines.push('');
-  });
-
-  return lines.join('\n');
 }
+
+/** Expose the cached chunks asynchronously to ensure cache is fully initialized first. */
+export async function getAllChunksAsync(): Promise<ResearchChunk[]> {
+  await ensureCache();
+  return cacheChunks;
+}
+

@@ -525,6 +525,98 @@ flowchart TD
 
 ---
 
+---
+
+## 🧬 High-Performance Caching, Streaming, & RAG Architecture
+
+Bio-SentinelX features a highly optimized, production-grade client-side architecture that handles the entire query lifecycle, integrating advanced vector operations, multi-provider SSE streaming, caching tiers, and self-healing resilience layers completely in the browser.
+
+```mermaid
+flowchart TD
+    %% ========== STYLING ==========
+    classDef client fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a,rx:8
+    classDef cache fill:#faf5ff,stroke:#a855f7,stroke-width:2px,color:#581c87,rx:8
+    classDef orch fill:#fefce8,stroke:#eab308,stroke-width:2px,color:#713f12,rx:8
+    classDef rag fill:#f0fdf4,stroke:#22c55e,stroke-width:2px,color:#14532d,rx:8
+    classDef ext fill:#fff1f2,stroke:#f43f5e,stroke-width:2px,color:#881337,rx:8
+    linkStyle default stroke:#475569,stroke-width:2px
+
+    %% ========== STAGES ==========
+    Q["💬 User Query / Telemetry"]:::client
+    DEDUP{"🔄 In-Flight Deduplication"}:::orch
+    HASH["🔑 Browser SHA-256 Hashing"]:::cache
+    EXACT{"💾 L1/L2 Exact Cache Hit?"}:::cache
+    EMB["🧠 Query Embedding (text-embedding-004)"]:::rag
+    SEM{"🔍 Cosine Similarity check"}:::cache
+    HIT["⚡ Return Cached Response (Instant)"]:::cache
+    
+    RET["🗂️ RAG Parallel Retrieval"]:::rag
+    HNSW["⚡ HNSW-Lite Vector Search"]:::rag
+    TFIDF["📊 Client Shared Sparse TF-IDF"]:::rag
+    RRF["🎛️ Reciprocal Rank Fusion (RRF k=60)"]:::rag
+    
+    BREAKER{"🛡️ Provider Circuit Breaker check"}:::orch
+    LIMITER{"⏳ Provider Rate Limiter Check"}:::orch
+    EXEC["🔥 Stream LLM Generation"]:::ext
+    SSE["📡 OpenAI SSE Reader / Gemini Stream"]:::ext
+    SAVE["📥 Background Cache Save"]:::cache
+
+    %% ========== FLOW ==========
+    Q --> DEDUP
+    DEDUP --> HASH
+    HASH --> EXACT
+    EXACT -- Yes --> HIT
+    EXACT -- No --> EMB
+    EMB --> SEM
+    SEM -- Hit (Cosine >= 0.95/0.90) --> HIT
+    SEM -- Miss --> RET
+    
+    RET --> HNSW & TFIDF
+    HNSW & TFIDF --> RRF
+    RRF --> BREAKER
+    BREAKER --> LIMITER
+    LIMITER --> EXEC
+    EXEC --> SSE
+    SSE --> SAVE
+    SSE -->|"💡 Streaming UI Update"| HIT
+```
+
+### 1. Client-Side RAG & Hybrid Vector Search (`vectorSearchEngine.ts`)
+To solve the LLM knowledge cutoff and hallucination risk without relying on heavy database infrastructure, we built an entirely client-side hybrid search system:
+* **HNSW-Lite Vector Index**: A lightweight, client-side implementation of Approximate Nearest Neighbors (ANN) using a Hierarchical Navigable Small World (HNSW) graph for sub-linear vector search, falling back dynamically to brute-force linear search for small corpora.
+* **Shared Sparse TF-IDF**: Low-overhead, client-side tokenization (lowercasing, punctuation stripping, comprehensive English stop-words filtering) and sparse TF-IDF matrix calculation.
+* **Reciprocal Rank Fusion (RRF)**: Merges dense vector results (from Gemini `text-embedding-004`) and sparse TF-IDF results with a constant scale factor of $k=60$:
+  $$RRF(d) = \frac{1}{60 + \text{rank}_{\text{dense}}(d)} + \frac{1}{60 + \text{rank}_{\text{sparse}}(d)}$$
+* **IndexedDB Storage (`biosentinel_vectordb`)**: Persistent storage of documents, raw text chunks, and serialized HNSW indices for instant retrieval across browser reloads.
+* **Asynchronous Processing Queue**: A high-throughput queue utilizing browser **Web Workers** to perform CPU-intensive chunking, text parsing, and TF-IDF computation off the main thread, keeping the UI at a buttery 60 FPS.
+
+### 2. Multi-Tiered Exact & Semantic Cache (`semanticCacheService.ts`)
+LLM requests are intercepted instantly through a high-performance two-layer cache:
+* **L1 Exact Match**: Standard SHA-256 hash lookup of combined provider, model, system instruction, and user prompt via native browser `crypto.subtle` API (~1ms latency).
+* **L2 Semantic Match**: When a Gemini embedding key is configured, query inputs are vectorized and compared against a pool of cached query embeddings using cosine similarity. If the score exceeds the dynamic threshold, the cached response is served.
+* **Dynamic Thresholds & TTLs**:
+  * **Health Reports**: Cosine threshold `0.95`, TTL `2 hours`.
+  * **Chat Assistant**: Cosine threshold `0.90`, TTL `30 minutes`.
+  * **Climate Research**: Cosine threshold `0.93`, TTL `4 hours`.
+  * **Outbreak Signals**: Cosine threshold `0.97`, TTL `15 minutes`.
+  * **Flood Analysis**: Cosine threshold `0.95`, TTL `1 hour`.
+* **IndexedDB Persistence (`biosentinel_semantic_cache`)**: Mirroring entries to IndexedDB with cross-session analytics and automated background cache warming/evictions of expired keys on application launch.
+
+### 3. Unified SSE Streaming & Multi-Provider Fallbacks (`geminiService.ts`)
+To deliver premium, real-time UI feedback across various third-party models, we implemented a custom Server-Sent Events (SSE) streaming engine:
+* **Browser-Native SSE Reader**: Leverages `ReadableStreamDefaultReader` and `TextDecoder` to parse standard OpenAI-compatible chunks line-by-line, providing instant streaming updates.
+* **Native Gemini Streaming**: Seamlessly integrates Google GenAI `models.generateContentStream` and `chats.sendMessageStream` pipelines.
+* **Self-Healing Fallbacks**: If the primary chosen provider fails, a resilient backup loop attempts sequential fallbacks (Provider Backups $\rightarrow$ Configured Alternatives $\rightarrow$ Keyless Pollinations final fail-safe) ensuring uninterrupted user service.
+* **Reasoning Sanitization**: A stream filter intercepting the text blocks to cleanly strip out reasoning model thinking blocks (`<think> ... </think>`) in real-time, preventing messy markup from corrupting the layout.
+
+### 4. Resilient Query Orchestration Layer (`queryOrchestrator.ts`)
+Coordinates full RAG, caching, and generation lifecycles:
+* **Circuit Breakers**: Evaluates provider health in real-time. If a provider encounters **3 consecutive failures**, the breaker trips to `OPEN`, immediately redirecting requests to alternate providers for **60 seconds** before attempting a `HALF_OPEN` self-recovery.
+* **Sliding Window Rate Limiters**: Enforces strict RPM limits (e.g. `28 RPM` for Groq/Cerebras, `55 RPM` for SiliconFlow/Gemini) inside a sliding window, actively buffering requests to prevent 429 errors.
+* **In-Flight Request Deduplication**: A thread-safe `RequestDeduplicator` hashing active prompts to merge identical simultaneous requests, preventing redundant API calls and saving token budget.
+
+---
+
 ## ⚡ Quick Start
 
 ### Prerequisites

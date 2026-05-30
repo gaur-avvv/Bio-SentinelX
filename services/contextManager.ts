@@ -66,29 +66,24 @@ export const MODEL_PROFILES: Record<string, Record<string, ModelProfile>> = {
     'default':                                { contextWindow: 128_000, maxInputTokens: 120_000, maxOutputTokens: 8_192, inputBudget: 20_000, reportTemperature: 0.4, chatTemperature: 0.7 },
   },
   siliconflow: {
-    // ── DeepSeek ──────────────────────────────────────────────────────────────
     'deepseek-ai/DeepSeek-V3.2':                  { contextWindow: 163_840, maxInputTokens: 140_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'deepseek-ai/DeepSeek-R1':                    { contextWindow: 163_840, maxInputTokens: 140_000, maxOutputTokens: 16_384, inputBudget: 24_000, reportTemperature: 0.3, chatTemperature: 0.6 },
     'deepseek-ai/DeepSeek-V3.2-Exp':              { contextWindow: 163_840, maxInputTokens: 140_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'deepseek-ai/DeepSeek-V3.1-Terminus':         { contextWindow: 163_840, maxInputTokens: 140_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'deepseek-ai/DeepSeek-V3.1':                  { contextWindow: 163_840, maxInputTokens: 140_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'deepseek-ai/DeepSeek-V3':                    { contextWindow: 163_840, maxInputTokens: 140_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
-    // ── MiniMax ───────────────────────────────────────────────────────────────
     'MiniMaxAI/MiniMax-M2.5':                     { contextWindow: 204_800, maxInputTokens: 180_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'MiniMaxAI/MiniMax-M2.1':                     { contextWindow: 204_800, maxInputTokens: 180_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
-    // ── Kimi ──────────────────────────────────────────────────────────────────
     'moonshotai/Kimi-K2.5':                       { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'moonshotai/Kimi-K2-Thinking':                { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 16_384, inputBudget: 24_000, reportTemperature: 0.3, chatTemperature: 0.6 },
     'moonshotai/Kimi-K2-Instruct-0905':           { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'moonshotai/Kimi-K2-Instruct':                { contextWindow: 131_072, maxInputTokens: 120_000, maxOutputTokens: 8_192, inputBudget: 24_000, reportTemperature: 0.4, chatTemperature: 0.7 },
-    // ── Qwen3 Flagship ────────────────────────────────────────────────────────
     'Qwen/Qwen3-235B-A22B-Thinking-2507':         { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 16_384, inputBudget: 28_000, reportTemperature: 0.3, chatTemperature: 0.6 },
     'Qwen/Qwen3-235B-A22B-Instruct-2507':         { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'Qwen/Qwen3-Coder-480B-A35B-Instruct':        { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'Qwen/Qwen3-Coder-30B-A3B-Instruct':          { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'Qwen/Qwen3-30B-A3B-Thinking-2507':           { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 24_000, reportTemperature: 0.3, chatTemperature: 0.6 },
     'Qwen/Qwen3-30B-A3B-Instruct-2507':           { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 24_000, reportTemperature: 0.4, chatTemperature: 0.7 },
-    // ── Qwen3 Next / VL ───────────────────────────────────────────────────────
     'Qwen/Qwen3-Next-80B-A3B-Thinking':           { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 24_000, reportTemperature: 0.3, chatTemperature: 0.6 },
     'Qwen/Qwen3-Next-80B-A3B-Instruct':           { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 24_000, reportTemperature: 0.4, chatTemperature: 0.7 },
     'Qwen/Qwen3-VL-235B-A22B-Instruct':           { contextWindow: 262_144, maxInputTokens: 240_000, maxOutputTokens: 8_192, inputBudget: 28_000, reportTemperature: 0.4, chatTemperature: 0.7 },
@@ -119,7 +114,6 @@ export interface TokenUsageEntry {
   model: string;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
-  /** Server-reported cached tokens (from usage.prompt_tokens_details.cached_tokens) */
   cachedTokens: number;
   compressed: boolean;
   compressionRatio?: number;
@@ -130,7 +124,6 @@ export interface SessionUsageStats {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalTokens: number;
-  /** Cumulative server-reported cached tokens (prompt caching) */
   totalCachedTokens: number;
   callsByType: Record<CallType, number>;
   compressionsSaved: number;
@@ -140,159 +133,154 @@ export interface SessionUsageStats {
 const STORAGE_KEY = 'biosentinel_token_usage';
 const MAX_ENTRIES = 100;
 
-/** Safe localStorage getter — returns null if storage unavailable */
 function safeGet(key: string): string | null {
   try {
     return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
   } catch (_e) { return null; }
 }
 
-/** Safe localStorage setter — no-op if storage unavailable */
 function safeSet(key: string, value: string): void {
   try {
     if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
-  } catch (_e) { /* storage full or unavailable */ }
+  } catch (_e) {}
 }
 
-/** Safe localStorage remover */
 function safeRemove(key: string): void {
   try {
     if (typeof localStorage !== 'undefined') localStorage.removeItem(key);
-  } catch (_e) { /* noop */ }
+  } catch (_e) {}
 }
 
-// ─── Compression Report ───────────────────────────────────────────────────────
+// ─── Token Estimation ─────────────────────────────────────────────────────────
 
-export interface CompressionReport {
-  originalTokens: number;
-  finalTokens: number;
-  saved: number;
-  ratio: number;              // 0–1: how much was compressed away
-  budgetUsedPct: number;      // % of inputBudget used
-  wasCompressed: boolean;
-  actions: string[];          // what was trimmed/removed
-}
-
-// ─── Core Token Estimator ─────────────────────────────────────────────────────
-
-/**
- * Fast, language-agnostic token estimator.
- * Uses chars/3.8 — validated against OpenAI tokenizer on mixed English/numeric text.
- */
 export function estimateTokens(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / 3.8);
 }
 
 export function tokensToChars(tokens: number): number {
-  return Math.ceil(tokens * 3.8);
+  return Math.floor(tokens * 3.8);
 }
-
-// ─── Model Profile Resolver ───────────────────────────────────────────────────
 
 export function getModelProfile(provider: string, model: string): ModelProfile {
-  const providerProfiles = MODEL_PROFILES[provider] ?? MODEL_PROFILES['gemini'];
-  return providerProfiles[model] ?? providerProfiles['default'];
+  const prov = MODEL_PROFILES[provider] || MODEL_PROFILES.gemini;
+  return prov[model] || prov.default;
 }
 
-// ─── Smart Weather Context Builder ───────────────────────────────────────────
+// ─── Content Compactor ────────────────────────────────────────────────────────
 
-/**
- * Build a compact weather context string by:
- * 1. Omitting every field that is null, undefined, or the string 'N/A'
- * 2. Formatting numeric values with appropriate precision
- * 3. Only including advanced fields that have real data
- */
 export function buildCompactWeatherContext(weather: WeatherData): string {
-  const f = (v: any, unit = '') => (v !== null && v !== undefined && v !== 'N/A' ? `${v}${unit}` : null);
-  const adv = weather.advancedData;
+  const parts: string[] = [`Weather & Environmental conditions for ${weather.city}:`];
+  const add = (label: string, val: unknown) => {
+    if (val !== undefined && val !== null && val !== '' && val !== 'N/A') {
+      parts.push(`- ${label}: ${val}`);
+    }
+  };
 
-  const core = [
-    `Location: ${weather.city} (${weather.lat.toFixed(3)}, ${weather.lon.toFixed(3)})`,
-    `Temp: ${weather.temp}°C (Feels ${weather.feelsLike}°C) | Humidity: ${weather.humidity}% | Condition: ${weather.description}`,
-    f(weather.dewPoint, '°C') ? `Dew Point: ${weather.dewPoint}°C` : null,
-    `Pressure: ${weather.pressure} hPa | Wind: ${weather.windSpeed} m/s @ ${weather.windDeg}°`,
-    f(weather.uvIndex) ? `UV: ${weather.uvIndex}` : null,
-    `AQI: ${weather.aqi}${weather.rawAqi ? ` (raw US AQI: ${weather.rawAqi})` : ''}`,
-    f(weather.visibility) ? `Visibility: ${weather.visibility}m` : null,
-  ].filter(Boolean).join('\n');
+  add('Temp', `${weather.temp}°C`);
+  add('Condition', weather.description);
+  add('AQI', weather.aqi);
+  add('Humidity', `${weather.humidity}%`);
+  add('Wind', `${weather.windSpeed} km/h`);
+  add('Pressure', `${weather.pressure} hPa`);
+  add('Feels Like', `${weather.feelsLike}°C`);
 
-  // Advanced atmospheric — only include fields with real values
-  const advFields: string[] = [];
-  if (adv) {
-    if (adv.boundaryLayerHeight !== undefined) advFields.push(`BLH: ${adv.boundaryLayerHeight}m`);
-    if (adv.cape !== undefined)                advFields.push(`CAPE: ${adv.cape} J/kg`);
-    if (adv.windGusts !== undefined)           advFields.push(`Gusts: ${adv.windGusts} km/h`);
-    if (adv.vapourPressureDeficit !== undefined) advFields.push(`VPD: ${adv.vapourPressureDeficit} kPa`);
-    if (adv.wetBulbTemperature !== undefined)  advFields.push(`Wet-Bulb: ${adv.wetBulbTemperature}°C`);
-    if (adv.surfacePressure !== undefined)     advFields.push(`SfcPress: ${adv.surfacePressure} hPa`);
-    if (adv.soilTemperature !== undefined)     advFields.push(`Soil: ${adv.soilTemperature}°C`);
-    if (adv.soilMoisture !== undefined)        advFields.push(`SoilMoist: ${adv.soilMoisture} m³/m³`);
-    if (adv.shortwaveRadiation !== undefined)  advFields.push(`SW-Rad: ${adv.shortwaveRadiation} W/m²`);
-    if (adv.evapotranspiration !== undefined)  advFields.push(`ET: ${adv.evapotranspiration} mm`);
+  if (weather.uvIndex) add('UV Index', weather.uvIndex);
+  if (weather.dewPoint) add('Dew Point', `${weather.dewPoint}°C`);
+
+  if (weather.advancedData) {
+    const adv = weather.advancedData;
+    add('PM2.5', adv.pm2_5 ? `${adv.pm2_5} µg/m³` : null);
+    add('PM10', adv.pm10 ? `${adv.pm10} µg/m³` : null);
+    add('Ozone', adv.o3 ? `${adv.o3} µg/m³` : null);
+    add('NO2', adv.no2 ? `${adv.no2} µg/m³` : null);
+    add('SO2', adv.so2 ? `${adv.so2} µg/m³` : null);
+    add('CO', adv.co ? `${adv.co} mg/m³` : null);
   }
-
-  // Air quality — only non-null values
-  const aqFields: string[] = [];
-  if (adv) {
-    if (adv.pm2_5 !== undefined) aqFields.push(`PM2.5: ${adv.pm2_5}`);
-    if (adv.pm10  !== undefined) aqFields.push(`PM10: ${adv.pm10}`);
-    if (adv.o3    !== undefined) aqFields.push(`O3: ${adv.o3}`);
-    if (adv.no2   !== undefined) aqFields.push(`NO2: ${adv.no2}`);
-    if (adv.so2   !== undefined) aqFields.push(`SO2: ${adv.so2}`);
-    if (adv.co    !== undefined) aqFields.push(`CO: ${adv.co}`);
-    if (adv.co2   !== undefined) aqFields.push(`CO2: ${adv.co2}`);
-    if (adv.dust  !== undefined) aqFields.push(`Dust: ${adv.dust}`);
-    if (adv.ammonia !== undefined) aqFields.push(`NH3: ${adv.ammonia}`);
-    if (adv.aod   !== undefined) aqFields.push(`AOD: ${adv.aod}`);
-  }
-
-  // Pollen — only non-null values
-  const pollenFields: string[] = [];
-  if (adv) {
-    if (adv.grass_pollen   !== undefined) pollenFields.push(`Grass: ${adv.grass_pollen}`);
-    if (adv.birch_pollen   !== undefined) pollenFields.push(`Birch: ${adv.birch_pollen}`);
-    if (adv.ragweed_pollen !== undefined) pollenFields.push(`Ragweed: ${adv.ragweed_pollen}`);
-    if (adv.olive_pollen   !== undefined) pollenFields.push(`Olive: ${adv.olive_pollen}`);
-    if (adv.alder_pollen   !== undefined) pollenFields.push(`Alder: ${adv.alder_pollen}`);
-    if (adv.mugwort_pollen !== undefined) pollenFields.push(`Mugwort: ${adv.mugwort_pollen}`);
-  }
-
-  const parts: string[] = [core];
-  if (advFields.length)  parts.push(`Atmospheric: ${advFields.join(' | ')}`);
-  if (aqFields.length)   parts.push(`Air Quality (µg/m³): ${aqFields.join(' | ')}`);
-  if (pollenFields.length) parts.push(`Pollen (grains/m³): ${pollenFields.join(' | ')}`);
-  parts.push(`Today: ${weather.todaySummary}`);
-  parts.push(`Tomorrow: ${weather.tomorrowSummary}`);
 
   return parts.join('\n');
 }
 
+export interface CompressionReport {
+  originalTokens: number;
+  finalTokens: number;
+  saved: number;
+  ratio: number;
+  budgetUsedPct: number;
+  wasCompressed: boolean;
+  actions: string[];
+}
+
+export interface CompressionQualityReport {
+  originalTokens: number;
+  compressedTokens: number;
+  savedTokens: number;
+  compressionRatio: number;
+  informationDensityBefore: number;
+  informationDensityAfter: number;
+  retentionPct: number;
+}
+
+export function analyzeCompressionQuality(original: string, compressed: string): CompressionQualityReport {
+  const origTokens = estimateTokens(original);
+  const compTokens = estimateTokens(compressed);
+  
+  const tokenizeSimple = (text: string) => text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+  const origWords = tokenizeSimple(original);
+  const compWords = tokenizeSimple(compressed);
+  
+  const origUnique = new Set(origWords).size;
+  const compUnique = new Set(compWords).size;
+  
+  const densityBefore = origWords.length > 0 ? origUnique / origWords.length : 0;
+  const densityAfter = compWords.length > 0 ? compUnique / compWords.length : 0;
+  
+  const origVocab = new Set(origWords);
+  const retainedWords = compWords.filter(w => origVocab.has(w));
+  const retentionPct = compWords.length > 0 ? retainedWords.length / compWords.length : 1;
+  
+  return {
+    originalTokens: origTokens,
+    compressedTokens: compTokens,
+    savedTokens: Math.max(0, origTokens - compTokens),
+    compressionRatio: compTokens > 0 ? Math.round((origTokens / compTokens) * 100) / 100 : 1,
+    informationDensityBefore: Math.round(densityBefore * 100) / 100,
+    informationDensityAfter: Math.round(densityAfter * 100) / 100,
+    retentionPct: Math.round(retentionPct * 100),
+  };
+}
+
 // ─── Dataset Summary Trimmer ──────────────────────────────────────────────────
 
-/**
- * Truncate a CSV/dataset summary to fit within a token budget.
- * Keeps the header block + top rows, warns the model data was truncated.
- */
 export function trimDatasetSummary(summary: string, maxTokens: number): { text: string; wasTrimmed: boolean } {
   if (!summary || estimateTokens(summary) <= maxTokens) return { text: summary, wasTrimmed: false };
 
-  const maxChars = tokensToChars(maxTokens);
-  const truncated = summary.slice(0, maxChars);
-  const lastNewline = truncated.lastIndexOf('\n');
-  const safe = lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated;
+  const lines = summary.split('\n');
+  const keptLines: string[] = [];
+  let currentTokens = 0;
+
+  for (const line of lines) {
+    const lineTokens = estimateTokens(line);
+    if (currentTokens + lineTokens <= maxTokens) {
+      keptLines.push(line);
+      currentTokens += lineTokens;
+    } else {
+      break;
+    }
+  }
+
   return {
-    text: safe + '\n[DATASET TRUNCATED — remaining rows omitted to fit context budget. Analyze available rows only.]',
+    text: keptLines.join('\n') + '\n[Dataset summary trimmed to fit context budget]',
     wasTrimmed: true,
   };
 }
 
-// ─── Chat History Trimmer ─────────────────────────────────────────────────────
+// ─── O(n) Single-pass Chat History Trimmer ─────────────────────────────────────
 
 /**
- * Trim chat history to fit within a token budget.
+ * Trim chat history to fit within a token budget in O(n) time.
  * Strategy: always keep the FIRST message (initial context) and the most RECENT N messages.
- * Drops messages from the middle when necessary.
+ * Drops messages from the middle.
  */
 export function trimChatHistory(history: ChatMessage[], maxTokens: number): {
   history: ChatMessage[];
@@ -300,40 +288,39 @@ export function trimChatHistory(history: ChatMessage[], maxTokens: number): {
 } {
   if (!history.length) return { history: [], droppedCount: 0 };
 
-  const totalTokens = history.reduce((sum, m) => sum + estimateTokens(m.text), 0);
+  const tokenCounts = history.map(m => estimateTokens(m.text));
+  const totalTokens = tokenCounts.reduce((a, b) => a + b, 0);
   if (totalTokens <= maxTokens) return { history, droppedCount: 0 };
 
-  // Always keep at least the last 4 messages
-  let kept = [...history];
-  let dropped = 0;
+  let keptTokens = 0;
+  let keepCount = 0;
 
-  while (estimateTokens(kept.map(m => m.text).join('\n')) > maxTokens && kept.length > 4) {
-    // Drop from the oldest end (index 0) first, keeping at least the anchor
-    kept.splice(0, 1);
-    dropped++;
+  // Scan backwards from the end to keep the most recent messages
+  for (let i = history.length - 1; i >= 0; i--) {
+    const t = tokenCounts[i];
+    if (keepCount < 4 || keptTokens + t <= maxTokens) {
+      keptTokens += t;
+      keepCount++;
+    } else {
+      break;
+    }
   }
 
-  return { history: kept, droppedCount: dropped };
+  const kept = history.slice(history.length - keepCount);
+  const droppedCount = history.length - keepCount;
+
+  return { history: kept, droppedCount };
 }
 
-// ─── Content Priority Scorer ──────────────────────────────────────────────────
+// ─── Content Priority Scorer & Dynamic Reallocation ───────────────────────────
 
 export interface ContentPriorityConfig {
-  /** Max tokens for the weather context section */
   weatherContextBudget: number;
-  /** Max tokens for the dataset summary section */
   datasetBudget: number;
-  /** Max tokens for the lifestyle/feedback section */
   lifestyleBudget: number;
-  /** Max tokens for chat history (chat mode only) */
   chatHistoryBudget: number;
 }
 
-/**
- * Given the model's input budget and callType, allocate token budgets to each section.
- * Health assessment: weather=40%, dataset=30%, lifestyle=15%, system/prompt=15%
- * Chat: history=50%, weather=30%, query=20%
- */
 export function allocateBudgets(inputBudget: number, callType: CallType): ContentPriorityConfig {
   if (callType === 'chat') {
     return {
@@ -351,7 +338,6 @@ export function allocateBudgets(inputBudget: number, callType: CallType): Conten
       chatHistoryBudget: 0,
     };
   }
-  // health_assessment & flood_analysis
   return {
     weatherContextBudget: Math.floor(inputBudget * 0.35),
     datasetBudget:        Math.floor(inputBudget * 0.30),
@@ -360,12 +346,109 @@ export function allocateBudgets(inputBudget: number, callType: CallType): Conten
   };
 }
 
+/**
+ * Enforces dynamic context budget reallocation. If one section has low usage
+ * (e.g. no weather data, or weather is very brief), its leftover budget is redistributed
+ * to other sections that actually require it.
+ */
+export function allocateBudgetsDynamic(
+  inputBudget: number,
+  callType: CallType,
+  sizes: { weatherTokens?: number; datasetTokens?: number; lifestyleTokens?: number; chatHistoryTokens?: number }
+): ContentPriorityConfig {
+  const standard = allocateBudgets(inputBudget, callType);
+  const dynamic = { ...standard };
+  let leftover = 0;
+
+  // 1. Calculate actual use and collect leftover budget
+  if (standard.weatherContextBudget > 0 && sizes.weatherTokens !== undefined) {
+    const diff = standard.weatherContextBudget - sizes.weatherTokens;
+    if (diff > 0) {
+      dynamic.weatherContextBudget = sizes.weatherTokens;
+      leftover += diff;
+    }
+  }
+  if (standard.datasetBudget > 0 && sizes.datasetTokens !== undefined) {
+    const diff = standard.datasetBudget - sizes.datasetTokens;
+    if (diff > 0) {
+      dynamic.datasetBudget = sizes.datasetTokens;
+      leftover += diff;
+    }
+  }
+  if (standard.lifestyleBudget > 0 && sizes.lifestyleTokens !== undefined) {
+    const diff = standard.lifestyleBudget - sizes.lifestyleTokens;
+    if (diff > 0) {
+      dynamic.lifestyleBudget = sizes.lifestyleTokens;
+      leftover += diff;
+    }
+  }
+  if (standard.chatHistoryBudget > 0 && sizes.chatHistoryTokens !== undefined) {
+    const diff = standard.chatHistoryBudget - sizes.chatHistoryTokens;
+    if (diff > 0) {
+      dynamic.chatHistoryBudget = sizes.chatHistoryTokens;
+      leftover += diff;
+    }
+  }
+
+  // 2. Redistribute leftover to the sections that exceed their standard budget
+  if (leftover > 0) {
+    const needy: Array<keyof ContentPriorityConfig> = [];
+    if (sizes.weatherTokens !== undefined && sizes.weatherTokens > standard.weatherContextBudget) needy.push('weatherContextBudget');
+    if (sizes.datasetTokens !== undefined && sizes.datasetTokens > standard.datasetBudget) needy.push('datasetBudget');
+    if (sizes.lifestyleTokens !== undefined && sizes.lifestyleTokens > standard.lifestyleBudget) needy.push('lifestyleBudget');
+    if (sizes.chatHistoryTokens !== undefined && sizes.chatHistoryTokens > standard.chatHistoryBudget) needy.push('chatHistoryBudget');
+
+    if (needy.length > 0) {
+      const portion = Math.floor(leftover / needy.length);
+      for (const key of needy) {
+        dynamic[key] += portion;
+      }
+    }
+  }
+
+  return dynamic;
+}
+
+// ─── Streaming Token Tracker ──────────────────────────────────────────────────
+
+export interface StreamTokenTracker {
+  tokenCount: number;
+  startTime: number;
+  latencyMs: number;
+  tokensPerSecond: number;
+}
+
+export function createStreamTracker(): {
+  track: (token: string) => StreamTokenTracker;
+  getStats: () => StreamTokenTracker;
+} {
+  let tokenCount = 0;
+  const startTime = Date.now();
+  return {
+    track: (token: string) => {
+      tokenCount += estimateTokens(token);
+      const latency = Math.max(1, Date.now() - startTime);
+      return {
+        tokenCount,
+        startTime,
+        latencyMs: latency,
+        tokensPerSecond: Math.round((tokenCount / (latency / 1000)) * 100) / 100,
+      };
+    },
+    getStats: () => {
+      const latency = Math.max(1, Date.now() - startTime);
+      return {
+        tokenCount,
+        startTime,
+        latencyMs: latency,
+        tokensPerSecond: Math.round((tokenCount / (latency / 1000)) * 100) / 100,
+      };
+    }
+  };
+}
+
 // ─── Full Prompt Budget Check ─────────────────────────────────────────────────
 
-/**
- * Check whether a fully built (systemInstruction + userPrompt) will fit
- * within the model's max input budget. Returns a report with stats.
- */
 export function checkPromptFit(
   systemInstruction: string,
   userPrompt: string,
@@ -459,8 +542,6 @@ class ContextManager {
   private tracker: UsageTracker;
 
   constructor() {
-    // Explicit constructor for correct initialization order
-    // (useDefineForClassFields: false in tsconfig uses legacy assignment semantics)
     this.tracker = new UsageTracker();
   }
 
@@ -472,7 +553,6 @@ class ContextManager {
   /**
    * Build an optimally compressed weather context string.
    * Omits all N/A fields. Respects the provided token budget.
-   * Returns originalTokens (full compact size) so callers can compute savings.
    */
   buildWeatherContext(weather: WeatherData, budgetTokens?: number): {
     text: string; tokens: number; wasTrimmed: boolean; originalTokens: number;
@@ -496,7 +576,6 @@ class ContextManager {
 
   /**
    * Compress a dataset summary to fit within budget.
-   * Returns originalTokens so callers can compute savings.
    */
   compressDataset(summary: string, budgetTokens: number): {
     text: string; tokens: number; wasTrimmed: boolean; originalTokens: number;
@@ -514,7 +593,20 @@ class ContextManager {
   }
 
   /**
-   * Allocate section budgets for a given call type and model.
+   * Allocate section budgets dynamically using actual section sizes.
+   */
+  allocateDynamic(
+    provider: string,
+    model: string,
+    callType: CallType,
+    sizes: { weatherTokens?: number; datasetTokens?: number; lifestyleTokens?: number; chatHistoryTokens?: number }
+  ): ContentPriorityConfig {
+    const profile = getModelProfile(provider, model);
+    return allocateBudgetsDynamic(profile.inputBudget, callType, sizes);
+  }
+
+  /**
+   * Allocate standard section budgets.
    */
   allocate(provider: string, model: string, callType: CallType): ContentPriorityConfig {
     const profile = getModelProfile(provider, model);

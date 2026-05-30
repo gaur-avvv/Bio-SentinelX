@@ -1480,7 +1480,11 @@ export const FloodPrediction: React.FC<FloodPredictionProps> = ({
     phases.forEach((phase, i) => setTimeout(() => setAnalysisPhase(phase), i * 2200));
 
     try {
-      const result = await analyzeFloodRisk(input, aiProvider, aiModel, aiKey);
+      const result = await analyzeFloodRisk(input, aiProvider, aiModel, aiKey, {
+        onToken: (token: string) => {
+          setAnalysis(prev => prev + token);
+        }
+      });
       setAnalysis(result);
       setAnalysisPhase('');
       setFlood({ analysis: result });

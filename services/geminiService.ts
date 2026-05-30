@@ -8,6 +8,9 @@ import { analyzeEnvironmentalImpact, initializeKnowledgeGraph } from './knowledg
 import { MEDGEMMA_MODELS, chatCompletion, checkModelAvailability, getHFToken } from './huggingFaceService';
 import { executeMcpOutbreakSweep, executeMcpWikiSearch } from './mcpOrchestrationService';
 import { McpSettings, DEFAULT_MCP_SETTINGS } from '../types';
+import { queryOrchestrator } from './queryOrchestrator';
+import { semanticCache } from './semanticCacheService';
+
 
 // ============================================================
 // UTILITY: Strip reasoning-model <think> / <thinking> blocks
@@ -367,6 +370,7 @@ export const generateHealthRiskAssessment = async (
   reportImage?: string, // Base64 image
   apiKey?: string,
   mlPrediction?: any,
+  options?: { onToken?: (token: string) => void }
 ): Promise<AnalysisResponse> => {
 
   const weatherContext = `
@@ -563,6 +567,9 @@ export const generateHealthRiskAssessment = async (
   // MedGemma is always attempted first for report generation when HF token is configured.
   const medgemmaFirst = await tryMedGemmaFirst(systemInstruction, userPrompt, aiModel, 3072);
   if (medgemmaFirst) {
+    if (options?.onToken) {
+      options.onToken(medgemmaFirst);
+    }
     return { markdown: stripThinkingBlocks(medgemmaFirst) || 'Analysis unavailable.', groundingChunks: [] };
   }
 
@@ -596,6 +603,29 @@ export const generateHealthRiskAssessment = async (
     }
     return undefined;
   };
+
+  // ── Cache Check via queryOrchestrator / semanticCache ───────────
+  const queryHash = await semanticCache.hashQuery(aiProvider, aiModel, systemInstruction, userPrompt);
+  let queryEmbedding: number[] | null = null;
+  const geminiKey = localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (aiProvider === 'gemini' ? apiKey : undefined);
+
+  if (geminiKey) {
+    try {
+      const { embedWithGemini } = await import('./vectorSearchEngine');
+      queryEmbedding = await embedWithGemini(userPrompt, geminiKey, 'RETRIEVAL_QUERY');
+    } catch (_e) {}
+  }
+
+  const cacheResult = await semanticCache.lookup(queryHash, queryEmbedding, 'report');
+  if (cacheResult.hit && cacheResult.response) {
+    if (options?.onToken) {
+      options.onToken(cacheResult.response);
+    }
+    return {
+      markdown: stripThinkingBlocks(cacheResult.response) || 'Analysis unavailable.',
+      groundingChunks: []
+    };
+  }
 
   interface GenerationAttempt {
     provider: string;
@@ -666,80 +696,232 @@ export const generateHealthRiskAssessment = async (
     });
   }
 
-  let lastError: any = null;
-  for (let idx = 0; idx < attempts.length; idx++) {
-    const attempt = attempts[idx];
-    try {
-      let text = '';
-      let groundingChunks: any[] = [];
+  const fastHash = (str: string) => {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(36);
+  };
 
-      if (attempt.provider === 'groq') {
-        const keyToUse = attempt.key || getProviderKey('groq');
-        if (!keyToUse) throw new Error('Groq key is missing');
-        text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
-      } 
-      else if (attempt.provider === 'pollinations') {
-        text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
-      } 
-      else if (attempt.provider === 'openrouter') {
-        const keyToUse = attempt.key || getProviderKey('openrouter');
-        if (!keyToUse) throw new Error('OpenRouter key is missing');
-        text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
-      } 
-      else if (attempt.provider === 'siliconflow') {
-        const keyToUse = attempt.key || getProviderKey('siliconflow');
-        if (!keyToUse) throw new Error('SiliconFlow key is missing');
-        text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
-      } 
-      else if (attempt.provider === 'cerebras') {
-        const keyToUse = attempt.key || getProviderKey('cerebras');
-        if (!keyToUse) throw new Error('Cerebras key is missing');
-        text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+  const executeAttempts = async (): Promise<AnalysisResponse> => {
+    let lastError: any = null;
+    for (let idx = 0; idx < attempts.length; idx++) {
+      const attempt = attempts[idx];
+      
+      // Circuit Breaker check
+      const cbState = queryOrchestrator.getCircuitBreakerStates()[attempt.provider];
+      if (cbState && cbState.state === 'open') {
+        continue;
       }
-      else if (attempt.provider === 'ollama') {
-        const { runSmallModelPipeline } = await import('./smallModelService');
-        const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Generate health risk assessment', '', 'health_assessment', 1024, systemInstruction);
-        text = result;
-      } 
-      else {
-        // Gemini
-        const keyToUse = attempt.key || getProviderKey('gemini');
-        if (!keyToUse) throw new Error('Gemini key is missing');
-        const ai = new GoogleGenAI({ apiKey: keyToUse });
 
-        const promptParts: any[] = [{ text: userPrompt }];
-        if (reportImage) {
-          promptParts.push({ inlineData: { mimeType: 'image/jpeg', data: reportImage.split(',')[1] } });
+      try {
+        let text = '';
+        let groundingChunks: any[] = [];
+
+        if (attempt.provider === 'groq') {
+          const keyToUse = attempt.key || getProviderKey('groq');
+          if (!keyToUse) throw new Error('Groq key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        } 
+        else if (attempt.provider === 'pollinations') {
+          if (options?.onToken) {
+            const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (attempt.key) pollinationsHeaders['Authorization'] = `Bearer ${attempt.key}`;
+            text = await fetchSSE('https://gen.pollinations.ai/v1/chat/completions', {
+              method: 'POST',
+              headers: pollinationsHeaders,
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
+          }
+        } 
+        else if (attempt.provider === 'openrouter') {
+          const keyToUse = attempt.key || getProviderKey('openrouter');
+          if (!keyToUse) throw new Error('OpenRouter key is missing');
+          const headers = {
+            'Authorization': `Bearer ${keyToUse}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://bio-sentinelx.app',
+            'X-Title': 'Bio-SentinelX',
+          };
+          if (options?.onToken) {
+            text = await fetchSSE('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        } 
+        else if (attempt.provider === 'siliconflow') {
+          const keyToUse = attempt.key || getProviderKey('siliconflow');
+          if (!keyToUse) throw new Error('SiliconFlow key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE(`${SILICONFLOW_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
+          }
+        } 
+        else if (attempt.provider === 'cerebras') {
+          const keyToUse = attempt.key || getProviderKey('cerebras');
+          if (!keyToUse) throw new Error('Cerebras key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE(`${CEREBRAS_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        }
+        else if (attempt.provider === 'ollama') {
+          const { runSmallModelPipeline } = await import('./smallModelService');
+          const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Generate health risk assessment', '', 'health_assessment', 1024, systemInstruction);
+          text = result;
+          if (options?.onToken && text) {
+            options.onToken(text);
+          }
+        } 
+        else {
+          // Gemini
+          const keyToUse = attempt.key || getProviderKey('gemini');
+          if (!keyToUse) throw new Error('Gemini key is missing');
+          const ai = new GoogleGenAI({ apiKey: keyToUse });
+
+          const promptParts: any[] = [{ text: userPrompt }];
+          if (reportImage) {
+            promptParts.push({ inlineData: { mimeType: 'image/jpeg', data: reportImage.split(',')[1] } });
+          }
+
+          if (options?.onToken) {
+            const stream = await ai.models.generateContentStream({
+              model: attempt.model,
+              contents: promptParts,
+              config: {
+                systemInstruction,
+                tools: [{ googleMaps: {} }, { googleSearch: {} }],
+                toolConfig: {
+                  retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+                }
+              }
+            });
+            for await (const chunk of stream) {
+              const tok = chunk.text || '';
+              text += tok;
+              options.onToken(tok);
+            }
+          } else {
+            const response = await ai.models.generateContent({
+              model: attempt.model,
+              contents: { parts: promptParts },
+              config: {
+                systemInstruction,
+                tools: [{ googleMaps: {} }, { googleSearch: {} }],
+                toolConfig: {
+                  retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+                }
+              }
+            });
+            text = response.text || '';
+            groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+          }
         }
 
-        const response = await ai.models.generateContent({
-          model: attempt.model,
-          contents: { parts: promptParts },
-          config: {
-            systemInstruction,
-            tools: [{ googleMaps: {} }, { googleSearch: {} }],
-            toolConfig: {
-              retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
-            }
-          }
-        });
-        text = response.text || '';
-        groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-      }
+        if (text) {
+          queryOrchestrator.recordProviderSuccess(attempt.provider);
 
-      if (text) {
-        return {
-          markdown: stripThinkingBlocks(text) || 'Analysis unavailable.',
-          groundingChunks
-        };
+          // Save response to cache in the background
+          semanticCache.store({
+            queryHash,
+            queryEmbedding: queryEmbedding || [],
+            queryText: userPrompt.slice(0, 500),
+            responseText: text,
+            provider: attempt.provider,
+            model: attempt.model,
+            callType: 'report',
+            createdAt: Date.now(),
+            ttlMs: semanticCache.getTTL('report')
+          }).catch(() => {});
+
+          return {
+            markdown: stripThinkingBlocks(text) || 'Analysis unavailable.',
+            groundingChunks
+          };
+        }
+      } catch (err: any) {
+        console.warn(`[Assessment Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+        queryOrchestrator.recordProviderFailure(attempt.provider);
+        lastError = err;
       }
-    } catch (err: any) {
-      console.warn(`[Assessment Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
-      lastError = err;
     }
-  }
 
-  throw lastError || new Error("All assessment generation attempts failed.");
+    throw lastError || new Error("All assessment generation attempts failed.");
+  };
+
+  const deduplicationKey = fastHash(routeProvider + aiModel + userPrompt.slice(0, 200));
+  return queryOrchestrator.deduplicateRequest(
+    routeProvider,
+    aiModel,
+    userPrompt,
+    executeAttempts as any
+  ) as unknown as Promise<AnalysisResponse>;
 };
 
 // ============================================================
@@ -769,7 +951,8 @@ export const analyzeHistoricalClimateHealth = async (
   input: HistoricalResearchInput,
   aiProvider: string,
   aiModel: string,
-  apiKey?: string
+  apiKey?: string,
+  options?: { onToken?: (token: string) => void }
 ): Promise<string> => {
 
   // Fully static — same on every call regardless of input. Memoized client-side
@@ -946,6 +1129,26 @@ RESEARCH TASKS:
     return undefined;
   };
 
+  // ── Cache Check via queryOrchestrator / semanticCache ───────────
+  const queryHash = await semanticCache.hashQuery(aiProvider, aiModel, systemInstruction, userPrompt);
+  let queryEmbedding: number[] | null = null;
+  const geminiKey = localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (aiProvider === 'gemini' ? apiKey : undefined);
+
+  if (geminiKey) {
+    try {
+      const { embedWithGemini } = await import('./vectorSearchEngine');
+      queryEmbedding = await embedWithGemini(userPrompt, geminiKey, 'RETRIEVAL_QUERY');
+    } catch (_e) {}
+  }
+
+  const cacheResult = await semanticCache.lookup(queryHash, queryEmbedding, 'historical');
+  if (cacheResult.hit && cacheResult.response) {
+    if (options?.onToken) {
+      options.onToken(cacheResult.response);
+    }
+    return stripThinkingBlocks(cacheResult.response) || 'Research analysis unavailable.';
+  }
+
   interface GenerationAttempt {
     provider: string;
     model: string;
@@ -1015,68 +1218,268 @@ RESEARCH TASKS:
     });
   }
 
-  let lastError: any = null;
-  for (let idx = 0; idx < attempts.length; idx++) {
-    const attempt = attempts[idx];
-    try {
-      let text = '';
+  const fastHash = (str: string) => {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(36);
+  };
 
-      if (attempt.provider === 'groq') {
-        const keyToUse = attempt.key || getProviderKey('groq');
-        if (!keyToUse) throw new Error('Groq key is missing');
-        text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
-      } 
-      else if (attempt.provider === 'pollinations') {
-        text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
-      } 
-      else if (attempt.provider === 'openrouter') {
-        const keyToUse = attempt.key || getProviderKey('openrouter');
-        if (!keyToUse) throw new Error('OpenRouter key is missing');
-        text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
-      } 
-      else if (attempt.provider === 'siliconflow') {
-        const keyToUse = attempt.key || getProviderKey('siliconflow');
-        if (!keyToUse) throw new Error('SiliconFlow key is missing');
-        text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
-      } 
-      else if (attempt.provider === 'cerebras') {
-        const keyToUse = attempt.key || getProviderKey('cerebras');
-        if (!keyToUse) throw new Error('Cerebras key is missing');
-        text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+  const executeAttempts = async (): Promise<string> => {
+    let lastError: any = null;
+    for (let idx = 0; idx < attempts.length; idx++) {
+      const attempt = attempts[idx];
+      
+      // Circuit Breaker check
+      const cbState = queryOrchestrator.getCircuitBreakerStates()[attempt.provider];
+      if (cbState && cbState.state === 'open') {
+        continue;
       }
-      else if (attempt.provider === 'ollama') {
-        const { runSmallModelPipeline } = await import('./smallModelService');
-        const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Analyze historical climate health data', '', 'historical_research', 1024, systemInstruction);
-        text = result;
-      } 
-      else {
-        // Gemini
-        const keyToUse = attempt.key || getProviderKey('gemini');
-        if (!keyToUse) throw new Error('Gemini key is missing');
-        const ai = new GoogleGenAI({ apiKey: keyToUse });
 
-        const response = await ai.models.generateContent({
-          model: attempt.model,
-          contents: [{ parts: [{ text: userPrompt }] }],
-          config: {
-            systemInstruction,
-            tools: [{ googleSearch: {} }],
+      try {
+        let text = '';
+
+        if (attempt.provider === 'groq') {
+          const keyToUse = attempt.key || getProviderKey('groq');
+          if (!keyToUse) throw new Error('Groq key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
           }
-        });
-        text = response.text || '';
-      }
+        } 
+        else if (attempt.provider === 'pollinations') {
+          if (options?.onToken) {
+            const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (attempt.key) pollinationsHeaders['Authorization'] = `Bearer ${attempt.key}`;
+            text = await fetchSSE('https://gen.pollinations.ai/v1/chat/completions', {
+              method: 'POST',
+              headers: pollinationsHeaders,
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
+          }
+        } 
+        else if (attempt.provider === 'openrouter') {
+          const keyToUse = attempt.key || getProviderKey('openrouter');
+          if (!keyToUse) throw new Error('OpenRouter key is missing');
+          const headers = {
+            'Authorization': `Bearer ${keyToUse}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://bio-sentinelx.app',
+            'X-Title': 'Bio-SentinelX',
+          };
+          if (options?.onToken) {
+            text = await fetchSSE('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        } 
+        else if (attempt.provider === 'siliconflow') {
+          const keyToUse = attempt.key || getProviderKey('siliconflow');
+          if (!keyToUse) throw new Error('SiliconFlow key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE(`${SILICONFLOW_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
+          }
+        } 
+        else if (attempt.provider === 'cerebras') {
+          const keyToUse = attempt.key || getProviderKey('cerebras');
+          if (!keyToUse) throw new Error('Cerebras key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE(`${CEREBRAS_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        }
+        else if (attempt.provider === 'ollama') {
+          const { runSmallModelPipeline } = await import('./smallModelService');
+          const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Analyze historical climate health data', '', 'historical_research', 1024, systemInstruction);
+          text = result;
+          if (options?.onToken && text) {
+            options.onToken(text);
+          }
+        } 
+        else {
+          // Gemini
+          const keyToUse = attempt.key || getProviderKey('gemini');
+          if (!keyToUse) throw new Error('Gemini key is missing');
+          const ai = new GoogleGenAI({ apiKey: keyToUse });
 
-      if (text) {
-        return stripThinkingBlocks(text) || 'Research analysis unavailable.';
+          if (options?.onToken) {
+            const stream = await ai.models.generateContentStream({
+              model: attempt.model,
+              contents: [{ parts: [{ text: userPrompt }] }],
+              config: {
+                systemInstruction,
+                tools: [{ googleSearch: {} }],
+              }
+            });
+            for await (const chunk of stream) {
+              const tok = chunk.text || '';
+              text += tok;
+              options.onToken(tok);
+            }
+          } else {
+            const response = await ai.models.generateContent({
+              model: attempt.model,
+              contents: [{ parts: [{ text: userPrompt }] }],
+              config: {
+                systemInstruction,
+                tools: [{ googleSearch: {} }],
+              }
+            });
+            text = response.text || '';
+          }
+        }
+
+        if (text) {
+          queryOrchestrator.recordProviderSuccess(attempt.provider);
+
+          // Save response to cache in the background
+          semanticCache.store({
+            queryHash,
+            queryEmbedding: queryEmbedding || [],
+            queryText: userPrompt.slice(0, 500),
+            responseText: text,
+            provider: attempt.provider,
+            model: attempt.model,
+            callType: 'historical',
+            createdAt: Date.now(),
+            ttlMs: semanticCache.getTTL('historical')
+          }).catch(() => {});
+
+          return stripThinkingBlocks(text) || 'Research analysis unavailable.';
+        }
+      } catch (err: any) {
+        console.warn(`[Historical Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+        queryOrchestrator.recordProviderFailure(attempt.provider);
+        lastError = err;
       }
-    } catch (err: any) {
-      console.warn(`[Historical Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
-      lastError = err;
+    }
+
+    throw lastError || new Error("All historical research generation attempts failed.");
+  };
+
+  const deduplicationKey = fastHash(routeProvider + aiModel + userPrompt.slice(0, 200));
+  return queryOrchestrator.deduplicateRequest(routeProvider, aiModel, userPrompt, executeAttempts);
+};
+
+// ============================================================
+// SSE STREAMING UTILITY
+// ============================================================
+
+async function fetchSSE(
+  url: string,
+  options: RequestInit,
+  onToken: (token: string) => void
+): Promise<string> {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as any;
+    throw new Error(err?.error?.message || `SSE error ${res.status}`);
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new Error('ReadableStream not supported by browser.');
+  }
+
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let fullText = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // keep trailing incomplete line
+
+    for (const line of lines) {
+      const cleaned = line.trim();
+      if (!cleaned) continue;
+      if (cleaned === 'data: [DONE]') continue;
+      if (cleaned.startsWith('data: ')) {
+        try {
+          const jsonStr = cleaned.slice(6);
+          const data = JSON.parse(jsonStr);
+          const choice = data.choices?.[0];
+          const token = choice?.delta?.content ?? choice?.text ?? '';
+          if (token) {
+            fullText += token;
+            onToken(token);
+          }
+        } catch (_e) {
+          // ignore malformed lines
+        }
+      }
     }
   }
 
-  throw lastError || new Error("All historical research generation attempts failed.");
-};
+  return fullText;
+}
 
 export const chatWithWeatherAssistant = async (
   weather: WeatherData,
@@ -1093,6 +1496,7 @@ export const chatWithWeatherAssistant = async (
     llamaCloudEnabled?: boolean;
     includeTrace?: boolean;
     mcpSettings?: McpSettings;
+    onToken?: (token: string) => void;
   }
 ): Promise<string> => {
   const deepAnalysis = Boolean(options?.deepAnalysis);
@@ -1116,6 +1520,7 @@ export const chatWithWeatherAssistant = async (
     trace.finalModel = model || aiModel;
     return withOrchestrationTrace(stripThinkingBlocks(text || "I'm sorry, I couldn't process that request."), trace, options?.includeTrace);
   };
+
   const weatherContext = `
     Current context for ${weather.city}:
     - Temp: ${weather.temp}°C
@@ -1142,7 +1547,7 @@ export const chatWithWeatherAssistant = async (
 
   let memoryContext = '';
   try {
-    memoryContext = buildMemoryContext(weather.city);
+    memoryContext = await buildMemoryContext(weather.city, apiKey || undefined);
   } catch (e) {
     // Fallback to legacy localStorage
     try {
@@ -1230,7 +1635,6 @@ export const chatWithWeatherAssistant = async (
         mcpContext = '\nMCP TOOL SIGNALS: regional sweep unavailable.';
       }
 
-      // Check disease terms or keywords to trigger Deep Wiki MCP search
       const diseaseKeywords = ["research", "wiki", "what is", "disease", "outbreak", "virus", "bacteria", "infection", "epidemic", "pandemic", "symptom", "treatment", "pathogen", "flu", "covid", "dengue", "malaria", "cholera", "typhoid", "influenza"];
       const lowerMessage = message.toLowerCase();
       const needsWikiSearch = diseaseKeywords.some(keyword => lowerMessage.includes(keyword));
@@ -1276,9 +1680,6 @@ export const chatWithWeatherAssistant = async (
     }
   } catch (_e) { /* non-fatal */ }
 
-  // Split system instruction into static role definition (cache-eligible) and
-  // dynamic session context (weather, ML prediction, memory, RAG — always fresh).
-  // The static prefix will be matched by server-side caching after the first call.
   const { text: _staticRole } = promptCache.getSystemInstruction(
     'chat:static',
     () => `You are the BioSentinel AI Bio-Assistant. 
@@ -1326,8 +1727,6 @@ export const chatWithWeatherAssistant = async (
       4. When you provide a [PREDICTION], do NOT provide [OPTIONS].`
   );
 
-  // Dynamic context is appended AFTER the static prefix so the prefix remains
-  // identical across requests and qualifies for server-side prompt caching.
   const systemInstruction = `${_staticRole}
       
       CONTEXT: ${weatherContext}
@@ -1342,11 +1741,32 @@ export const chatWithWeatherAssistant = async (
     ? `${message}\n\n${kgContext}${mcpContext}\n\nRespond with sections: 1) Causal Pathway 2) Evidence Summary 3) Actions.`
     : message;
 
-  // ---- Build OpenAI-format messages (shared by Groq & Pollinations) ----
+  const userPrompt = userMessage;
+
+  // ── 1. Cache Check via queryOrchestrator / semanticCache ───────────
+  const queryHash = await semanticCache.hashQuery(aiProvider, aiModel, systemInstruction, userPrompt);
+  let queryEmbedding: number[] | null = null;
+  const geminiKey = localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (aiProvider === 'gemini' ? apiKey : undefined);
+
+  if (geminiKey) {
+    try {
+      const { embedWithGemini } = await import('./vectorSearchEngine');
+      queryEmbedding = await embedWithGemini(userPrompt, geminiKey, 'RETRIEVAL_QUERY');
+    } catch (_e) {}
+  }
+
+  const cacheResult = await semanticCache.lookup(queryHash, queryEmbedding, 'chat');
+  if (cacheResult.hit && cacheResult.response) {
+    if (options?.onToken) {
+      options.onToken(cacheResult.response);
+    }
+    return finish(cacheResult.response, aiProvider, aiModel);
+  }
+
   const oaiMessages = [
     { role: 'system', content: systemInstruction },
     ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text })),
-    { role: 'user', content: userMessage },
+    { role: 'user', content: userPrompt },
   ];
 
   if (deepAnalysis || aiProvider === 'huggingface') {
@@ -1355,9 +1775,12 @@ export const chatWithWeatherAssistant = async (
       trace.fallbackUsed = true;
       trace.fallbackProvider = 'missing_hf_token';
     }
-    const medgemmaFirst = await tryMedGemmaFirst(systemInstruction, userMessage, aiModel, 2048);
+    const medgemmaFirst = await tryMedGemmaFirst(systemInstruction, userPrompt, aiModel, 2048);
     if (medgemmaFirst) {
       trace.medgemmaUsed = true;
+      if (options?.onToken) {
+        options.onToken(medgemmaFirst);
+      }
       return finish(medgemmaFirst, 'huggingface', aiModel.includes('medgemma') ? aiModel : (MEDGEMMA_MODELS.find(m => m.isDefault)?.id || MEDGEMMA_MODELS[0].id));
     }
   }
@@ -1393,16 +1816,7 @@ export const chatWithWeatherAssistant = async (
     return undefined;
   };
 
-  interface GenerationAttempt {
-    provider: string;
-    model: string;
-    key?: string;
-    isFallback: boolean;
-  }
-
-  const attempts: GenerationAttempt[] = [];
-
-  // 1. Primary Attempt: Selected model and provider
+  const attempts: Array<{ provider: string; model: string; key?: string; isFallback: boolean }> = [];
   attempts.push({
     provider: routeProvider,
     model: aiModel,
@@ -1412,7 +1826,6 @@ export const chatWithWeatherAssistant = async (
     isFallback: false
   });
 
-  // 2. Backup models of same provider
   const sameBackups = PROVIDER_BACKUP_MODELS[routeProvider] || [];
   for (const backup of sameBackups) {
     if (backup !== aiModel) {
@@ -1427,7 +1840,6 @@ export const chatWithWeatherAssistant = async (
     }
   }
 
-  // 3. Other configured providers
   const providersOrder = ['gemini', 'groq', 'openrouter', 'siliconflow', 'cerebras'];
   for (const prov of providersOrder) {
     if (prov !== routeProvider) {
@@ -1446,148 +1858,245 @@ export const chatWithWeatherAssistant = async (
     }
   }
 
-  // 4. Free keyless Pollinations backup (guarantees a response as a final fail-safe)
   if (routeProvider !== 'pollinations') {
-    attempts.push({
-      provider: 'pollinations',
-      model: 'openai',
-      key: undefined,
-      isFallback: true
-    });
-    attempts.push({
-      provider: 'pollinations',
-      model: 'mistral',
-      key: undefined,
-      isFallback: true
-    });
+    attempts.push({ provider: 'pollinations', model: 'openai', key: undefined, isFallback: true });
+    attempts.push({ provider: 'pollinations', model: 'mistral', key: undefined, isFallback: true });
   }
 
-  let lastError: any = null;
-  for (let idx = 0; idx < attempts.length; idx++) {
-    const attempt = attempts[idx];
-    try {
-      if (attempt.isFallback) {
-        trace.fallbackUsed = true;
-        trace.fallbackProvider = `${attempt.provider}:${attempt.model}`;
+  // Deduplication key and call wrapper
+  const fastHash = (str: string) => {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(36);
+  };
+
+  const executeAttempts = async (): Promise<string> => {
+    let lastError: any = null;
+
+    for (let idx = 0; idx < attempts.length; idx++) {
+      const attempt = attempts[idx];
+      
+      // Circuit Breaker check
+      const cbState = queryOrchestrator.getCircuitBreakerStates()[attempt.provider];
+      if (cbState && cbState.state === 'open') {
+        continue;
       }
 
-      let text = '';
+      try {
+        if (attempt.isFallback) {
+          trace.fallbackUsed = true;
+          trace.fallbackProvider = `${attempt.provider}:${attempt.model}`;
+        }
 
-      if (attempt.provider === 'groq') {
-        const keyToUse = attempt.key || getProviderKey('groq');
-        if (!keyToUse) throw new Error('Groq key is missing');
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({})) as any;
-          throw new Error(err?.error?.message || `Groq error ${res.status}`);
-        }
-        const data = await res.json() as any;
-        promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-        text = data.choices?.[0]?.message?.content || '';
-      } 
-      else if (attempt.provider === 'pollinations') {
-        const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-        const keyToUse = attempt.key || localStorage.getItem('biosentinel_pollinations_key') || undefined;
-        if (keyToUse) pollinationsHeaders['Authorization'] = `Bearer ${keyToUse}`;
-        const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
-          method: 'POST',
-          headers: pollinationsHeaders,
-          body: JSON.stringify({ model: attempt.model, messages: oaiMessages }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({})) as any;
-          throw new Error(err?.error?.message || `Pollinations error ${res.status}`);
-        }
-        const data = await res.json() as any;
-        promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
-        text = data.choices?.[0]?.message?.content || '';
-      } 
-      else if (attempt.provider === 'openrouter') {
-        const keyToUse = attempt.key || getProviderKey('openrouter');
-        if (!keyToUse) throw new Error('OpenRouter key is missing');
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
+        let text = '';
+
+        if (attempt.provider === 'groq') {
+          const keyToUse = attempt.key || getProviderKey('groq');
+          if (!keyToUse) throw new Error('Groq key is missing');
+
+          if (options?.onToken) {
+            text = await fetchSSE('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048, stream: true }),
+            }, options.onToken);
+          } else {
+            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({})) as any;
+              throw new Error(err?.error?.message || `Groq error ${res.status}`);
+            }
+            const data = await res.json() as any;
+            promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
+            text = data.choices?.[0]?.message?.content || '';
+          }
+        } 
+        else if (attempt.provider === 'pollinations') {
+          const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+          const keyToUse = attempt.key || localStorage.getItem('biosentinel_pollinations_key') || undefined;
+          if (keyToUse) pollinationsHeaders['Authorization'] = `Bearer ${keyToUse}`;
+
+          if (options?.onToken) {
+            text = await fetchSSE('https://gen.pollinations.ai/v1/chat/completions', {
+              method: 'POST',
+              headers: pollinationsHeaders,
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages, stream: true }),
+            }, options.onToken);
+          } else {
+            const res = await fetch('https://gen.pollinations.ai/v1/chat/completions', {
+              method: 'POST',
+              headers: pollinationsHeaders,
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({})) as any;
+              throw new Error(err?.error?.message || `Pollinations error ${res.status}`);
+            }
+            const data = await res.json() as any;
+            promptCache.recordServerCacheHit(promptCache.extractCachedTokens(data));
+            text = data.choices?.[0]?.message?.content || '';
+          }
+        } 
+        else if (attempt.provider === 'openrouter') {
+          const keyToUse = attempt.key || getProviderKey('openrouter');
+          if (!keyToUse) throw new Error('OpenRouter key is missing');
+          const headers = {
             'Authorization': `Bearer ${keyToUse}`,
             'Content-Type': 'application/json',
             'HTTP-Referer': 'https://bio-sentinelx.app',
             'X-Title': 'Bio-SentinelX',
-          },
-          body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({})) as any;
-          throw new Error(err?.error?.message || `OpenRouter error ${res.status}`);
-        }
-        const orData = await res.json() as any;
-        promptCache.recordServerCacheHit(promptCache.extractCachedTokens(orData));
-        text = orData.choices?.[0]?.message?.content || '';
-      } 
-      else if (attempt.provider === 'siliconflow') {
-        const keyToUse = attempt.key || getProviderKey('siliconflow');
-        if (!keyToUse) throw new Error('SiliconFlow key is missing');
-        text = await withRetry(() => chatWithSiliconFlow(
-          oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-          attempt.model,
-          keyToUse
-        ));
-      } 
-      else if (attempt.provider === 'cerebras') {
-        const keyToUse = attempt.key || getProviderKey('cerebras');
-        if (!keyToUse) throw new Error('Cerebras key is missing');
-        text = await chatWithCerebras(
-          oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-          attempt.model,
-          keyToUse
-        );
-      } 
-      else if (attempt.provider === 'ollama') {
-        const { chatWithOllama } = await import('./smallModelService');
-        text = await chatWithOllama(
-          oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-          attempt.model,
-          1024
-        );
-      } 
-      else {
-        // Gemini
-        const keyToUse = attempt.key || getProviderKey('gemini');
-        if (!keyToUse) throw new Error('Gemini key is missing');
-        const ai = new GoogleGenAI({ apiKey: keyToUse });
-        const chatHistory = history.map(msg => ({
-          role: msg.role === 'user' ? 'user' : 'model',
-          parts: [{ text: msg.text }]
-        }));
-        const chat = ai.chats.create({
-          model: attempt.model,
-          history: chatHistory,
-          config: {
-            systemInstruction,
-            tools: [{ googleSearch: {} }],
-            toolConfig: {
-              retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+          };
+
+          if (options?.onToken) {
+            text = await fetchSSE('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048, stream: true }),
+            }, options.onToken);
+          } else {
+            const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages, temperature: 0.7, max_tokens: 2048 }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({})) as any;
+              throw new Error(err?.error?.message || `OpenRouter error ${res.status}`);
             }
-          },
-        });
-        const response = await chat.sendMessage({ message: userMessage });
-        text = response.text || '';
-      }
+            const orData = await res.json() as any;
+            promptCache.recordServerCacheHit(promptCache.extractCachedTokens(orData));
+            text = orData.choices?.[0]?.message?.content || '';
+          }
+        } 
+        else if (attempt.provider === 'siliconflow') {
+          const keyToUse = attempt.key || getProviderKey('siliconflow');
+          if (!keyToUse) throw new Error('SiliconFlow key is missing');
+          
+          if (options?.onToken) {
+            text = await fetchSSE(`${SILICONFLOW_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages, stream: true }),
+            }, options.onToken);
+          } else {
+            text = await withRetry(() => chatWithSiliconFlow(
+              oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+              attempt.model,
+              keyToUse
+            ));
+          }
+        } 
+        else if (attempt.provider === 'cerebras') {
+          const keyToUse = attempt.key || getProviderKey('cerebras');
+          if (!keyToUse) throw new Error('Cerebras key is missing');
 
-      if (text) {
-        return finish(text, attempt.provider, attempt.model);
+          if (options?.onToken) {
+            text = await fetchSSE(`${CEREBRAS_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: attempt.model, messages: oaiMessages, stream: true }),
+            }, options.onToken);
+          } else {
+            text = await chatWithCerebras(
+              oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+              attempt.model,
+              keyToUse
+            );
+          }
+        } 
+        else if (attempt.provider === 'ollama') {
+          const { chatWithOllama } = await import('./smallModelService');
+          text = await chatWithOllama(
+            oaiMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+            attempt.model,
+            1024
+          );
+          if (options?.onToken && text) {
+            options.onToken(text);
+          }
+        } 
+        else {
+          // Gemini
+          const keyToUse = attempt.key || getProviderKey('gemini');
+          if (!keyToUse) throw new Error('Gemini key is missing');
+          const ai = new GoogleGenAI({ apiKey: keyToUse });
+          const chatHistory = history.map(msg => ({
+            role: msg.role === 'user' ? 'user' : 'model',
+            parts: [{ text: msg.text }]
+          }));
+
+          if (options?.onToken) {
+            const chat = ai.chats.create({
+              model: attempt.model,
+              history: chatHistory,
+              config: {
+                systemInstruction,
+                tools: [{ googleSearch: {} }],
+                toolConfig: {
+                  retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+                }
+              },
+            });
+            const stream = await chat.sendMessageStream({ message: userPrompt });
+            for await (const chunk of stream) {
+              const tok = chunk.text || '';
+              text += tok;
+              options.onToken(tok);
+            }
+          } else {
+            const chat = ai.chats.create({
+              model: attempt.model,
+              history: chatHistory,
+              config: {
+                systemInstruction,
+                tools: [{ googleSearch: {} }],
+                toolConfig: {
+                  retrievalConfig: { latLng: { latitude: weather.lat, longitude: weather.lon } }
+                }
+              },
+            });
+            const response = await chat.sendMessage({ message: userPrompt });
+            text = response.text || '';
+          }
+        }
+
+        if (text) {
+          queryOrchestrator.recordProviderSuccess(attempt.provider);
+
+          // Save response to cache in the background
+          semanticCache.store({
+            queryHash,
+            queryEmbedding: queryEmbedding || [],
+            queryText: userPrompt.slice(0, 500),
+            responseText: text,
+            provider: attempt.provider,
+            model: attempt.model,
+            callType: 'chat',
+            createdAt: Date.now(),
+            ttlMs: semanticCache.getTTL('chat')
+          }).catch(() => {});
+
+          return finish(text, attempt.provider, attempt.model);
+        }
+      } catch (err: any) {
+        console.warn(`[Self-Healing Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+        queryOrchestrator.recordProviderFailure(attempt.provider);
+        lastError = err;
       }
-    } catch (err: any) {
-      console.warn(`[Self-Healing Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
-      lastError = err;
     }
-  }
 
-  throw lastError || new Error("All model/provider generation attempts failed.");
+    throw lastError || new Error("All model/provider generation attempts failed.");
+  };
+
+  return queryOrchestrator.deduplicateRequest(routeProvider, aiModel, userPrompt, executeAttempts);
 };
+;
 
 // ============================================================
 // FLOOD RISK ANALYSIS
@@ -1677,7 +2186,8 @@ export const analyzeFloodRisk = async (
   input: FloodAnalysisInput,
   aiProvider: string,
   aiModel: string,
-  apiKey?: string
+  apiKey?: string,
+  options?: { onToken?: (token: string) => void }
 ): Promise<string> => {
   const systemInstruction = `You are an expert hydrologist, flood risk analyst, and urban disaster management specialist with deep knowledge of GloFAS v4 global river discharge models, precipitation-driven catchment response, machine learning flood prediction systems, river catchment hydrology, urban drainage infrastructure, and WHO/UNDRR disaster risk frameworks. When ML model data is available, synthesise it with hydrological data for a combined multi-model consensus view. Always cite specific numerical values and be direct about uncertainty.
 
@@ -1882,6 +2392,26 @@ List 5 specific numerical thresholds that should trigger escalated response (e.g
     return undefined;
   };
 
+  // ── Cache Check via queryOrchestrator / semanticCache ───────────
+  const queryHash = await semanticCache.hashQuery(routeProvider, aiModel, systemInstruction, userPrompt);
+  let queryEmbedding: number[] | null = null;
+  const geminiKey = localStorage.getItem('biosentinel_gemini_key') || process.env.API_KEY || (routeProvider === 'gemini' ? apiKey : undefined);
+
+  if (geminiKey) {
+    try {
+      const { embedWithGemini } = await import('./vectorSearchEngine');
+      queryEmbedding = await embedWithGemini(userPrompt, geminiKey, 'RETRIEVAL_QUERY');
+    } catch (_e) {}
+  }
+
+  const cacheResult = await semanticCache.lookup(queryHash, queryEmbedding, 'flood');
+  if (cacheResult.hit && cacheResult.response) {
+    if (options?.onToken) {
+      options.onToken(cacheResult.response);
+    }
+    return stripThinkingBlocks(cacheResult.response);
+  }
+
   interface GenerationAttempt {
     provider: string;
     model: string;
@@ -1947,61 +2477,203 @@ List 5 specific numerical thresholds that should trigger escalated response (e.g
     });
   }
 
-  let lastError: any = null;
-  for (let idx = 0; idx < attempts.length; idx++) {
-    const attempt = attempts[idx];
-    try {
-      let text = '';
-
-      if (attempt.provider === 'groq') {
-        const keyToUse = attempt.key || getProviderKey('groq');
-        if (!keyToUse) throw new Error('Groq key is missing');
-        text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
-      } 
-      else if (attempt.provider === 'pollinations') {
-        text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
-      } 
-      else if (attempt.provider === 'openrouter') {
-        const keyToUse = attempt.key || getProviderKey('openrouter');
-        if (!keyToUse) throw new Error('OpenRouter key is missing');
-        text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
-      } 
-      else if (attempt.provider === 'siliconflow') {
-        const keyToUse = attempt.key || getProviderKey('siliconflow');
-        if (!keyToUse) throw new Error('SiliconFlow key is missing');
-        text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
-      } 
-      else if (attempt.provider === 'cerebras') {
-        const keyToUse = attempt.key || getProviderKey('cerebras');
-        if (!keyToUse) throw new Error('Cerebras key is missing');
-        text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
-      }
-      else if (attempt.provider === 'ollama') {
-        const { runSmallModelPipeline } = await import('./smallModelService');
-        const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Analyze flood risk', '', 'flood_analysis', 1024, systemInstruction);
-        text = result;
-      } 
-      else {
-        // Gemini
-        const keyToUse = attempt.key || getProviderKey('gemini');
-        if (!keyToUse) throw new Error('Gemini key is missing');
-        const ai = new GoogleGenAI({ apiKey: keyToUse });
-        const response = await ai.models.generateContent({
-          model: attempt.model,
-          contents: userPrompt,
-          config: { systemInstruction },
-        });
-        text = response.text || '';
-      }
-
-      if (text) {
-        return stripThinkingBlocks(text);
-      }
-    } catch (err: any) {
-      console.warn(`[Flood Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
-      lastError = err;
+  const fastHash = (str: string) => {
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
     }
-  }
+    return hash.toString(36);
+  };
 
-  throw lastError || new Error("All flood analysis generation attempts failed.");
+  const executeAttempts = async (): Promise<string> => {
+    let lastError: any = null;
+    for (let idx = 0; idx < attempts.length; idx++) {
+      const attempt = attempts[idx];
+      
+      // Circuit Breaker check
+      const cbState = queryOrchestrator.getCircuitBreakerStates()[attempt.provider];
+      if (cbState && cbState.state === 'open') {
+        continue;
+      }
+
+      try {
+        let text = '';
+
+        if (attempt.provider === 'groq') {
+          const keyToUse = attempt.key || getProviderKey('groq');
+          if (!keyToUse) throw new Error('Groq key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithGroq(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        } 
+        else if (attempt.provider === 'pollinations') {
+          if (options?.onToken) {
+            const pollinationsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (attempt.key) pollinationsHeaders['Authorization'] = `Bearer ${attempt.key}`;
+            text = await fetchSSE('https://gen.pollinations.ai/v1/chat/completions', {
+              method: 'POST',
+              headers: pollinationsHeaders,
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithPollinations(systemInstruction, userPrompt, attempt.model, attempt.key);
+          }
+        } 
+        else if (attempt.provider === 'openrouter') {
+          const keyToUse = attempt.key || getProviderKey('openrouter');
+          if (!keyToUse) throw new Error('OpenRouter key is missing');
+          const headers = {
+            'Authorization': `Bearer ${keyToUse}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://bio-sentinelx.app',
+            'X-Title': 'Bio-SentinelX',
+          };
+          if (options?.onToken) {
+            text = await fetchSSE('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithOpenRouter(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        } 
+        else if (attempt.provider === 'siliconflow') {
+          const keyToUse = attempt.key || getProviderKey('siliconflow');
+          if (!keyToUse) throw new Error('SiliconFlow key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE(`${SILICONFLOW_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await withRetry(() => generateWithSiliconFlow(systemInstruction, userPrompt, attempt.model, keyToUse));
+          }
+        } 
+        else if (attempt.provider === 'cerebras') {
+          const keyToUse = attempt.key || getProviderKey('cerebras');
+          if (!keyToUse) throw new Error('Cerebras key is missing');
+          if (options?.onToken) {
+            text = await fetchSSE(`${CEREBRAS_BASE}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${keyToUse}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: attempt.model,
+                messages: [
+                  { role: 'system', content: systemInstruction },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192,
+                stream: true
+              })
+            }, options.onToken);
+          } else {
+            text = await generateWithCerebras(systemInstruction, userPrompt, attempt.model, keyToUse);
+          }
+        }
+        else if (attempt.provider === 'ollama') {
+          const { runSmallModelPipeline } = await import('./smallModelService');
+          const { result } = await runSmallModelPipeline(attempt.model, userPrompt, 'Analyze flood risk', '', 'flood_analysis', 1024, systemInstruction);
+          text = result;
+          if (options?.onToken && text) {
+            options.onToken(text);
+          }
+        } 
+        else {
+          // Gemini
+          const keyToUse = attempt.key || getProviderKey('gemini');
+          if (!keyToUse) throw new Error('Gemini key is missing');
+          const ai = new GoogleGenAI({ apiKey: keyToUse });
+
+          if (options?.onToken) {
+            const stream = await ai.models.generateContentStream({
+              model: attempt.model,
+              contents: userPrompt,
+              config: { systemInstruction },
+            });
+            for await (const chunk of stream) {
+              const tok = chunk.text || '';
+              text += tok;
+              options.onToken(tok);
+            }
+          } else {
+            const response = await ai.models.generateContent({
+              model: attempt.model,
+              contents: userPrompt,
+              config: { systemInstruction },
+            });
+            text = response.text || '';
+          }
+        }
+
+        if (text) {
+          queryOrchestrator.recordProviderSuccess(attempt.provider);
+
+          // Save response to cache in the background
+          semanticCache.store({
+            queryHash,
+            queryEmbedding: queryEmbedding || [],
+            queryText: userPrompt.slice(0, 500),
+            responseText: text,
+            provider: attempt.provider,
+            model: attempt.model,
+            callType: 'flood',
+            createdAt: Date.now(),
+            ttlMs: semanticCache.getTTL('flood')
+          }).catch(() => {});
+
+          return stripThinkingBlocks(text);
+        }
+      } catch (err: any) {
+        console.warn(`[Flood Fallback] Attempt failed - Provider: ${attempt.provider}, Model: ${attempt.model}. Error:`, err);
+        queryOrchestrator.recordProviderFailure(attempt.provider);
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error("All flood analysis generation attempts failed.");
+  };
+
+  const deduplicationKey = fastHash(routeProvider + aiModel + userPrompt.slice(0, 200));
+  return queryOrchestrator.deduplicateRequest(routeProvider, aiModel, userPrompt, executeAttempts);
 };

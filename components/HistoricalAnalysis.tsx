@@ -259,7 +259,11 @@ export const HistoricalAnalysis: React.FC<HistoricalAnalysisProps> = ({ location
       setTimeout(() => setResearchPhase('Synthesising risk assessment and generating recommendations...'), 11000);
 
       const effectiveKey = aiKey || geminiKey;
-      const response = await analyzeHistoricalClimateHealth(input, aiProvider, aiModel, effectiveKey);
+      const response = await analyzeHistoricalClimateHealth(input, aiProvider, aiModel, effectiveKey, {
+        onToken: (token: string) => {
+          setAnalysis(prev => prev + token);
+        }
+      });
 
       setAnalysis(response);
       setHistorical({ analysis: response });
