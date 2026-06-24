@@ -1,0 +1,20 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+.container {
+  max-width: 48rem;
+  margin: 4rem auto;
+  padding: 0 1rem;
+}
+
+a {
+  color: #38bdf8;
+}

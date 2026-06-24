@@ -649,6 +649,30 @@ $ npm run dev
 # App running at http://localhost:3000
 ```
 
+### Python Rewrite Scaffold (FastAPI + Jinja2)
+
+An initial Python-native rewrite scaffold now lives in:
+
+```text
+python_app/
+```
+
+Run it locally:
+
+```bash
+$ cd python_app
+$ python -m venv .venv
+$ source .venv/bin/activate
+$ pip install -r requirements.txt
+$ cp .env.example .env
+$ uvicorn app.main:app --reload --host 127.0.0.1 --port 8080
+```
+
+Then open:
+
+- `http://127.0.0.1:8080/` (homepage)
+- `http://127.0.0.1:8080/api/health` (health check)
+
 ### Docker Deployment (Recommended)
 
 ```bash
