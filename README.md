@@ -39,7 +39,14 @@
 
 > **Bio-SentinelX** is an enterprise-grade, AI-driven preventive healthcare intelligence platform that combines real-time environmental monitoring with advanced machine learning to predict disease outbreak risks and deliver personalized health insights. Built with cutting-edge web technologies and multi-model AI orchestration, it represents the future of proactive public health management.
 
+
 ---
+
+
+
+https://github.com/user-attachments/assets/c3d238e2-c0a0-42cf-af1a-a6442767bc18
+
+
 
 ## 🎯 Overview
 
