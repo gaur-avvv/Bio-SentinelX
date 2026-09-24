@@ -56,6 +56,63 @@ export interface TrainingMetrics {
   valAccuracy: number;
 }
 
+export interface PerClassMetrics {
+  className: string;
+  classIndex: number;
+  tp: number;
+  fp: number;
+  fn: number;
+  tn: number;
+  support: number;
+  precision: number;
+  recall: number;
+  specificity: number;
+  f1Score: number;
+  npv: number;
+  auc: number;
+}
+
+export interface RocPoint {
+  fpr: number;
+  tpr: number;
+}
+
+export interface RocCurveData {
+  macro: RocPoint[];
+  micro: RocPoint[];
+  macroAuc: number;
+  microAuc: number;
+  classCurves?: Record<string, RocPoint[]>;
+  classAucs?: Record<string, number>;
+}
+
+export interface CrossValidationFoldResult {
+  fold: number;
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1Score: number;
+  auc: number;
+  valSamples: number;
+}
+
+export interface CrossValidationSummary {
+  kFolds: number;
+  folds: CrossValidationFoldResult[];
+  meanAccuracy: number;
+  stdAccuracy: number;
+  ci95Accuracy: [number, number];
+  meanF1: number;
+  stdF1: number;
+  ci95F1: [number, number];
+  meanPrecision: number;
+  stdPrecision: number;
+  meanRecall: number;
+  stdRecall: number;
+  meanAuc: number;
+  stdAuc: number;
+}
+
 export interface TrainingResult {
   modelType: string;
   accuracy: number;
@@ -63,11 +120,16 @@ export interface TrainingResult {
   f1Score: number;
   precision: number;
   recall: number;
+  macroAuc?: number;
+  microAuc?: number;
   confusionMatrix?: number[][];
+  perClassMetrics?: PerClassMetrics[];
+  rocCurves?: RocCurveData;
   featureImportance: Array<{ feature: string; importance: number }>;
   trainingHistory: TrainingMetrics[];
   classNames?: string[];
   trainTime: number;
+  crossValidation?: CrossValidationSummary;
 }
 
 export interface ModelState {
@@ -874,35 +936,277 @@ function predictQuantizedNN(layers: QuantizedNNLayer[], x: number[]): { class: n
   return { class: current.indexOf(Math.max(...current)), probabilities: current };
 }
 
-// ─── Metrics Computation ────────────────────────────────────────────────────
+// ─── Metrics Computation (IEEE Publication Standard) ────────────────────────
+
+export function computeRocAndAuc(
+  yTrue: number[],
+  yProb: number[][],
+  numClassesOrNames: number | string[],
+  maybeClassNames?: string[]
+): RocCurveData {
+  let numClasses: number;
+  let classNames: string[];
+  if (Array.isArray(numClassesOrNames)) {
+    classNames = numClassesOrNames;
+    numClasses = classNames.length;
+  } else {
+    numClasses = numClassesOrNames;
+    classNames = maybeClassNames || [];
+  }
+
+  const n = yTrue.length;
+  const numSteps = 50;
+  const standardFprGrid: number[] = [];
+  for (let s = 0; s <= numSteps; s++) {
+    standardFprGrid.push(Number((s / numSteps).toFixed(4)));
+  }
+
+  if (n === 0 || numClasses <= 1) {
+    const baseline = standardFprGrid.map(fpr => ({ fpr, tpr: fpr }));
+    return {
+      macro: baseline,
+      micro: baseline,
+      macroAuc: 0.5,
+      microAuc: 0.5,
+    };
+  }
+
+  const classAucs: number[] = [];
+  const classAucsRecord: Record<string, number> = {};
+  const classInterpolatedTprs: number[][] = [];
+  const classCurves: Record<string, RocPoint[]> = {};
+
+  for (let c = 0; c < numClasses; c++) {
+    const className = classNames[c] || `Class ${c}`;
+    const items = yTrue.map((yt, i) => ({
+      isPos: yt === c ? 1 : 0,
+      score: yProb[i]?.[c] ?? 0,
+    })).sort((a, b) => b.score - a.score);
+
+    const totalPos = items.reduce((sum, item) => sum + item.isPos, 0);
+    const totalNeg = n - totalPos;
+
+    if (totalPos === 0 || totalNeg === 0) {
+      classAucs.push(0.5);
+      const diagonal = standardFprGrid.map(fpr => ({ fpr, tpr: fpr }));
+      classCurves[className] = diagonal;
+      classInterpolatedTprs.push(standardFprGrid);
+      continue;
+    }
+
+    let tp = 0;
+    let fp = 0;
+    const rawPoints: RocPoint[] = [{ fpr: 0, tpr: 0 }];
+
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].isPos === 1) tp++;
+      else fp++;
+
+      if (i < items.length - 1 && items[i].score === items[i + 1].score) continue;
+
+      rawPoints.push({
+        fpr: Number((fp / totalNeg).toFixed(5)),
+        tpr: Number((tp / totalPos).toFixed(5)),
+      });
+    }
+
+    if (rawPoints[rawPoints.length - 1].fpr < 1 || rawPoints[rawPoints.length - 1].tpr < 1) {
+      rawPoints.push({ fpr: 1, tpr: 1 });
+    }
+
+    let auc = 0;
+    for (let i = 0; i < rawPoints.length - 1; i++) {
+      const dFpr = rawPoints[i + 1].fpr - rawPoints[i].fpr;
+      const avgTpr = (rawPoints[i + 1].tpr + rawPoints[i].tpr) / 2;
+      auc += dFpr * avgTpr;
+    }
+    auc = Math.max(0, Math.min(1, auc));
+    classAucs.push(auc);
+    classAucsRecord[className] = Number(auc.toFixed(4));
+
+    const interpTpr: number[] = [];
+    let rawIdx = 0;
+    for (const targetFpr of standardFprGrid) {
+      while (rawIdx < rawPoints.length - 2 && rawPoints[rawIdx + 1].fpr <= targetFpr) {
+        rawIdx++;
+      }
+      const p1 = rawPoints[rawIdx];
+      const p2 = rawPoints[rawIdx + 1] || p1;
+      let tprVal = p1.tpr;
+      if (p2.fpr > p1.fpr) {
+        const factor = (targetFpr - p1.fpr) / (p2.fpr - p1.fpr);
+        tprVal = p1.tpr + factor * (p2.tpr - p1.tpr);
+      }
+      interpTpr.push(Math.max(0, Math.min(1, tprVal)));
+    }
+
+    classInterpolatedTprs.push(interpTpr);
+    classCurves[className] = standardFprGrid.map((fpr, idx) => ({
+      fpr,
+      tpr: Number(interpTpr[idx].toFixed(4)),
+    }));
+  }
+
+  // Macro average
+  const macroCurve: RocPoint[] = standardFprGrid.map((fpr, stepIdx) => {
+    let sumTpr = 0;
+    for (let c = 0; c < numClasses; c++) {
+      sumTpr += classInterpolatedTprs[c][stepIdx];
+    }
+    return {
+      fpr,
+      tpr: Number((sumTpr / numClasses).toFixed(4)),
+    };
+  });
+  const macroAuc = classAucs.reduce((a, b) => a + b, 0) / (classAucs.length || 1);
+
+  // Micro average
+  const microItems: Array<{ isPos: number; score: number }> = [];
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < numClasses; c++) {
+      microItems.push({
+        isPos: yTrue[i] === c ? 1 : 0,
+        score: yProb[i]?.[c] ?? 0,
+      });
+    }
+  }
+  microItems.sort((a, b) => b.score - a.score);
+
+  const microTotalPos = microItems.reduce((s, it) => s + it.isPos, 0);
+  const microTotalNeg = microItems.length - microTotalPos;
+  let microTp = 0;
+  let microFp = 0;
+  const rawMicroPoints: RocPoint[] = [{ fpr: 0, tpr: 0 }];
+
+  for (let i = 0; i < microItems.length; i++) {
+    if (microItems[i].isPos === 1) microTp++;
+    else microFp++;
+
+    if (i < microItems.length - 1 && microItems[i].score === microItems[i + 1].score) continue;
+
+    rawMicroPoints.push({
+      fpr: microTotalNeg > 0 ? Number((microFp / microTotalNeg).toFixed(5)) : 0,
+      tpr: microTotalPos > 0 ? Number((microTp / microTotalPos).toFixed(5)) : 0,
+    });
+  }
+
+  if (rawMicroPoints[rawMicroPoints.length - 1].fpr < 1 || rawMicroPoints[rawMicroPoints.length - 1].tpr < 1) {
+    rawMicroPoints.push({ fpr: 1, tpr: 1 });
+  }
+
+  let microAuc = 0;
+  for (let i = 0; i < rawMicroPoints.length - 1; i++) {
+    const dFpr = rawMicroPoints[i + 1].fpr - rawMicroPoints[i].fpr;
+    const avgTpr = (rawMicroPoints[i + 1].tpr + rawMicroPoints[i].tpr) / 2;
+    microAuc += dFpr * avgTpr;
+  }
+  microAuc = Math.max(0, Math.min(1, microAuc));
+
+  let microRawIdx = 0;
+  const microCurve: RocPoint[] = standardFprGrid.map((targetFpr) => {
+    while (microRawIdx < rawMicroPoints.length - 2 && rawMicroPoints[microRawIdx + 1].fpr <= targetFpr) {
+      microRawIdx++;
+    }
+    const p1 = rawMicroPoints[microRawIdx];
+    const p2 = rawMicroPoints[microRawIdx + 1] || p1;
+    let tprVal = p1.tpr;
+    if (p2.fpr > p1.fpr) {
+      const factor = (targetFpr - p1.fpr) / (p2.fpr - p1.fpr);
+      tprVal = p1.tpr + factor * (p2.tpr - p1.tpr);
+    }
+    return {
+      fpr: targetFpr,
+      tpr: Number(Math.max(0, Math.min(1, tprVal)).toFixed(4)),
+    };
+  });
+
+  return {
+    macro: macroCurve,
+    micro: microCurve,
+    macroAuc: Number(macroAuc.toFixed(4)),
+    microAuc: Number(microAuc.toFixed(4)),
+    classCurves,
+    classAucs: classAucsRecord,
+  };
+}
 
 function computeMetrics(
-  yTrue: number[], yPred: number[], numClasses: number
-): { accuracy: number; f1: number; precision: number; recall: number; confusionMatrix: number[][] } {
+  yTrue: number[],
+  yPred: number[],
+  yProb: number[][],
+  numClasses: number,
+  classNames: string[]
+): {
+  accuracy: number;
+  f1: number;
+  precision: number;
+  recall: number;
+  macroAuc: number;
+  microAuc: number;
+  confusionMatrix: number[][];
+  perClassMetrics: PerClassMetrics[];
+  rocCurves: RocCurveData;
+} {
   const cm = Array.from({ length: numClasses }, () => new Array(numClasses).fill(0));
   let correct = 0;
 
   for (let i = 0; i < yTrue.length; i++) {
-    cm[yTrue[i]][yPred[i]]++;
-    if (yTrue[i] === yPred[i]) correct++;
+    const t = yTrue[i];
+    const p = yPred[i];
+    if (t >= 0 && t < numClasses && p >= 0 && p < numClasses) {
+      cm[t][p]++;
+      if (t === p) correct++;
+    }
   }
 
-  const accuracy = correct / yTrue.length;
+  const accuracy = yTrue.length > 0 ? correct / yTrue.length : 0;
+  const rocCurves = computeRocAndAuc(yTrue, yProb, numClasses, classNames);
 
-  // Macro-averaged precision, recall, F1
+  const perClassMetrics: PerClassMetrics[] = [];
   let totalPrecision = 0;
   let totalRecall = 0;
   let validClasses = 0;
 
   for (let c = 0; c < numClasses; c++) {
     const tp = cm[c][c];
-    const fp = cm.reduce((sum, row) => sum + row[c], 0) - tp;
-    const fn = cm[c].reduce((sum, val) => sum + val, 0) - tp;
+    let fp = 0;
+    let fn = 0;
+    let tn = 0;
 
+    for (let r = 0; r < numClasses; r++) {
+      for (let col = 0; col < numClasses; col++) {
+        if (r !== c && col === c) fp += cm[r][col];
+        if (r === c && col !== c) fn += cm[r][col];
+        if (r !== c && col !== c) tn += cm[r][col];
+      }
+    }
+
+    const support = tp + fn;
     const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
     const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+    const specificity = tn + fp > 0 ? tn / (tn + fp) : 0;
+    const npv = tn + fn > 0 ? tn / (tn + fn) : 0;
+    const f1Score = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+    const cName = classNames[c] || `Class ${c}`;
+    const auc = rocCurves.macroAuc;
 
-    if (tp + fp + fn > 0) {
+    perClassMetrics.push({
+      className: cName,
+      classIndex: c,
+      tp,
+      fp,
+      fn,
+      tn,
+      support,
+      precision: Number(precision.toFixed(4)),
+      recall: Number(recall.toFixed(4)),
+      specificity: Number(specificity.toFixed(4)),
+      f1Score: Number(f1Score.toFixed(4)),
+      npv: Number(npv.toFixed(4)),
+      auc: Number(auc.toFixed(4)),
+    });
+
+    if (support > 0 || tp + fp > 0) {
       totalPrecision += precision;
       totalRecall += recall;
       validClasses++;
@@ -911,9 +1215,19 @@ function computeMetrics(
 
   const avgPrecision = validClasses > 0 ? totalPrecision / validClasses : 0;
   const avgRecall = validClasses > 0 ? totalRecall / validClasses : 0;
-  const f1 = avgPrecision + avgRecall > 0 ? 2 * avgPrecision * avgRecall / (avgPrecision + avgRecall) : 0;
+  const f1 = avgPrecision + avgRecall > 0 ? (2 * avgPrecision * avgRecall) / (avgPrecision + avgRecall) : 0;
 
-  return { accuracy, f1, precision: avgPrecision, recall: avgRecall, confusionMatrix: cm };
+  return {
+    accuracy: Number(accuracy.toFixed(4)),
+    f1: Number(f1.toFixed(4)),
+    precision: Number(avgPrecision.toFixed(4)),
+    recall: Number(avgRecall.toFixed(4)),
+    macroAuc: rocCurves.macroAuc,
+    microAuc: rocCurves.microAuc,
+    confusionMatrix: cm,
+    perClassMetrics,
+    rocCurves,
+  };
 }
 
 function computeFeatureImportance(
@@ -1023,12 +1337,15 @@ export async function trainModel(
 
   const history: TrainingMetrics[] = [];
   let yPred: number[] = [];
+  let yProb: number[][] = [];
 
   if (config.modelType === 'xgboost') {
     // XGBoost training with progress
     const trees = trainXGBoost(XTrain, yTrain, numClasses, config.nEstimators, config.maxDepth, config.learningRate);
 
-    yPred = XTest.map(x => predictXGBoost(trees, x, numClasses, config.learningRate).class);
+    const preds = XTest.map(x => predictXGBoost(trees, x, numClasses, config.learningRate));
+    yPred = preds.map(p => p.class);
+    yProb = preds.map(p => p.probabilities);
 
     // Generate synthetic history
     for (let i = 0; i < Math.min(config.nEstimators, 50); i++) {
@@ -1061,7 +1378,9 @@ export async function trainModel(
       (metrics) => { history.push(metrics); onProgress?.(metrics); }
     );
 
-    yPred = XTest.map(x => predictNN(layers, x).class);
+    const preds = XTest.map(x => predictNN(layers, x));
+    yPred = preds.map(p => p.class);
+    yProb = preds.map(p => p.probabilities);
     _trainedModel = { type: 'deeplearning', nnLayers: layers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns, categoricalEncoders };
 
   } else if (config.modelType === 'webml_tflite') {
@@ -1073,7 +1392,9 @@ export async function trainModel(
       (metrics) => { history.push(metrics); onProgress?.(metrics); }
     );
     const tfliteLayers = toTFLiteStyleLayers(nnLayers);
-    yPred = XTest.map(x => predictQuantizedNN(tfliteLayers, x).class);
+    const preds = XTest.map(x => predictQuantizedNN(tfliteLayers, x));
+    yPred = preds.map(p => p.class);
+    yProb = preds.map(p => p.probabilities);
     _trainedModel = {
       type: 'webml_tflite',
       nnLayers,
@@ -1099,7 +1420,7 @@ export async function trainModel(
     const tfliteLayers = toTFLiteStyleLayers(nnLayers);
 
     // Ensemble prediction: weighted average across tree + deep + TFLite-style paths
-    yPred = XTest.map(x => {
+    yProb = XTest.map(x => {
       const rfPred = predictRandomForest(rfTrees, x, numClasses);
       const xgbPred = predictXGBoost(xgbTrees, x, numClasses, config.learningRate);
       const nnPred = predictNN(nnLayers, x);
@@ -1114,14 +1435,15 @@ export async function trainModel(
           tflitePred.probabilities[c] * 0.25
         );
       }
-      return avgProbs.indexOf(Math.max(...avgProbs));
+      return avgProbs;
     });
+    yPred = yProb.map(probs => probs.indexOf(Math.max(...probs)));
 
     _trainedModel = { type: 'ensemble', rfTrees, xgbTrees, nnLayers, tfliteLayers, numClasses, learningRate: config.learningRate, featureNames, classNames: classNames || [], autoDetect, columnInfos: columns, categoricalEncoders };
   }
 
   // Compute metrics
-  const metrics = computeMetrics(yTest, yPred, numClasses);
+  const metrics = computeMetrics(yTest, yPred, yProb, numClasses, classNames || []);
   const featureImportance = computeFeatureImportance(XTrain, yTrain, featureNames, numClasses);
   if (_trainedModel) {
     _trainedModel.featureImportance = featureImportance;
@@ -1149,12 +1471,260 @@ export async function trainModel(
     f1Score: metrics.f1,
     precision: metrics.precision,
     recall: metrics.recall,
+    macroAuc: metrics.macroAuc,
+    microAuc: metrics.microAuc,
     confusionMatrix: metrics.confusionMatrix,
+    perClassMetrics: metrics.perClassMetrics,
+    rocCurves: metrics.rocCurves,
     featureImportance,
     trainingHistory: history,
     classNames,
     trainTime,
   };
+}
+
+// ─── Stratified K-Fold Cross Validation (IEEE Publication Standard) ─────────
+
+export async function runStratifiedCrossValidation(
+  data: Record<string, unknown>[],
+  config: TrainingConfig,
+  autoDetect: AutoDetectResult,
+  kFolds = 5,
+  onFoldProgress?: (fold: number, total: number, foldResult?: CrossValidationFoldResult) => void
+): Promise<CrossValidationSummary> {
+  const { features, label, classNames, columns } = autoDetect;
+  const numClasses = classNames?.length || 2;
+  const { X, y } = preprocessData(data, features, label, columns, classNames);
+
+  // Group indices by class for stratified partitioning
+  const classBuckets: number[][] = Array.from({ length: numClasses }, () => []);
+  for (let i = 0; i < y.length; i++) {
+    classBuckets[y[i]].push(i);
+  }
+
+  // Shuffle within class
+  classBuckets.forEach(bucket => {
+    for (let i = bucket.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bucket[i], bucket[j]] = [bucket[j], bucket[i]];
+    }
+  });
+
+  const foldIndices: number[][] = Array.from({ length: kFolds }, () => []);
+  for (let c = 0; c < numClasses; c++) {
+    const bucket = classBuckets[c];
+    for (let i = 0; i < bucket.length; i++) {
+      foldIndices[i % kFolds].push(bucket[i]);
+    }
+  }
+
+  const foldResults: CrossValidationFoldResult[] = [];
+
+  for (let k = 0; k < kFolds; k++) {
+    const testIdx = new Set(foldIndices[k]);
+    const XTrain: number[][] = [];
+    const yTrain: number[] = [];
+    const XTest: number[][] = [];
+    const yTest: number[] = [];
+
+    for (let i = 0; i < X.length; i++) {
+      if (testIdx.has(i)) {
+        XTest.push(X[i]);
+        yTest.push(y[i]);
+      } else {
+        XTrain.push(X[i]);
+        yTrain.push(y[i]);
+      }
+    }
+
+    let yPred: number[] = [];
+    let yProb: number[][] = [];
+
+    if (config.modelType === 'xgboost') {
+      const trees = trainXGBoost(XTrain, yTrain, numClasses, config.nEstimators, config.maxDepth, config.learningRate);
+      const preds = XTest.map(x => predictXGBoost(trees, x, numClasses, config.learningRate));
+      yPred = preds.map(p => p.class);
+      yProb = preds.map(p => p.probabilities);
+    } else if (config.modelType === 'deeplearning') {
+      const layers = trainNeuralNetwork(
+        XTrain, yTrain, numClasses,
+        config.hiddenLayers, config.epochs, config.learningRate, config.batchSize,
+        XTest, yTest
+      );
+      const preds = XTest.map(x => predictNN(layers, x));
+      yPred = preds.map(p => p.class);
+      yProb = preds.map(p => p.probabilities);
+    } else if (config.modelType === 'webml_tflite') {
+      const nnLayers = trainNeuralNetwork(
+        XTrain, yTrain, numClasses,
+        config.hiddenLayers, config.epochs, config.learningRate, config.batchSize,
+        XTest, yTest
+      );
+      const tfliteLayers = toTFLiteStyleLayers(nnLayers);
+      const preds = XTest.map(x => predictQuantizedNN(tfliteLayers, x));
+      yPred = preds.map(p => p.class);
+      yProb = preds.map(p => p.probabilities);
+    } else {
+      const rfTrees = trainRandomForest(XTrain, yTrain, numClasses, Math.floor(config.nEstimators / 2), config.maxDepth);
+      const xgbTrees = trainXGBoost(XTrain, yTrain, numClasses, Math.floor(config.nEstimators / 2), config.maxDepth, config.learningRate);
+      const nnLayers = trainNeuralNetwork(
+        XTrain, yTrain, numClasses,
+        config.hiddenLayers, Math.floor(config.epochs / 2), config.learningRate, config.batchSize,
+        XTest, yTest
+      );
+      const tfliteLayers = toTFLiteStyleLayers(nnLayers);
+      yProb = XTest.map(x => {
+        const rfPred = predictRandomForest(rfTrees, x, numClasses);
+        const xgbPred = predictXGBoost(xgbTrees, x, numClasses, config.learningRate);
+        const nnPred = predictNN(nnLayers, x);
+        const tflitePred = predictQuantizedNN(tfliteLayers, x);
+        const avg = new Array(numClasses).fill(0);
+        for (let c = 0; c < numClasses; c++) {
+          avg[c] = (
+            rfPred.probabilities[c] * 0.30 +
+            xgbPred.probabilities[c] * 0.25 +
+            nnPred.probabilities[c] * 0.20 +
+            tflitePred.probabilities[c] * 0.25
+          );
+        }
+        return avg;
+      });
+      yPred = yProb.map(p => p.indexOf(Math.max(...p)));
+    }
+
+    const foldMetrics = computeMetrics(yTest, yPred, yProb, numClasses, classNames || []);
+    const fRes: CrossValidationFoldResult = {
+      fold: k + 1,
+      accuracy: foldMetrics.accuracy,
+      precision: foldMetrics.precision,
+      recall: foldMetrics.recall,
+      f1Score: foldMetrics.f1,
+      auc: foldMetrics.macroAuc,
+      valSamples: yTest.length,
+    };
+    foldResults.push(fRes);
+    onFoldProgress?.(k + 1, kFolds, fRes);
+  }
+
+  const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const std = (arr: number[], m: number) =>
+    arr.length > 1 ? Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1)) : 0;
+
+  const accuracies = foldResults.map(f => f.accuracy);
+  const f1s = foldResults.map(f => f.f1Score);
+  const precisions = foldResults.map(f => f.precision);
+  const recalls = foldResults.map(f => f.recall);
+  const aucs = foldResults.map(f => f.auc);
+
+  const meanAcc = mean(accuracies);
+  const stdAcc = std(accuracies, meanAcc);
+  const ciMarginAcc = 1.96 * (stdAcc / Math.sqrt(kFolds));
+
+  const meanF1 = mean(f1s);
+  const stdF1 = std(f1s, meanF1);
+  const ciMarginF1 = 1.96 * (stdF1 / Math.sqrt(kFolds));
+
+  const meanPrec = mean(precisions);
+  const stdPrec = std(precisions, meanPrec);
+
+  const meanRec = mean(recalls);
+  const stdRec = std(recalls, meanRec);
+
+  const meanAuc = mean(aucs);
+  const stdAuc = std(aucs, meanAuc);
+
+  return {
+    kFolds,
+    folds: foldResults,
+    meanAccuracy: Number(meanAcc.toFixed(4)),
+    stdAccuracy: Number(stdAcc.toFixed(4)),
+    ci95Accuracy: [Number(Math.max(0, meanAcc - ciMarginAcc).toFixed(4)), Number(Math.min(1, meanAcc + ciMarginAcc).toFixed(4))],
+    meanF1: Number(meanF1.toFixed(4)),
+    stdF1: Number(stdF1.toFixed(4)),
+    ci95F1: [Number(Math.max(0, meanF1 - ciMarginF1).toFixed(4)), Number(Math.min(1, meanF1 + ciMarginF1).toFixed(4))],
+    meanPrecision: Number(meanPrec.toFixed(4)),
+    stdPrecision: Number(stdPrec.toFixed(4)),
+    meanRecall: Number(meanRec.toFixed(4)),
+    stdRecall: Number(stdRec.toFixed(4)),
+    meanAuc: Number(meanAuc.toFixed(4)),
+    stdAuc: Number(stdAuc.toFixed(4)),
+  };
+}
+
+// ─── Automated IEEE Publication Table & CSV Generator ───────────────────────
+
+export function generateIEEELaTeXTable(result: TrainingResult, autoDetect?: AutoDetectResult): string {
+  const modelName = result.modelType.toUpperCase();
+  const perClass = result.perClassMetrics || [];
+  const cv = result.crossValidation;
+
+  let table = `% ==========================================================================\n`;
+  table += `% IEEE Publication Table: Bio-SentinelX ML Performance Evaluation\n`;
+  table += `% Target Template: IEEEtran.cls (Two-Column format)\n`;
+  table += `% ==========================================================================\n\n`;
+
+  table += `\\begin{table*}[t]\n`;
+  table += `\\centering\n`;
+  table += `\\caption{Empirical Classification Performance of ${modelName} Engine Across Epidemiological Cohorts}\n`;
+  table += `\\label{tab:biosentinel_ml_performance}\n`;
+  table += `\\begin{tabular}{lrrrrrr}\n`;
+  table += `\\toprule\n`;
+  table += `\\textbf{Disease Prognosis} & \\textbf{Support ($N$)} & \\textbf{Precision (\\%)} & \\textbf{Recall (\\%)} & \\textbf{Specificity (\\%)} & \\textbf{F1-Score (\\%)} & \\textbf{AUC-ROC} \\\\\n`;
+  table += `\\midrule\n`;
+
+  perClass.forEach(pc => {
+    table += `${pc.className} & ${pc.support} & ${(pc.precision * 100).toFixed(1)} & ${(pc.recall * 100).toFixed(1)} & ${(pc.specificity * 100).toFixed(1)} & ${(pc.f1Score * 100).toFixed(1)} & ${pc.auc.toFixed(3)} \\\\\n`;
+  });
+
+  table += `\\midrule\n`;
+  const totalSupport = perClass.reduce((s, c) => s + c.support, 0);
+  table += `\\textbf{Macro Average} & \\textbf{${totalSupport}} & \\textbf{${(result.precision * 100).toFixed(1)}} & \\textbf{${(result.recall * 100).toFixed(1)}} & \\textbf{--} & \\textbf{${(result.f1Score * 100).toFixed(1)}} & \\textbf{${(result.macroAuc ?? 0).toFixed(3)}} \\\\\n`;
+  table += `\\textbf{Overall Accuracy} & \\multicolumn{6}{c}{\\textbf{${(result.accuracy * 100).toFixed(2)}\\%}} \\\\\n`;
+
+  if (cv) {
+    table += `\\midrule\n`;
+    table += `\\multicolumn{7}{l}{\\textbf{Stratified ${cv.kFolds}-Fold Cross-Validation:}} \\\\\n`;
+    const accCI = Array.isArray(cv.ci95Accuracy) ? ` ($95\\%\\text{ CI: } [${(cv.ci95Accuracy[0] * 100).toFixed(1)}\\%, ${(cv.ci95Accuracy[1] * 100).toFixed(1)}\\%]$)` : '';
+    table += `Mean Accuracy & \\multicolumn{6}{l}{$${(cv.meanAccuracy * 100).toFixed(2)}\\% \\pm ${(cv.stdAccuracy * 100).toFixed(2)}\\%$${accCI}} \\\\\n`;
+    const f1CI = Array.isArray(cv.ci95F1) ? ` ($95\\%\\text{ CI: } [${(cv.ci95F1[0] * 100).toFixed(1)}\\%, ${(cv.ci95F1[1] * 100).toFixed(1)}\\%]$)` : '';
+    table += `Mean Macro F1 & \\multicolumn{6}{l}{$${(cv.meanF1 * 100).toFixed(2)}\\% \\pm ${(cv.stdF1 * 100).toFixed(2)}\\%$${f1CI}} \\\\\n`;
+    if (cv.meanAuc !== undefined) {
+      table += `Mean Macro AUC & \\multicolumn{6}{l}{$${cv.meanAuc.toFixed(3)} \\pm ${(cv.stdAuc ?? 0).toFixed(3)}$} \\\\\n`;
+    }
+  }
+
+  table += `\\bottomrule\n`;
+  table += `\\end{tabular}\n`;
+  table += `\\end{table*}\n`;
+
+  return table;
+}
+
+export function exportExperimentalResultsCSV(result: TrainingResult): string {
+  const perClass = result.perClassMetrics || [];
+  const lines: string[] = [];
+  lines.push('Category,Class Name,Support,Precision,Recall_Sensitivity,Specificity,NPV,F1_Score,AUC_ROC');
+
+  perClass.forEach(pc => {
+    lines.push(`Disease,"${pc.className}",${pc.support},${pc.precision},${pc.recall},${pc.specificity},${pc.npv},${pc.f1Score},${pc.auc}`);
+  });
+
+  const totalSupport = perClass.reduce((s, c) => s + c.support, 0);
+  lines.push(`Summary,Macro Average,${totalSupport},${result.precision},${result.recall},N/A,N/A,${result.f1Score},${result.macroAuc ?? ''}`);
+  lines.push(`Summary,Overall Accuracy,${totalSupport},${result.accuracy},${result.accuracy},N/A,N/A,${result.accuracy},${result.microAuc ?? ''}`);
+
+  if (result.crossValidation) {
+    const cv = result.crossValidation;
+    lines.push('');
+    lines.push('Cross Validation Fold,Accuracy,Precision,Recall,F1_Score,AUC,Validation Samples');
+    cv.folds.forEach(f => {
+      lines.push(`Fold ${f.fold},${f.accuracy},${f.precision},${f.recall},${f.f1Score},${f.auc},${f.valSamples}`);
+    });
+    lines.push(`Mean,${cv.meanAccuracy},${cv.meanPrecision},${cv.meanRecall},${cv.meanF1},${cv.meanAuc}`);
+    lines.push(`Std Dev,${cv.stdAccuracy},${cv.stdPrecision},${cv.stdRecall},${cv.stdF1},${cv.stdAuc}`);
+  }
+
+  return lines.join('\n');
 }
 
 // ─── Prediction with Trained Model ──────────────────────────────────────────
