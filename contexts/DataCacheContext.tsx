@@ -15,6 +15,8 @@ import React, { createContext, useContext, useState, useCallback, useEffect, Rea
 
 // ─── Proper TypeScript Types ──────────────────────────────────────────────────
 
+import type { MLPredictionResult, MLTrainingStatus } from '../services/floodService';
+
 export interface MLFeatureImpact {
   feature: string;
   impact: string;
@@ -42,12 +44,8 @@ export interface FloodMLPrediction {
 // ─── Flood slice ───────────────────────────────────────────────────────────
 export interface FloodCacheSlice {
   rawData: any[];
-  mlPrediction: FloodMLPrediction | null;
-  mlStatus: {
-    status: string;
-    apiLatencyMs?: number;
-    fallbackReason?: string;
-  } | null;
+  mlPrediction: MLPredictionResult | null;
+  mlStatus: MLTrainingStatus | null;
   analysis: string;
   lastLocation: string;
   lastFetched: number | null; // timestamp ms
