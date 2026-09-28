@@ -8,9 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "type-check": "tsc --noEmit",
-    "ci": "tsc --noEmit && vite build",
+    "ci": "vitest run && tsc --noEmit && vite build",
     "android": "npm run build && npx cap sync android && npx cap open android",
     "android:build": "npm run build && npx cap sync android",
     "android:sync": "npx cap sync android",
@@ -36,6 +37,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^8.0.16"
+    "vite": "^8.0.16",
+    "vitest": "^5.0.1"
   }
 }
