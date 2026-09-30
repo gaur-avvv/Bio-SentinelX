@@ -350,3 +350,106 @@ export function getAnonymizedSignalForSync(signal: AnonymizedSignal) {
     timestamp: new Date(signal.timestamp).toISOString(),
   };
 }
+
+// ─── Mathematical (ε, δ)-Differential Privacy Engine ──────────────────────────
+
+export interface DPBudgetState {
+  totalBudgetEpsilon: number;
+  spentBudgetEpsilon: number;
+  delta: number;
+}
+
+let privacyBudget: DPBudgetState = {
+  totalBudgetEpsilon: 2.0,
+  spentBudgetEpsilon: 0.0,
+  delta: 1e-5,
+};
+
+/**
+ * Samples noise from Laplace(0, scale) via inverse CDF method.
+ * scale = sensitivity / epsilon
+ */
+export function addLaplaceNoise(value: number, sensitivity: number, epsilon: number): number {
+  if (epsilon <= 0) return value;
+  const scale = sensitivity / epsilon;
+  const u = Math.random() - 0.5;
+  const sign = u < 0 ? -1 : 1;
+  const noise = -scale * sign * Math.log(1 - 2 * Math.abs(u) + 1e-15);
+  privacyBudget.spentBudgetEpsilon += epsilon;
+  return Number((value + noise).toFixed(4));
+}
+
+/**
+ * Samples noise from Gaussian(0, sigma^2) using Box-Muller transform for (ε, δ)-DP.
+ * sigma = sqrt(2 * ln(1.25 / delta)) * (sensitivity / epsilon)
+ */
+export function addGaussianNoise(
+  value: number,
+  sensitivity: number,
+  epsilon: number,
+  delta: number = 1e-5
+): number {
+  if (epsilon <= 0) return value;
+  const sigma = Math.sqrt(2 * Math.log(1.25 / delta)) * (sensitivity / epsilon);
+  const u1 = Math.max(1e-15, Math.random());
+  const u2 = Math.random();
+  const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+  privacyBudget.spentBudgetEpsilon += epsilon;
+  return Number((value + z0 * sigma).toFixed(4));
+}
+
+/**
+ * Perturbs clinical vital telemetry using Laplace Differential Privacy.
+ */
+export function sanitizeClinicalMetricsWithDP(
+  metrics: Record<string, number>,
+  epsilon: number = 0.5,
+  sensitivities: Record<string, number> = {}
+): Record<string, number> {
+  const perturbed: Record<string, number> = {};
+  const perFeatureEps = epsilon / Math.max(1, Object.keys(metrics).length);
+
+  for (const [key, val] of Object.entries(metrics)) {
+    // Default clinical sensitivity: 1.0 (or specific bounded domain ranges)
+    const sens = sensitivities[key] ?? 1.0;
+    perturbed[key] = addLaplaceNoise(val, sens, perFeatureEps);
+  }
+
+  return perturbed;
+}
+
+/**
+ * Perturbs epidemiological case count with integer-bounded Differential Privacy.
+ */
+export function anonymizeSignalWithDP(
+  signal: AnonymizedSignal,
+  epsilon: number = 0.2
+): AnonymizedSignal {
+  const noisyCases = Math.max(0, Math.round(addLaplaceNoise(signal.caseCount, 1.0, epsilon)));
+  return {
+    ...signal,
+    caseCount: noisyCases,
+  };
+}
+
+/**
+ * Inspect remaining Differential Privacy budget.
+ */
+export function getPrivacyBudgetStatus(): DPBudgetState & { remainingBudgetEpsilon: number } {
+  return {
+    ...privacyBudget,
+    remainingBudgetEpsilon: Math.max(0, Number((privacyBudget.totalBudgetEpsilon - privacyBudget.spentBudgetEpsilon).toFixed(4))),
+  };
+}
+
+/**
+ * Reset privacy budget (e.g. for a new clinical reporting cycle).
+ */
+export function resetPrivacyBudget(totalBudget: number = 2.0, delta: number = 1e-5): void {
+  privacyBudget = {
+    totalBudgetEpsilon: totalBudget,
+    spentBudgetEpsilon: 0.0,
+    delta,
+  };
+}
+
